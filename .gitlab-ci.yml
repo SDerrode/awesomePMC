@@ -1,0 +1,42 @@
+# GitLab CI for copulasformm
+# Runs lint + tests on Python 3.10, 3.11, 3.12.
+
+stages:
+  - lint
+  - test
+
+# ---------------------------------------------------------------------------
+# Reusable template for Python jobs
+# ---------------------------------------------------------------------------
+.python_template: &python_template
+  image: python:${PY_VERSION}-slim
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -e ".[dev]"
+  cache:
+    key: pip-$PY_VERSION
+    paths:
+      - .cache/pip
+
+# ---------------------------------------------------------------------------
+# Lint (ruff) — single Python version is enough
+# ---------------------------------------------------------------------------
+lint:
+  stage: lint
+  image: python:3.12-slim
+  before_script:
+    - pip install ruff
+  script:
+    - ruff check prg/
+
+# ---------------------------------------------------------------------------
+# Tests — matrix over Python versions
+# ---------------------------------------------------------------------------
+test:
+  <<: *python_template
+  stage: test
+  parallel:
+    matrix:
+      - PY_VERSION: ["3.10", "3.11", "3.12"]
+  script:
+    - pytest -q --cov=prg --cov-report=term

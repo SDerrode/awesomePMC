@@ -1,0 +1,9 @@
+# Source of truth for dependencies is pyproject.toml.
+# This file is kept as a convenience: `pip install -r requirements.txt`
+# installs the same runtime dependencies without building the package.
+
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+pandas>=2.0
+rich>=13.0

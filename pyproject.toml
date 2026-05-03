@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copulasformm"
+version = "0.0.0"
+description = "Copula-based Markov models for flexible non-Gaussian transition kernels"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Derrode Stéphane", email = "stephane.derrode@ec-lyon.fr" },
+]
+keywords = [
+    "copula",
+    "markov model",
+    "hidden markov model",
+    "state-space model",
+    "dependence modeling",
+    "non-gaussian",
+    "bayesian filtering",
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.urls]
+Homepage   = "https://gitlab.ec-lyon.fr/sderrode/copulasformm"
+Repository = "https://gitlab.ec-lyon.fr/sderrode/copulasformm"
+
+[tool.pytest.ini_options]
+testpaths = ["prg/tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff.lint]
+ignore = ["E402", "E702"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["prg"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "prg/",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    "data/",
+    "prg/tests/",
+    ".claude/",
+]
