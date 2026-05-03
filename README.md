@@ -45,12 +45,20 @@ Markov models classically assume a parametric (often Gaussian) transition kernel
 - Markov chain Monte Carlo (MCMC) sampling
 - state-space models with non-Gaussian transitions
 
-The repository will provide:
+The repository currently provides (v0.3.0):
 
-- **Copula families** — Gaussian, Student, Clayton, Gumbel, Frank, Joe, and vine copulas
-- **Parameter estimation** — maximum likelihood and Bayesian inference
-- **Simulation tools** — generation of copula-driven Markov chains
-- **Applications** — filtering, smoothing, and prediction under copula-based transition models
+- **Copula families** — Product, Gaussian, Student, Gumbel-Hougaard, Clayton, Frank (disabled), Archimedean A12 / A14, FGM, Cubic Section. All τ_K-parameterised; analytical PDF / CDF / h-function where possible.
+- **Bivariate joint laws** — `BivariateLaw` (Sklar's theorem on a copula + two marginals) and `ConditionalLaw` (frozen p(Y|X=x)).
+- **Sampling** — Rosenblatt h-inversion (Brent) on every copula; conditional sampling on either dimension via majorant rejection.
+- **Parameter estimation** — `fit(data, method='tau'|'mle')` returning a `FitResult` with AIC / BIC / AICc / HQC, K-fold CV log-likelihood, parametric-bootstrap goodness-of-fit (Cramér-von Mises), and bootstrap CI on τ_K. `BivariateLaw.fit(...)` does the same in two-step IFM mode (margin MLE then copula).
+- **Model selection** — `CopulaVirt.fit_best(data, families=...)` and `BivariateLaw.fit_best(...)` rank candidates by AIC.
+- **Tail dependence** — `tail_dependence() → (λ_L, λ_U)` with analytical formulas for the families that admit them, numerical default otherwise.
+- **Visual diagnostics** — `plot_diagnostics(plot_dir)` on both result classes (6-panel: PDF + scatter, PP plot, empirical/fitted copula, residuals, λ_L / λ_U vs empirical estimators).
+
+Planned (not yet implemented):
+- Vectorised pdf for n ≥ 10 000
+- Vine copulas (C-vine, D-vine) for higher-dimensional dependence
+- Filtering, smoothing, and prediction under copula-based transition models
 
 ---
 
@@ -65,10 +73,36 @@ The repository will provide:
 |   |-- plot/
 |   `-- clean_dirs.sh
 |-- prg/
+|   |-- copulas/
+|   |   |-- archimedean/
+|   |   |   |-- __init__.py
+|   |   |   |-- a12.py
+|   |   |   |-- a14.py
+|   |   |   |-- clayton.py
+|   |   |   |-- frank.py
+|   |   |   `-- gumbel.py
+|   |   |-- elliptical/
+|   |   |   |-- __init__.py
+|   |   |   |-- gaussian.py
+|   |   |   `-- student.py
+|   |   |-- explicit/
+|   |   |   |-- __init__.py
+|   |   |   |-- cubic_section.py
+|   |   |   |-- fgm.py
+|   |   |   `-- product.py
+|   |   |-- __init__.py
+|   |   |-- _base.py
+|   |   `-- bivariate.py
+|   |-- settings/
+|   |   |-- __init__.py
+|   |   `-- plot_settings.py
 |   |-- tests/
 |   |   |-- __init__.py
 |   |   |-- conftest.py
 |   |   `-- test_smoke.py
+|   |-- tools/
+|   |   |-- __init__.py
+|   |   `-- tools.py
 |   `-- __init__.py
 |-- .gitignore
 |-- .gitlab-ci.yml
