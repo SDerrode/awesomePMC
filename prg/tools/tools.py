@@ -3,14 +3,14 @@ import sys
 import numpy as np
 
 
-EPS        = sys.float_info.epsilon   # ≈ 2.22e-16
-UNMOINSEPS = 1.0 - EPS
-EPSMOINSUN = EPS - 1.0
+EPS           = sys.float_info.epsilon   # ≈ 2.22e-16
+ONE_MINUS_EPS = 1.0 - EPS
+EPS_MINUS_ONE = EPS - 1.0
 
 
 def minmaxEPS(u: float) -> float:
     """Clamp u to [EPS, 1-EPS] to keep values in the open unit interval."""
-    return max(EPS, min(UNMOINSEPS, float(u)))
+    return max(EPS, min(ONE_MINUS_EPS, float(u)))
 
 
 def set_dir(base: str, subdir: str) -> str:
@@ -29,7 +29,7 @@ def list_parameters(dist) -> list[str]:
     return params
 
 
-def check_CovMatrix(M: np.ndarray) -> bool:
+def check_cov_matrix(M: np.ndarray) -> bool:
     """Return True if M is positive semi-definite (Cholesky check)."""
     try:
         np.linalg.cholesky(M)

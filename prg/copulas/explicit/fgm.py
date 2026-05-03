@@ -1,3 +1,8 @@
+if __name__ == '__main__':
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
+
+import numpy as np
 from prg.copulas._base import CopulaVirt
 from prg.tools.tools   import minmaxEPS
 
@@ -6,45 +11,62 @@ class CopulaFGM(CopulaVirt):
     """
     Farlie-Gumbel-Morgenstern copula.
 
-    C(u,v) = u·v·[1 + θ(1−2u)(1−2v)],  θ = 9/2 · τ_K.
+    C(u,v) = u·v·[1 + θ(1−u)(1−v)],  θ = 9/2 · τ_K.
+    c(u,v) = 1 + θ(1−2u)(1−2v).
     τ_K ∈ [−2/9, 2/9].
 
     Analytical majorant:  M(u_L) = 1 + |θ| · |1 − 2·u_L|
     """
 
     def __init__(self, **kwargs):
-        super().__init__(className=self.__class__.__name__, copParamDict=kwargs)
+        super().__init__(class_name=self.__class__.__name__, params=kwargs)
 
-    def updateInternalParam(self):
-        self.theta = 4.5 * self.CopParamDict['tauK']
+    def _update_params(self):
+        self.theta = 4.5 * self.params['tau_k']
 
-    def PdfCopule(self, VectU):
-        u0 = minmaxEPS(VectU[0])
-        u1 = minmaxEPS(VectU[1])
+    def pdf(self, uv):
+        u0 = minmaxEPS(uv[0])
+        u1 = minmaxEPS(uv[1])
         return 1.0 + self.theta * (1.0 - 2.0 * u0) * (1.0 - 2.0 * u1)
 
-    def CdfCopule(self, VectU):
-        u0 = minmaxEPS(VectU[0])
-        u1 = minmaxEPS(VectU[1])
-        return u0 * u1 * (1.0 + self.theta * (1.0 - 2.0 * u0) * (1.0 - 2.0 * u1))
+    def cdf(self, uv):
+        u0 = minmaxEPS(uv[0])
+        u1 = minmaxEPS(uv[1])
+        return u0 * u1 * (1.0 + self.theta * (1.0 - u0) * (1.0 - u1))
 
-    def MajorantCopula(self, uleft: float) -> float:
+    def conditional_cdf(self, v: float, u: float) -> float:
+        """h(v|u) = v · [1 + θ(1−v)(1−2u)]."""
+        u = minmaxEPS(u)
+        v = minmaxEPS(v)
+        result = v * (1.0 + self.theta * (1.0 - v) * (1.0 - 2.0*u))
+        return float(np.clip(result, 0.0, 1.0))
+
+    def majorant(self, u_left: float) -> float:
         """Analytical majorant (verified)."""
-        return 1.0 + abs(self.theta * (1.0 - 2.0 * uleft))
+        return 1.0 + abs(self.theta * (1.0 - 2.0 * u_left))
+
+    def tail_dependence(self) -> tuple[float, float]:
+        """FGM has zero tail dependence at both extremes."""
+        return 0.0, 0.0
 
 
 if __name__ == '__main__':
-    from pathlib import Path
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
     from prg.tools.tools import set_dir
 
-    cop = CopulaFGM(tauK=0.15)
-    print(cop, f'  theta={cop.theta:.4f}')
-    print(f'  Pdf([0.5, 0.7]) = {cop.PdfCopule([0.5, 0.7]):.6f}')
-    print(f'  Cdf([0.5, 0.7]) = {cop.CdfCopule([0.5, 0.7]):.6f}')
-    print(f'  Majorant(0.5)   = {cop.MajorantCopula(0.5):.6f}')
+    cop = CopulaFGM(tau_k=0.15)
+    print(f'Copula   : {cop.copula_enum.value.LONG_NAME}')
+    print(f'tau_k    : {cop.params["tau_k"]:.4f}  range={cop.tau_range}')
+    print(f'theta    : {cop.theta:.6f}  [= 9/2 · τ]')
+    print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}')
+    print(f'cdf(0.3, 0.7) = {cop.cdf([0.3, 0.7]):.6f}')
+    print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
+    print(f'majorant(0.5) = {cop.majorant(0.5):.6f}  [= 1 + |θ||1−2u|]')
+    print(f'tail dep : λ_L = λ_U = 0  (τ_max = 2/9 ≈ 0.222)')
+
     plot_dir = set_dir('./data/Plots', 'Copulas')
-    cop.plotPdfCopule(plot_dir)
-    cop.plotCdfCopule(plot_dir)
+    cop.plot_pdf(plot_dir)
+    cop.plot_cdf(plot_dir)
+    cop.plot_h_function(plot_dir)
+    cop.plot_samples(plot_dir)
+    cop.plot_overview(plot_dir)
+    cop.plot_multi_tau(plot_dir)

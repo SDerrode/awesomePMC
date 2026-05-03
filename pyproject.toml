@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "copulasformm"
-version = "0.0.0"
+version = "0.3.0"
 description = "Copula-based Markov models for flexible non-Gaussian transition kernels"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -22,7 +22,7 @@ keywords = [
     "bayesian filtering",
 ]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

@@ -5,12 +5,17 @@ Status: disabled pending investigation of numerical instability in theta
 estimation via the Debye function for large |tau|. See point 4a of the
 quality roadmap.
 """
+if __name__ == '__main__':
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
+
 import numpy as np
 from scipy.integrate import quad
 from scipy.optimize  import root_scalar
 from statsmodels.distributions.copula.api import FrankCopula
 
 from prg.copulas._base import CopulaVirt, CopulaEnum
+from prg.exceptions    import CopulaNotAvailableError
 
 
 # ---------------------------------------------------------------------------
@@ -50,23 +55,21 @@ def find_theta_frank(tau_target: float, bracket: tuple = (1e-5, 50.0)) -> float:
 class CopulaFrank(CopulaVirt):
 
     def __init__(self, **kwargs):
-        # Guard: Frank is marked AVAILABLE=False in CopulaEnum.
-        # This check is redundant (CopulaVirt.__init__ enforces it) but explicit.
         if not CopulaEnum.FRANK.AVAILABLE:
-            raise NotImplementedError(
-                'CopulaFrank is currently disabled (numerical instability — see frank.py). '
+            raise CopulaNotAvailableError(
+                'CopulaFrank is currently disabled (numerical instability). '
                 'Set CopulaEnum.FRANK.AVAILABLE = True after fixing theta inversion for |tau| > 0.7.'
             )
-        super().__init__(className=self.__class__.__name__, copParamDict=kwargs)
+        super().__init__(class_name=self.__class__.__name__, params=kwargs)
 
-    def updateInternalParam(self):
-        self.theta = find_theta_frank(self.CopParamDict['tauK'])
-        self.copulastatmodels = FrankCopula(theta=self.theta)
+    def _update_params(self):
+        self.theta = find_theta_frank(self.params['tau_k'])
+        self._model = FrankCopula(theta=self.theta)
 
-    def PdfCopule(self, VectU):
-        return float(self.copulastatmodels.pdf(VectU))
+    def pdf(self, uv):
+        return float(self._model.pdf(uv))
 
-    def CdfCopule(self, VectU):
-        return float(self.copulastatmodels.cdf(VectU))
+    def cdf(self, uv):
+        return float(self._model.cdf(uv))
 
-    # Majorant numérique (hérité de CopulaVirt)
+    # Numerical majorant (inherited from CopulaVirt)

@@ -1,8 +1,12 @@
+if __name__ == '__main__':
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
+
 import numpy as np
 from statsmodels.distributions.copula.api import GumbelCopula
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS
+from prg.tools.tools   import EPS, minmaxEPS
 
 
 class CopulaGH(CopulaVirt):
@@ -14,33 +18,54 @@ class CopulaGH(CopulaVirt):
     """
 
     def __init__(self, **kwargs):
-        super().__init__(className=self.__class__.__name__, copParamDict=kwargs)
+        super().__init__(class_name=self.__class__.__name__, params=kwargs)
 
-    def updateInternalParam(self):
-        self.theta = 1.0 / (1.0 - self.CopParamDict['tauK'])
-        self.copulastatmodels = GumbelCopula(theta=self.theta)
+    def _update_params(self):
+        self.theta = 1.0 / (1.0 - self.params['tau_k'])
+        self._model = GumbelCopula(theta=self.theta)
 
-    def PdfCopule(self, VectU):
-        return float(self.copulastatmodels.pdf(VectU))
+    def pdf(self, uv):
+        return float(self._model.pdf(uv))
 
-    def CdfCopule(self, VectU):
-        return float(self.copulastatmodels.cdf(VectU))
+    def cdf(self, uv):
+        return float(self._model.cdf(uv))
 
-    # Majorant numérique (hérité de CopulaVirt)
+    def conditional_cdf(self, v: float, u: float) -> float:
+        """h(v|u) = C(u,v)/u · (−ln u)^{θ−1} · A^{(1−θ)/θ}
+        where A = ((−ln u)^θ + (−ln v)^θ)^{1/θ}."""
+        u = minmaxEPS(u)
+        v = minmaxEPS(v)
+        ln_u = -np.log(u)
+        ln_v = -np.log(v)
+        A = (ln_u**self.theta + ln_v**self.theta) ** (1.0 / self.theta)
+        c_uv = np.exp(-A)
+        result = c_uv * (A ** (1.0 - self.theta)) * (ln_u ** (self.theta - 1.0)) / u
+        return float(np.clip(result, 0.0, 1.0))
+
+    def tail_dependence(self) -> tuple[float, float]:
+        """GH copula: λ_L = 0, λ_U = 2 − 2^{1/θ}."""
+        return 0.0, 2.0 - 2.0 ** (1.0 / self.theta)
+
+    # Numerical majorant (inherited from CopulaVirt)
 
 
 if __name__ == '__main__':
-    from pathlib import Path
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
     from prg.tools.tools import set_dir
 
-    cop = CopulaGH(tauK=0.5)
-    print(cop, f'  theta={cop.theta:.4f}')
-    print(f'  Pdf([0.5, 0.7]) = {cop.PdfCopule([0.5, 0.7]):.6f}')
-    print(f'  Cdf([0.5, 0.7]) = {cop.CdfCopule([0.5, 0.7]):.6f}')
-    print(f'  Majorant(0.2)   = {cop.MajorantCopula(0.2):.6f}')
+    cop = CopulaGH(tau_k=0.5)
+    lam_u = 2.0 - 2.0 ** (1.0 / cop.theta)
+    print(f'Copula   : {cop.copula_enum.value.LONG_NAME}')
+    print(f'tau_k    : {cop.params["tau_k"]:.4f}  range={cop.tau_range}')
+    print(f'theta    : {cop.theta:.6f}  [= 1/(1−τ)]')
+    print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}')
+    print(f'cdf(0.3, 0.7) = {cop.cdf([0.3, 0.7]):.6f}')
+    print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
+    print(f'tail dep : λ_L = 0,  λ_U = {lam_u:.4f}  [= 2 − 2^(1/θ)]')
+
     plot_dir = set_dir('./data/Plots', 'Copulas')
-    cop.plotPdfCopule(plot_dir)
-    cop.plotCdfCopule(plot_dir)
+    cop.plot_pdf(plot_dir)
+    cop.plot_cdf(plot_dir)
+    cop.plot_h_function(plot_dir)
+    cop.plot_samples(plot_dir)
+    cop.plot_overview(plot_dir)
+    cop.plot_multi_tau(plot_dir)

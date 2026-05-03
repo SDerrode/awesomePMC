@@ -9,10 +9,10 @@ Example
 -------
 >>> import prg
 >>> prg.__version__
-'0.0.0'
+'0.3.0'
 """
 
-__version__ = "0.0.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
