@@ -65,13 +65,19 @@ The repository will provide:
 |   |-- plot/
 |   `-- clean_dirs.sh
 |-- prg/
+|   |-- tests/
+|   |   |-- __init__.py
+|   |   |-- conftest.py
+|   |   `-- test_smoke.py
 |   `-- __init__.py
 |-- .gitignore
+|-- .gitlab-ci.yml
 |-- CHANGELOG.md
 |-- LICENSE
 |-- README.md
 |-- pyproject.toml
-`-- requirements.txt
+|-- requirements.txt
+`-- update_readme_structure.sh
 
 ```
 <!-- PROJECT_STRUCTURE_END -->
