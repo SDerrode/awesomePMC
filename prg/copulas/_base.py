@@ -15,6 +15,10 @@ from prg.tools.tools import EPS, ONE_MINUS_EPS, EPS_MINUS_ONE, minmaxEPS
 from prg.settings.plot_settings import facecolor, dpi, BIGGER_SIZE
 from prg.exceptions import CopulaParameterError, CopulaNotAvailableError
 
+# AMH τ_K range constants (computed at import time, θ ∈ [−1, 1))
+_AMH_TAU_MIN = float(1.0 - 2.0 * (4.0 * np.log(2.0) - 1.0) / 3.0)  # τ(θ=−1) ≈ −0.1817
+_AMH_TAU_MAX = float(1.0 / 3.0 - EPS)                                  # limit τ → 1/3
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +50,9 @@ class CopulaEnum(CopulaDataMixin, Enum):
     SURVIVAL_CLAYTON = 12, "SClayton", "Survival Clayton",        "SurvivalClayton", True, ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
     SURVIVAL_GH      = 13, "SGH",      "Survival Gumbel-Hougaard", "SurvivalGH",    True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
     SURVIVAL_JOE     = 14, "SJoe",     "Survival Joe",            "SurvivalJoe",    True,  ["tau_k"],          [0.0 + EPS, 1.0],  "prg.copulas.archimedean.survival"
-    BB1              = 15, "BB1",      "BB1 (Joe-Clayton)",       "CopulaBB1",      True,  ["tau_k", "delta"], [0.0 + EPS, 1.0],  "prg.copulas.archimedean.bb1"
+    BB1              = 15, "BB1",      "BB1 (Joe-Clayton)",       "CopulaBB1",      True,  ["tau_k", "delta"], [0.0 + EPS, 1.0],              "prg.copulas.archimedean.bb1"
+    AMH              = 16, "AMH",      "Ali-Mikhail-Haq",         "CopulaAMH",      True,  ["tau_k"],          [_AMH_TAU_MIN, _AMH_TAU_MAX],  "prg.copulas.archimedean.amh"
+    PLACKETT         = 17, "Plackett", "Plackett",                "CopulaPlackett", True,  ["tau_k"],          [EPS_MINUS_ONE, ONE_MINUS_EPS], "prg.copulas.explicit.plackett"
 
     def describe(self):
         return self.name, self.value

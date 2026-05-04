@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.4] - 2026-05-04
+
+### Added
+
+- **`CopulaAMH`** (`prg/copulas/archimedean/amh.py`) — Ali-Mikhail-Haq copula. Generator φ(t) = log((1−θ(1−t))/t), θ ∈ [−1, 1). Closed-form CDF C=uv/W, PDF c=[1−θ(2−u−v−uv)+θ²(1−u)(1−v)]/W³, analytical h-function h(v|u)=v(1−θ(1−v))/W². τ_K = 1−2[θ+(1−θ)²log(1−θ)]/(3θ²), τ range ≈ [−0.182, 1/3). λ_L = λ_U = 0. Numerically stable τ→0 limit via Taylor series (avoids 0/0 at θ=0).
+- **`CopulaPlackett`** (`prg/copulas/explicit/plackett.py`) — Plackett copula (constant cross-product ratio θ>0). Explicit CDF C=[S−√Δ]/(2(θ−1)) with S=1+(θ−1)(u+v), Δ=S²−4θ(θ−1)uv; θ=1→independence (uv). PDF c=θ[1+(θ−1)(u+v−2uv)]/Δ^{3/2}. Analytical h-function h(v|u)=[√Δ−(S−2θv)]/(2√Δ). τ_K=(θ+1)/(θ−1)−2θlogθ/(θ−1)², full range (−1,1). λ_L = λ_U = 0. Numerically stable τ→0 limit via Taylor at θ=1.
+- **`CopulaEnum.AMH`** (ID 16) and **`CopulaEnum.PLACKETT`** (ID 17); auto-imported and picked up by `fit_best`.
+- **`_AMH_TAU_MIN`** / **`_AMH_TAU_MAX`** constants in `_base.py` for the AMH τ range (computed at import time from (5−8ln2)/3 and 1/3−ε).
+
+---
+
 ## [0.3.3] - 2026-05-04
 
 ### Added
@@ -112,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial project scaffold: `pyproject.toml`, `README.md`, `CHANGELOG.md`, `.gitignore`, `prg/__init__.py`
 
-[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.3...HEAD
+[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.4...HEAD
+[0.3.4]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.3...v0.3.4
 [0.3.3]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.2...v0.3.3
 [0.3.2]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.1...v0.3.2
 [0.3.1]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.0...v0.3.1
