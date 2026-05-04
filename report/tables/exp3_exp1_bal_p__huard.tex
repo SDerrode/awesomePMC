@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 1 with balanced prior $p_{\text{bal}}$, criterion: Huard et al.\ 2006 (CSDA-2013 Eq.\ 20).}
+  \label{tab:exp3-exp1_bal_p__huard}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Gauss} & 0.70 & 0/5 & 0.686 \\
+    (0, 1) & \texttt{GH} & 0.40 & 5/5 & 0.354 \\
+    (1, 0) & \texttt{GH} & 0.40 & 5/5 & 0.346 \\
+    (1, 1) & \texttt{Clayton} & 0.70 & 5/5 & 0.659 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 23.26\% ($\pm$ 0.75). Unsupervised: 28.48\% ($\pm$ 2.78).
+\end{table}

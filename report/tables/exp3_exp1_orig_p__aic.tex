@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 1 (\{Gauss, GH, Clayton\}, $p_{\text{orig}}$), criterion: AIC.}
+  \label{tab:exp3-exp1_orig_p__aic}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Gauss} & 0.70 & 1/5 & 0.670 \\
+    (0, 1) & \texttt{GH} & 0.40 & 1/5 & 0.322 \\
+    (1, 0) & \texttt{GH} & 0.40 & 1/5 & 0.347 \\
+    (1, 1) & \texttt{Clayton} & 0.70 & 5/5 & 0.674 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 20.48\% ($\pm$ 2.53). Unsupervised: 29.28\% ($\pm$ 5.91).
+\end{table}

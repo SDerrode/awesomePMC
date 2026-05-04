@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$), criterion: Cram\'er--von Mises.}
+  \label{tab:exp3-exp2_orig_p__cvm}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 0/5 & 0.151 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 4/5 & 0.116 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 3/5 & 0.055 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 5/5 & 0.241 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 22.44\% ($\pm$ 1.99). Unsupervised: 25.47\% ($\pm$ 1.53).
+\end{table}

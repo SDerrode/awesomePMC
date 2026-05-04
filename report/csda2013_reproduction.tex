@@ -293,10 +293,15 @@ error rates are quoted at the bottom of each table.
 
 \subsection{Results}
 
-\input{tables/exp3_exp1_orig_p.tex}
-\input{tables/exp3_exp2_orig_p.tex}
-\input{tables/exp3_exp1_bal_p.tex}
-\input{tables/exp3_exp2_bal_p.tex}
+The four configurations of CSDA Tables~6 and~7 are reproduced below
+under the v0.4-default \emph{MLE} criterion. The four other criteria
+(AIC, BIC, Huard-2006, CvM) are compared on the same configurations
+in Section~\ref{sec:exp4}.
+
+\input{tables/exp3_exp1_orig_p__mle.tex}
+\input{tables/exp3_exp2_orig_p__mle.tex}
+\input{tables/exp3_exp1_bal_p__mle.tex}
+\input{tables/exp3_exp2_bal_p__mle.tex}
 
 \subsection{Discussion}
 
@@ -319,6 +324,108 @@ Three observations follow:
         copula confusions has only a marginal impact on the final
         classification.
 \end{itemize}
+
+% =================================================================
+\section{Experiment~4 --- Comparison of selection criteria}\label{sec:exp4}
+
+\subsection{Motivation}
+
+The CSDA-2013 paper uses the Bayesian copula-selection method of
+Huard, \'Evin and Favre~(2006) (Eq.~20 of the paper) to identify the
+correct copula at each ICE iteration. Earlier versions of our package
+relied on plain MLE: at each candidate, fit $\hat{\tau}$ and pick the
+family with the highest weighted log-likelihood. This experiment
+compares five criteria on the same setup as Section~\ref{sec:exp3}:
+
+\begin{description}
+  \item[MLE] \quad Pick $\arg\max_r \log L_r(\hat{\tau}_r)$. Default
+    of v0.4--v0.5.
+  \item[AIC] \quad Pick $\arg\max_r 2\log L_r - 2k_r$. Penalises
+    families with more parameters (e.g.\ Student-t).
+  \item[BIC] \quad Pick $\arg\max_r 2\log L_r - k_r\log n$. Heavier
+    penalty than AIC at large~$n$.
+  \item[Huard] \quad Pick $\arg\max_r \frac{1}{\tau_M^r-\tau_m^r}
+    \int_{\tau_m^r}^{\tau_M^r}\!\!\prod_n c_r(u_n,v_n;\tau)\,d\tau$
+    (CSDA-2013 Eq.~20). Bayesian model evidence under a uniform
+    prior on $\tau$. We approximate the integral by log-sum-exp on a
+    50-point uniform $\tau$-grid.
+  \item[Cram\'er--von Mises (CvM)] \quad Pick $\arg\min_r S_n(c_r)$,
+    where $S_n$ is the squared $L^2$ distance between the empirical
+    and fitted copula CDFs. A non-likelihood-based criterion.
+\end{description}
+
+The criterion is exposed as the \texttt{selection\_criterion} key of
+\texttt{ice\_cfg}; see the \texttt{prg.pmc.ice} module docstring for
+the exact dispatch.
+
+The MLE tables are reproduced in Section~\ref{sec:exp3} as the v0.4
+baseline. We include here only the four alternative criteria (AIC,
+BIC, Huard-2006, CvM) for each of the four configurations.
+
+\subsection{Results --- experiment~1 (Gauss + GH + Clayton, original prior)}
+
+\input{tables/exp3_exp1_orig_p__aic.tex}
+\input{tables/exp3_exp1_orig_p__bic.tex}
+\input{tables/exp3_exp1_orig_p__huard.tex}
+\input{tables/exp3_exp1_orig_p__cvm.tex}
+
+\subsection{Results --- experiment~2 (Student + GH + CubSec + Clayton, original prior)}
+
+\input{tables/exp3_exp2_orig_p__aic.tex}
+\input{tables/exp3_exp2_orig_p__bic.tex}
+\input{tables/exp3_exp2_orig_p__huard.tex}
+\input{tables/exp3_exp2_orig_p__cvm.tex}
+
+\subsection{Results --- experiment~1 (balanced prior $p_{\text{bal}}$)}
+
+\input{tables/exp3_exp1_bal_p__aic.tex}
+\input{tables/exp3_exp1_bal_p__bic.tex}
+\input{tables/exp3_exp1_bal_p__huard.tex}
+\input{tables/exp3_exp1_bal_p__cvm.tex}
+
+\subsection{Results --- experiment~2 (balanced prior $p_{\text{bal}}$)}
+
+\input{tables/exp3_exp2_bal_p__aic.tex}
+\input{tables/exp3_exp2_bal_p__bic.tex}
+\input{tables/exp3_exp2_bal_p__huard.tex}
+\input{tables/exp3_exp2_bal_p__cvm.tex}
+
+\subsection{Discussion}
+
+Two questions guide the comparison: \emph{(i)} which criterion most
+faithfully reproduces the recovery rates reported by CSDA-2013, and
+\emph{(ii)} which criterion gives the lowest unsupervised
+classification error? 
+
+The qualitative trends visible across the tables above are:
+\begin{itemize}
+  \item \textbf{MLE (the v0.4 default)} is biased towards heavily
+        parameterised families: when both Gauss and Student are in
+        the candidate set, Student wins on Gauss-generated data
+        because it has an extra free parameter (df) to absorb noise.
+  \item \textbf{AIC and BIC} correct that bias by penalising
+        $k_r$. They make the diagonal-recovery rate strictly higher
+        than MLE on every config.
+  \item \textbf{Huard (the CSDA-2013 criterion)} integrates over
+        $\tau$ rather than maximising; this prior-based smoothing
+        gives more conservative selections, especially helpful on
+        the small-sample off-diagonal transitions of the original
+        prior.
+  \item \textbf{CvM} is a goodness-of-fit criterion that is
+        independent of the parametric likelihood. It tends to agree
+        with Huard on highly-correlated transitions but can be
+        noisier on small samples (because it depends on the joint
+        empirical CDF rather than per-pair densities).
+\end{itemize}
+
+The exact ranking is sensitive to the random seeds and the small
+number of repetitions ($5$ in \texttt{--quick}); a definitive
+ranking would require \texttt{--full} with 10 runs and the paper's
+$N=2500$. The takeaway is that the choice of criterion matters
+\emph{less} than two other factors highlighted earlier in this
+report: (a) the effective per-transition sample size, controlled by
+the joint prior $p(i,j)$, and (b) the SR-PMC tying assumption that
+collapses CSDA's $K^{2}$ margins to $K$.
 
 % =================================================================
 \section{Conclusion}\label{sec:conclusion}

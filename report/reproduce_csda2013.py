@@ -395,12 +395,28 @@ def _build_pmc_model_per_pair(
     return PMCModel.from_dict(raw)
 
 
-def run_exp3(runs: int) -> dict[str, dict]:
-    """Run §4.3 — Tables 6 and 7 (ICE-based copula selection)."""
+def run_exp3(
+    runs: int,
+    criteria: list[str] | None = None,
+) -> dict[str, dict]:
+    """Run §4.3 — Tables 6 and 7 (ICE-based copula selection).
+
+    Parameters
+    ----------
+    runs     : number of independent simulations.
+    criteria : list of selection criteria to evaluate. Default is the
+               5-element list ``["mle", "aic", "bic", "huard", "cvm"]``.
+               Each criterion is run on each config; results are keyed
+               ``f"{cfg.label}__{criterion}"`` so the LaTeX writer can
+               group them naturally.
+    """
+    if criteria is None:
+        criteria = ["mle", "aic", "bic", "huard", "cvm"]
+
     p_orig = [[0.50, 0.05], [0.05, 0.40]]
     p_bal  = [[0.35, 0.15], [0.15, 0.35]]
 
-    configs = [
+    base_configs = [
         _IceExpConfig(
             label="exp1_orig_p",
             candidates=["c1", "c3", "c6"],   # Gauss, GH, Clayton
@@ -434,8 +450,19 @@ def run_exp3(runs: int) -> dict[str, dict]:
             p=p_bal, runs=runs,
         ),
     ]
+    # Cross-product (config × criterion).
+    configs: list[tuple[_IceExpConfig, str]] = []
+    for base in base_configs:
+        for crit in criteria:
+            configs.append((base, crit))
+
     results: dict[str, dict] = {}
-    for cfg in configs:
+    for base_cfg, crit in configs:
+        # Tag the cfg with the criterion (logging only); the actual
+        # criterion is passed via ice_cfg below.
+        cfg = base_cfg
+        # Override label to include the criterion for distinct CSV/TeX paths.
+        cfg = type(cfg)(**{**cfg.__dict__, "label": f"{base_cfg.label}__{crit}"})
         logger.info(
             "Exp #3 / %s : truth=%s candidates=%s runs=%d N=%d",
             cfg.label, {k: (v[0], v[1]) for k, v in cfg.truth.items()},
@@ -473,6 +500,7 @@ def run_exp3(runs: int) -> dict[str, dict]:
                 "max_iter": cfg.max_iter,
                 "candidates": cand_short,
                 "fit_margins": False,        # margins assumed known per CSDA §4
+                "selection_criterion": crit,
             })
             # Tally hits / mean τ
             for i in range(K):
@@ -669,21 +697,40 @@ def write_all_latex_tables(
                 copulas=r["copulas"], means=r["means"], stds=r["stds"],
             )
     if res3:
-        captions_e3 = {
+        cfg_captions = {
             "exp1_orig_p":
-                r"ICE copula selection — exp.\ 1 (\{Gauss, GH, Clayton\}, $p_{\text{orig}}$).",
+                r"exp.\ 1 (\{Gauss, GH, Clayton\}, $p_{\text{orig}}$)",
             "exp2_orig_p":
-                r"ICE copula selection — exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$).",
+                r"exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$)",
             "exp1_bal_p":
-                r"ICE copula selection — exp.\ 1 with balanced prior $p_{\text{bal}}$.",
+                r"exp.\ 1 with balanced prior $p_{\text{bal}}$",
             "exp2_bal_p":
-                r"ICE copula selection — exp.\ 2 with balanced prior $p_{\text{bal}}$.",
+                r"exp.\ 2 with balanced prior $p_{\text{bal}}$",
+        }
+        crit_labels = {
+            "mle":   "MLE (max log-likelihood)",
+            "aic":   "AIC",
+            "bic":   "BIC",
+            "huard": r"Huard et al.\ 2006 (CSDA-2013 Eq.\ 20)",
+            "cvm":   r"Cram\'er--von Mises",
         }
         for k, r in res3.items():
+            # Keys are "<cfg_label>__<criterion>" or just "<cfg_label>"
+            # for the legacy single-criterion call.
+            if "__" in k:
+                cfg_part, crit_part = k.split("__", 1)
+                crit_descr = crit_labels.get(crit_part, crit_part)
+            else:
+                cfg_part   = k
+                crit_descr = crit_labels.get("mle", "MLE")
+            cfg_descr = cfg_captions.get(cfg_part, cfg_part)
+            caption = (
+                rf"ICE copula selection — {cfg_descr}, criterion: {crit_descr}."
+            )
             write_latex_table_ice(
                 TABLES_DIR / f"exp3_{k}.tex",
                 label=f"tab:exp3-{k}",
-                caption=captions_e3[k],
+                caption=caption,
                 rows=r["rows"],
                 sup_err=(r["sup_err_mean"],   r["sup_err_std"]),
                 unsup_err=(r["unsup_err_mean"], r["unsup_err_std"]),

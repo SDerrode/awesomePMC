@@ -461,17 +461,203 @@ def _fit_copula_params(
         return out
 
 
+# ---------------------------------------------------------------------------
+# Selection criteria — score functions for the candidate copula loop
+# ---------------------------------------------------------------------------
+#
+# Each criterion returns a *score* expressed so that "higher is better"
+# (so the same ``arg max`` loop in :func:`_select_and_fit_copula` works
+# regardless of the criterion). Convention:
+#
+#   * ``mle``   → weighted log-likelihood (default; what was used pre-v0.5)
+#   * ``aic``   → −AIC = 2·logL − 2k
+#   * ``bic``   → −BIC = 2·logL − k·log n
+#   * ``huard`` → log of Huard et al. (2006) Bayesian evidence (CSDA-2013 Eq. 20)
+#   * ``cvm``   → −CvM statistic (smaller CvM ⇒ better fit ⇒ higher score)
+#
+# All functions share the signature
+#     score(cls, entry, params, u, v, weights) -> float
+# where ``params`` is the dict produced by :func:`_fit_copula_params` for the
+# candidate (so we factor out the τ̂-fitting once per candidate).
+
+SELECTION_CRITERIA = ("mle", "aic", "bic", "huard", "cvm")
+DEFAULT_SELECTION_CRITERION = "mle"
+
+
+def _score_mle(cls, entry, params, u, v, weights) -> float:
+    """Weighted log-likelihood — the v0.4 baseline."""
+    return _weighted_log_likelihood(cls, params, u, v, weights)
+
+
+def _score_aic(cls, entry, params, u, v, weights) -> float:
+    """``−AIC`` = 2·log L − 2 k.  Penalises parameter count."""
+    ll = _weighted_log_likelihood(cls, params, u, v, weights)
+    k  = getattr(cls, "n_params", 1)
+    return 2.0 * ll - 2.0 * k
+
+
+def _score_bic(cls, entry, params, u, v, weights) -> float:
+    """``−BIC`` = 2·log L − k·log n.  Stronger penalty than AIC for large n."""
+    ll = _weighted_log_likelihood(cls, params, u, v, weights)
+    k  = getattr(cls, "n_params", 1)
+    n  = len(u)
+    return 2.0 * ll - k * np.log(max(n, 1))
+
+
+def _score_cvm(cls, entry, params, u, v, weights) -> float:
+    """``−`` Cramér–von Mises statistic on the (un-weighted) pseudos.
+
+    The CvM statistic measures the L²-distance between the empirical and
+    fitted copula CDFs and does not depend on the family's parameter count;
+    it is therefore a non-likelihood-based criterion that complements
+    :func:`_score_mle`.
+
+    Importing ``_cvm_statistic`` lazily avoids an unconditional dependency
+    on the GoF helper from :mod:`prg.copulas._fit`.
+    """
+    from prg.copulas._fit import _cvm_statistic
+    try:
+        cop = cls(**params)
+        # The CvM statistic has no closed form for some families that lack
+        # a CDF (e.g. Student); fall back to a low (worst) score.
+        cop.cdf([0.5, 0.5])
+    except (NotImplementedError, Exception):
+        return -np.inf
+    uv = np.column_stack((np.asarray(u, dtype=float),
+                          np.asarray(v, dtype=float)))
+    try:
+        S = float(_cvm_statistic(uv, cop))
+    except Exception:
+        return -np.inf
+    return -S
+
+
+def _huard_log_evidence(
+    cls,
+    entry,
+    params,    # noqa: ARG001  (signature uniformity)
+    u: np.ndarray,
+    v: np.ndarray,
+    weights: np.ndarray,
+    n_grid: int = 50,
+) -> float:
+    """Huard et al. (2006) Bayesian model evidence — CSDA-2013 Eq. (20).
+
+    The criterion picks the family that maximises the integrated likelihood
+    over τ ∈ [τ_min, τ_max] under a uniform prior::
+
+        s(r) = (1/(τ_max − τ_min)) ∫ ∏_n c_r(u_n, v_n; τ) dτ
+
+    We compute this in log space on a uniform τ-grid: ``log s(r) =
+    logsumexp_k log L_r(τ_k) − log n_grid``, where the implicit factor
+    ``(τ_max − τ_min)/n_grid`` cancels between candidates if their τ-ranges
+    coincide (otherwise it correctly down-weights the wider-range family).
+
+    Notes
+    -----
+    * Degenerate ranges (Product copula has ``τ_max == τ_min``) are handled
+      by returning the single-point log-likelihood.
+    * For multi-parameter families (Student `df`, BB1 `δ`), we fix the extra
+      parameter at the MLE-fitted value passed via ``params`` and integrate
+      over τ only — a pragmatic choice that matches CSDA-2013's intent (the
+      paper considers single-parameter copulas; Student `df` is taken as
+      known).
+    """
+    tau_min, tau_max = entry.value.TAU_MIN_MAX
+    span = tau_max - tau_min
+    pad  = max(1e-4 * max(span, 1.0), 1e-9)
+
+    # Pad away from the boundary (Brent-style) to avoid degenerate evaluations.
+    lo = tau_min + pad
+    hi = tau_max - pad if span > 2 * pad else tau_max
+
+    # Single-point case (Product copula).
+    if hi <= lo:
+        return _weighted_log_likelihood(cls, params, u, v, weights)
+
+    taus = np.linspace(lo, hi, n_grid)
+    log_evidence = np.full(n_grid, -np.inf, dtype=float)
+
+    extras = {k: v_ for k, v_ in params.items() if k != "tau_k"}
+
+    uv = np.column_stack((np.asarray(u, dtype=float),
+                          np.asarray(v, dtype=float)))
+    w  = np.asarray(weights, dtype=float)
+    w  = w / (w.sum() + MIN_POSITIVE)
+
+    for k, tau in enumerate(taus):
+        try:
+            cop = cls(tau_k=float(tau), **extras)
+            log_pdfs = cop.logpdf_array(uv)
+            log_pdfs = np.where(np.isfinite(log_pdfs), log_pdfs, -1e6)
+            log_evidence[k] = float(np.dot(w, log_pdfs))
+        except Exception as exc:                             # pragma: no cover
+            logger.debug("Huard: cls=%s τ=%.4f failed (%s)", cls.__name__, tau, exc)
+
+    # log-mean-exp over the τ grid (uniform prior on [lo, hi]).
+    finite = log_evidence[np.isfinite(log_evidence)]
+    if finite.size == 0:
+        return -np.inf
+    a = finite.max()
+    return float(a + np.log(np.exp(finite - a).mean()))
+
+
+def _score_huard(cls, entry, params, u, v, weights) -> float:
+    """Convenience wrapper: dispatch-compatible signature for Huard.
+
+    Forwards to :func:`_huard_log_evidence` with the default τ-grid
+    (50 points). Kept separate so the math primitive
+    :func:`_huard_log_evidence` accepts ``n_grid`` for tests / advanced
+    use, while the dispatch table stays homogeneous.
+    """
+    return _huard_log_evidence(cls, entry, params, u, v, weights)
+
+
+_SCORE_FN: dict[str, callable] = {
+    "mle":   _score_mle,
+    "aic":   _score_aic,
+    "bic":   _score_bic,
+    "cvm":   _score_cvm,
+    "huard": _score_huard,
+}
+
+
 def _select_and_fit_copula(
     candidates: list[str],
     u: np.ndarray,
     v: np.ndarray,
     weights: np.ndarray,
+    criterion: str = DEFAULT_SELECTION_CRITERION,
 ) -> dict:
+    """Select the best copula family from ``candidates`` and return a TOML block.
+
+    Parameters
+    ----------
+    candidates : list of SHORT_NAMEs (``["Gauss", "Clayton", …]``).
+    u, v       : pseudo-observation columns (length N each).
+    weights    : per-observation weights (e.g. ICE pair-posteriors ξ).
+    criterion  : key in :data:`SELECTION_CRITERIA`. ``"mle"`` is the v0.4
+                 baseline (max weighted log-lik). ``"huard"`` is the
+                 CSDA-2013 Bayesian evidence; AIC / BIC penalise the
+                 parameter count; ``"cvm"`` uses the Cramér–von Mises
+                 statistic on the empirical-vs-fitted copula CDF.
+
+    The τ̂ that ends up in the returned block is always the maximum-likelihood
+    estimate (``_fit_copula_params``); only the *family* picked changes with
+    the criterion.
+
+    Returns
+    -------
+    A TOML-compatible block ``{"name": ..., "tau": ..., …}``.
     """
-    Select the best copula family from `candidates` by weighted log-likelihood,
-    estimate all of its free parameters, and return a TOML-compatible block.
-    """
-    best_ll   = -np.inf
+    if criterion not in _SCORE_FN:
+        raise ValueError(
+            f"Unknown selection_criterion {criterion!r}. "
+            f"Valid: {sorted(_SCORE_FN)}"
+        )
+    score_fn = _SCORE_FN[criterion]
+
+    best_score = -np.inf
     best_block: dict = {"name": candidates[0], "tau": 0.0}
 
     for short in candidates:
@@ -482,12 +668,14 @@ def _select_and_fit_copula(
             continue
 
         params = _fit_copula_params(cls, entry, u, v, weights)
-        ll     = _weighted_log_likelihood(cls, params, u, v, weights)
-        logger.debug("  candidate=%s  params=%s  wll=%.4f", short, params, ll)
+        score  = score_fn(cls, entry, params, u, v, weights)
+        logger.debug(
+            "  candidate=%s  params=%s  criterion=%s  score=%.4f",
+            short, params, criterion, score,
+        )
 
-        if ll > best_ll:
-            best_ll = ll
-            # TOML uses `tau` (not `tau_k`) as the user-facing key.
+        if score > best_score:
+            best_score = score
             best_block = {"name": short, "tau": params["tau_k"]}
             for k, val in params.items():
                 if k != "tau_k":
@@ -651,16 +839,24 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     * ``multistart_jitter``(float,default 0.10)  — relative perturbation
                                                   amplitude (10 % of each
                                                   parameter's natural scale).
+    * ``selection_criterion``(str, default "mle")— rule for picking the
+                                                  best candidate copula at
+                                                  each M-step. One of
+                                                  :data:`SELECTION_CRITERIA`
+                                                  (``"mle"`` / ``"aic"`` /
+                                                  ``"bic"`` / ``"huard"`` /
+                                                  ``"cvm"``).
     """
     defaults: dict = {
-        "fit_margins":       False,
-        "max_iter":          50,
-        "tol":               1e-4,
-        "candidates":        _DEFAULT_CANDIDATES,
-        "patience":          3,
-        "n_starts":          1,
-        "multistart_seed":   0,
-        "multistart_jitter": 0.10,
+        "fit_margins":         False,
+        "max_iter":            50,
+        "tol":                 1e-4,
+        "candidates":          _DEFAULT_CANDIDATES,
+        "patience":            3,
+        "n_starts":            1,
+        "multistart_seed":     0,
+        "multistart_jitter":   0.10,
+        "selection_criterion": DEFAULT_SELECTION_CRITERION,
     }
     toml_ice = model.ice_config()
     cfg = {**defaults, **toml_ice}
@@ -864,6 +1060,14 @@ def _ice_single_run(
     fit_margins = bool(cfg["fit_margins"])
     # Patience: stop early if LL regresses on this many consecutive iterations.
     patience  = int(cfg.get("patience", 3))
+    selection_criterion = str(cfg.get(
+        "selection_criterion", DEFAULT_SELECTION_CRITERION,
+    ))
+    if selection_criterion not in _SCORE_FN:
+        raise ValueError(
+            f"Unknown selection_criterion {selection_criterion!r}. "
+            f"Valid: {sorted(_SCORE_FN)}"
+        )
     log_prefix = f"ICE[{run_tag}]" if run_tag else "ICE"
 
     var = model.variant
@@ -1028,7 +1232,10 @@ def _ice_single_run(
                 v_arr = f_cdf_state[1:,      jj]
 
                 logger.debug("  fitting copula (i=%d, j=%d)  Σw=%.4f", ii, jj, total_w)
-                best_blk = _select_and_fit_copula(candidates, u_arr, v_arr, weights_pair)
+                best_blk = _select_and_fit_copula(
+                    candidates, u_arr, v_arr, weights_pair,
+                    criterion=selection_criterion,
+                )
                 blk.update(best_blk)
 
         # Rebuild the model with updated raw dict
