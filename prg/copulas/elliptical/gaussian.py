@@ -44,7 +44,7 @@ class CopulaGaussian(CopulaVirt):
 
 
 if __name__ == '__main__':
-    from prg.tools.tools import set_dir
+    from pathlib import Path
 
     cop = CopulaGaussian(tau_k=0.5)
     print(f'Copula   : {cop.copula_enum.value.LONG_NAME}')
@@ -55,7 +55,8 @@ if __name__ == '__main__':
     print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
     print(f'tail dep : λ_L = λ_U = 0  (for all |θ| < 1)')
 
-    plot_dir = set_dir('./data/Plots', 'Copulas')
+    plot_dir = Path('./data/Plots/Copulas')
+    plot_dir.mkdir(parents=True, exist_ok=True)
     cop.plot_pdf(plot_dir)
     cop.plot_cdf(plot_dir)
     cop.plot_h_function(plot_dir)

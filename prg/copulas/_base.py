@@ -27,52 +27,21 @@ class CopulaDataMixin:
     AVAILABLE: bool
     PARAMETERS_SET_NAME: list[str] = field(default_factory=list)
     TAU_MIN_MAX: list[float] = field(default_factory=list)
+    MODULE: str = ""   # dotted import path, e.g. "prg.copulas.elliptical.gaussian"
 
 
 @unique
 class CopulaEnum(CopulaDataMixin, Enum):
-    PRODUCT = 1, "Prod", "Product", "CopulaProduct", True, ["tau_k"], [0.0, 0.0]
-    GAUSSIAN = 2, "Gauss", "Gaussian", "CopulaGaussian", True, ["tau_k"], [-1.0, 1.0]
-    STUDENT = 3, "Student", "Student", "CopulaStudent", True, ["tau_k"], [-1.0, 1.0]
-    GH = 4, "GH", "Gumbel-Hougaard", "CopulaGH", True, ["tau_k"], [0.0 + EPS, 1.0]
-    FGM = (
-        5,
-        "FGM",
-        "Farlie-Gumbel-Morgenstern",
-        "CopulaFGM",
-        True,
-        ["tau_k"],
-        [-2.0 / 9.0, 2.0 / 9.0],
-    )
-    CUBSEC = (
-        6,
-        "CubSec",
-        "Cubic Section",
-        "CopulaCubSec",
-        True,
-        ["tau_k"],
-        [0.0, 33.0 / 200.0],
-    )
-    CLAYTON = (
-        7,
-        "Clayton",
-        "Clayton",
-        "CopulaClayton",
-        True,
-        ["tau_k"],
-        [0.0 + EPS, 1.0],
-    )
-    A12 = 8, "A12", "Archimedean12", "CopulaA12", True, ["tau_k"], [1.0 / 3.0, 1.0]
-    A14 = 9, "A14", "Archimedean14", "CopulaA14", True, ["tau_k"], [1.0 / 3.0, 1.0]
-    FRANK = (
-        10,
-        "Frank",
-        "Frank",
-        "CopulaFrank",
-        False,
-        ["tau_k"],
-        [EPS_MINUS_ONE, ONE_MINUS_EPS],
-    )
+    PRODUCT  = 1,  "Prod",    "Product",              "CopulaProduct",  True,  ["tau_k"], [0.0, 0.0],                    "prg.copulas.explicit.product"
+    GAUSSIAN = 2,  "Gauss",   "Gaussian",             "CopulaGaussian", True,  ["tau_k"], [-1.0, 1.0],                   "prg.copulas.elliptical.gaussian"
+    STUDENT  = 3,  "Student", "Student",              "CopulaStudent",  True,  ["tau_k"], [-1.0, 1.0],                   "prg.copulas.elliptical.student"
+    GH       = 4,  "GH",      "Gumbel-Hougaard",      "CopulaGH",       True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.gumbel"
+    FGM      = 5,  "FGM",     "Farlie-Gumbel-Morgenstern", "CopulaFGM", True,  ["tau_k"], [-2.0 / 9.0, 2.0 / 9.0],     "prg.copulas.explicit.fgm"
+    CUBSEC   = 6,  "CubSec",  "Cubic Section",        "CopulaCubSec",   True,  ["tau_k"], [0.0, 33.0 / 200.0],          "prg.copulas.explicit.cubic_section"
+    CLAYTON  = 7,  "Clayton", "Clayton",              "CopulaClayton",  True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.clayton"
+    A12      = 8,  "A12",     "Archimedean12",        "CopulaA12",      True,  ["tau_k"], [1.0 / 3.0, 1.0],             "prg.copulas.archimedean.a12"
+    A14      = 9,  "A14",     "Archimedean14",        "CopulaA14",      True,  ["tau_k"], [1.0 / 3.0, 1.0],             "prg.copulas.archimedean.a14"
+    FRANK    = 10, "Frank",   "Frank",                "CopulaFrank",    False, ["tau_k"], [EPS_MINUS_ONE, ONE_MINUS_EPS], "prg.copulas.archimedean.frank"
 
     def describe(self):
         return self.name, self.value
@@ -338,12 +307,15 @@ class CopulaVirt:
         list[FitResult]  sorted by AIC ascending. Failures are logged and skipped.
         """
         if families is None:
-            from prg.copulas import (
-                CopulaGaussian, CopulaStudent, CopulaGH, CopulaClayton,
-                CopulaA12, CopulaA14, CopulaFGM, CopulaCubSec,
-            )
-            families = [CopulaGaussian, CopulaStudent, CopulaGH, CopulaClayton,
-                        CopulaA12, CopulaA14, CopulaFGM, CopulaCubSec]
+            import importlib as _il
+            families = []
+            for _entry in CopulaEnum:
+                if not _entry.value.AVAILABLE or not _entry.MODULE:
+                    continue
+                if _entry.CLASS_NAME == 'CopulaProduct':   # τ fixé à 0, pas de fit utile
+                    continue
+                _mod = _il.import_module(_entry.MODULE)
+                families.append(getattr(_mod, _entry.CLASS_NAME))
 
         results: list = []
         for cls in families:

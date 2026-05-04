@@ -51,7 +51,7 @@ class CopulaFGM(CopulaVirt):
 
 
 if __name__ == '__main__':
-    from prg.tools.tools import set_dir
+    from pathlib import Path
 
     cop = CopulaFGM(tau_k=0.15)
     print(f'Copula   : {cop.copula_enum.value.LONG_NAME}')
@@ -63,7 +63,8 @@ if __name__ == '__main__':
     print(f'majorant(0.5) = {cop.majorant(0.5):.6f}  [= 1 + |θ||1−2u|]')
     print(f'tail dep : λ_L = λ_U = 0  (τ_max = 2/9 ≈ 0.222)')
 
-    plot_dir = set_dir('./data/Plots', 'Copulas')
+    plot_dir = Path('./data/Plots/Copulas')
+    plot_dir.mkdir(parents=True, exist_ok=True)
     cop.plot_pdf(plot_dir)
     cop.plot_cdf(plot_dir)
     cop.plot_h_function(plot_dir)

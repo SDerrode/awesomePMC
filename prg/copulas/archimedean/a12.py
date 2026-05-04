@@ -10,10 +10,13 @@ if __name__ == '__main__':
     import sys, pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
+import logging
 import numpy as np
 
 from prg.copulas._base import CopulaVirt
 from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+
+logger = logging.getLogger(__name__)
 
 
 class CopulaA12(CopulaVirt):
@@ -40,6 +43,8 @@ class CopulaA12(CopulaVirt):
         S1th    = np.exp(log_S * inv_th)
         factor  = (self.theta - 1.0) + (self.theta + 1.0) * S1th
         if factor <= 0.0:
+            logger.debug('A12.pdf: factor ≤ 0 (θ=%.3f, u=(%.3e,%.3e)) → fallback EPS',
+                         self.theta, u1, u2)
             return float(EPS)
         log_result = (
             log_U1 - np.log(u1) - np.log(1.0 - u1)
@@ -49,7 +54,11 @@ class CopulaA12(CopulaVirt):
             - 3.0 * np.log1p(S1th)
         )
         result = np.exp(log_result)
-        return float(result) if np.isfinite(result) else float(EPS)
+        if not np.isfinite(result):
+            logger.debug('A12.pdf: résultat non-fini (θ=%.3f, u=(%.3e,%.3e)) → fallback EPS',
+                         self.theta, u1, u2)
+            return float(EPS)
+        return float(result)
 
     def cdf(self, uv):
         u1 = minmaxEPS(uv[0])
@@ -74,7 +83,7 @@ class CopulaA12(CopulaVirt):
 
 
 if __name__ == '__main__':
-    from prg.tools.tools import set_dir
+    from pathlib import Path
 
     cop = CopulaA12(tau_k=0.5)
     print(f'Copula   : {cop.copula_enum.value.LONG_NAME}')
@@ -86,7 +95,8 @@ if __name__ == '__main__':
     lL, lU = cop.tail_dependence()
     print(f'tail dep : λ_L = {lL:.4f}  [= 2^(−1/θ)],  λ_U = {lU:.4f}  [= 2 − 2^(1/θ)]')
 
-    plot_dir = set_dir('./data/Plots', 'Copulas')
+    plot_dir = Path('./data/Plots/Copulas')
+    plot_dir.mkdir(parents=True, exist_ok=True)
     cop.plot_pdf(plot_dir)
     cop.plot_cdf(plot_dir)
     cop.plot_h_function(plot_dir)

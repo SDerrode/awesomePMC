@@ -46,7 +46,7 @@ class CopulaStudent(CopulaVirt):
 
 
 if __name__ == '__main__':
-    from prg.tools.tools import set_dir
+    from pathlib import Path
 
     cop = CopulaStudent(tau_k=0.5)
     lam = 2.0 * _t.cdf(
@@ -62,7 +62,8 @@ if __name__ == '__main__':
     print(f'tail dep : λ_L = λ_U = {lam:.4f}  [symmetric, heavier than Gaussian]')
     print(f'(CDF has no closed form — plot_cdf silently skipped)')
 
-    plot_dir = set_dir('./data/Plots', 'Copulas')
+    plot_dir = Path('./data/Plots/Copulas')
+    plot_dir.mkdir(parents=True, exist_ok=True)
     cop.plot_pdf(plot_dir)
     cop.plot_cdf(plot_dir)   # skipped gracefully
     cop.plot_h_function(plot_dir)

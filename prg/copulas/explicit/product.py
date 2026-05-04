@@ -33,7 +33,7 @@ class CopulaProduct(CopulaVirt):
 
 
 if __name__ == '__main__':
-    from prg.tools.tools import set_dir
+    from pathlib import Path
 
     cop = CopulaProduct(tau_k=0.)
     print(f'Copula   : {cop.copula_enum.value.LONG_NAME}')
@@ -44,7 +44,8 @@ if __name__ == '__main__':
     print(f'tail dep : λ_L = λ_U = 0')
     print(f'(plot_multi_tau skipped: single point τ=0)')
 
-    plot_dir = set_dir('./data/Plots', 'Copulas')
+    plot_dir = Path('./data/Plots/Copulas')
+    plot_dir.mkdir(parents=True, exist_ok=True)
     cop.plot_pdf(plot_dir)
     cop.plot_cdf(plot_dir)
     cop.plot_h_function(plot_dir)
