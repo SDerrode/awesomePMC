@@ -12,6 +12,7 @@ ice       : unsupervised ICE parameter estimation.
 
 from prg.pmc.model         import PMCModel, Variant
 from prg.pmc.simulate      import simulate
+from prg.pmc.pmm           import simulate_pmm, classify_pmm
 from prg.pmc.inference     import classify, forward, backward, smooth, mpm, error_rate
 from prg.pmc.ice           import ice
 from prg.pmc.logging_setup import configure as configure_logging
@@ -22,8 +23,10 @@ __all__ = [
     "Variant",
     # simulation
     "simulate",
+    "simulate_pmm",
     # inference
     "classify",
+    "classify_pmm",
     "forward",
     "backward",
     "smooth",

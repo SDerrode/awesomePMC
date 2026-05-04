@@ -124,3 +124,13 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# LaTeX intermediates from the CSDA-2013 reproduction report
+report/*.aux
+report/*.fdb_latexmk
+report/*.fls
+report/*.log
+report/*.out
+report/*.synctex.gz
+report/*.toc
+report/__pycache__/
