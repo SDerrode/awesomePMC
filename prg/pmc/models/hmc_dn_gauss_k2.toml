@@ -1,0 +1,55 @@
+# HMC-DN model — K=2 classes, Gaussian margins + Gaussian copulas.
+#
+# Variant: HMC-DN
+#   • Hidden Markov Chain
+#   • Dependent observations: joint density of (y_n, y_{n+1}) given
+#     (X_n=i, X_{n+1}=j) is modelled via a copula c_{ij} linking the
+#     state-indexed marginals f_i and f_j (SR-PMC contract).
+#   • K margin blocks + K² copula blocks
+#   • Prior: row-stochastic transition matrix A (rows sum to 1)
+
+[model]
+name      = "HMC-DN Gaussien K=2"
+variant   = "HMC-DN"
+K         = 2
+N_default = 5000
+
+[prior]
+A = [[0.90, 0.10],
+     [0.10, 0.90]]
+
+# ── Margins (K-format: one block per state) ──────────────────────────────────
+[[margins]]
+i      = 0
+dist   = "norm"
+params = {loc = -1.0, scale = 1.0}
+
+[[margins]]
+i      = 1
+dist   = "norm"
+params = {loc = 1.0, scale = 1.0}
+
+# ── Copulas ───────────────────────────────────────────────────────────────────
+[[copulas]]
+i    = 0
+j    = 0
+name = "Gauss"
+tau  = 0.6
+
+[[copulas]]
+i    = 0
+j    = 1
+name = "Gauss"
+tau  = 0.0
+
+[[copulas]]
+i    = 1
+j    = 0
+name = "Gauss"
+tau  = 0.0
+
+[[copulas]]
+i    = 1
+j    = 1
+name = "Gauss"
+tau  = 0.6

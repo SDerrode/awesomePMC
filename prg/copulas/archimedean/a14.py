@@ -6,14 +6,15 @@ CDF:  C(u,v) = (1 + (U1 + U2)^{1/θ})^{-θ}
 θ = 2 / (3(1 − τ_K)),  τ_K ∈ [1/3, 1).
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
 import numpy as np
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,76 @@ class CopulaA14(CopulaVirt):
         U1 = pow(pow(u0, -1.0 / self.theta) - 1.0, self.theta)
         U2 = pow(pow(u1, -1.0 / self.theta) - 1.0, self.theta)
         return float(pow(1.0 + pow(U1 + U2, 1.0 / self.theta), -self.theta))
+
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (A14 has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th     = self.theta
+        inv_th = 1.0 / th
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            U1 = (u ** (-inv_th) - 1.0) ** th
+            U2 = (v ** (-inv_th) - 1.0) ** th
+            result = (1.0 + (U1 + U2) ** inv_th) ** (-th)
+        return np.clip(np.where(np.isfinite(result), result, EPS), 0.0, 1.0)
+
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (A14 has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th     = self.theta
+        inv_th = 1.0 / th
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            U1  = (u ** (-inv_th) - 1.0) ** th
+            U2  = (v ** (-inv_th) - 1.0) ** th
+            S   = U1 + U2
+            S1t = S ** inv_th
+            denom = (
+                th * u * v
+                * (u ** inv_th - 1.0)
+                * (v ** inv_th - 1.0)
+            )
+            result = (
+                U1 * S ** (inv_th - 2.0)
+                * U2 * (1.0 + S1t) ** (-2.0 - th)
+                / np.where(denom != 0.0, denom, EPS)
+                * (th - 1.0 + 2.0 * th * S1t)
+            )
+        return np.where(np.isfinite(result) & (result > 0.0), result, EPS)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF for A14 — log-space form of the closed-form PDF.
+
+        With U_i = (u_i^{−1/θ} − 1)^θ > 0, S = U_1 + U_2 > 0, and noting
+        ``u^{1/θ} − 1 < 0`` for u ∈ (0, 1), we use ``log|u^{1/θ} − 1| =
+        log(1 − u^{1/θ})``:
+
+            log c = log U_1 + log U_2 + (1/θ − 2) log S + (−2 − θ) log(1 + S^{1/θ})
+                  − log(θ uv) − log(1 − u^{1/θ}) − log(1 − v^{1/θ})
+                  + log(θ − 1 + 2θ S^{1/θ}).
+        """
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th     = self.theta
+        inv_th = 1.0 / th
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            U1  = np.maximum((u ** (-inv_th) - 1.0) ** th, EPS)
+            U2  = np.maximum((v ** (-inv_th) - 1.0) ** th, EPS)
+            S   = U1 + U2
+            S1t = S ** inv_th
+            # u^{1/θ} - 1 < 0 for u ∈ (0,1); use log|u^{1/θ} - 1| = log(1 - u^{1/θ}).
+            return (
+                np.log(U1) + np.log(U2)
+                + (inv_th - 2.0) * np.log(S)
+                + (-2.0 - th)    * np.log1p(S1t)
+                - np.log(th * u * v)
+                - np.log(np.maximum(1.0 - u ** inv_th, EPS))
+                - np.log(np.maximum(1.0 - v ** inv_th, EPS))
+                + np.log(np.maximum(th - 1.0 + 2.0 * th * S1t, EPS))
+            )
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = (1+S^{1/θ})^{−θ−1} · S^{1/θ−1} · (u^{−1/θ}−1)^{θ−1} · u^{−1/θ−1}."""

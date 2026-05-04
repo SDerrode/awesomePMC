@@ -1,0 +1,461 @@
+"""
+prg.copulas._bivariate_fit — IFM fit result, bootstrap, GoF, and diagnostics
+for :class:`BivariateLaw`.
+
+Extracted from ``bivariate.py`` to keep that module focused on the joint-law
+mechanics (PDF/CDF/sampling/conditional). The methods here drive bootstrap and
+cross-validation refits, which create new ``BivariateLaw`` instances via
+``BivariateLaw.fit(...)`` — that runtime call is imported lazily inside each
+method to avoid the import cycle (``bivariate`` → ``_bivariate_fit`` →
+``bivariate``).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from prg.copulas._fit import FitResult, GoFResult, _empirical_tail_dep
+from prg.plot_style    import DEFAULT_FONT_SIZE as FONT_SIZE
+
+if TYPE_CHECKING:
+    from prg.copulas.bivariate import BivariateLaw
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Joint empirical CDF / Cramér-von Mises statistic
+# ---------------------------------------------------------------------------
+
+def _empirical_joint_cdf(data: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """F_n(x,y) = (1/n) Σ 1{X_i ≤ x, Y_i ≤ y} evaluated at given points."""
+    leq_x = data[:, 0][None, :] <= points[:, 0][:, None]
+    leq_y = data[:, 1][None, :] <= points[:, 1][:, None]
+    return (leq_x & leq_y).mean(axis=1)
+
+
+def _joint_cvm_statistic(data: np.ndarray, bivariate: "BivariateLaw") -> float:
+    """Cramér-von Mises statistic on the joint: Σ (F_n(x,y) − F_θ(x,y))²."""
+    Fn = _empirical_joint_cdf(data, data)
+    Ftheta = np.array([bivariate.cdf(data[i]) for i in range(data.shape[0])])
+    return float(np.sum((Fn - Ftheta) ** 2))
+
+
+# ---------------------------------------------------------------------------
+# BivariateBootstrapCI
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BivariateBootstrapCI:
+    """Returned by :meth:`BivariateFitResult.bootstrap_ci`."""
+
+    tau_k: tuple[float, float]
+    left_params: list[tuple[float, float]]
+    right_params: list[tuple[float, float]]
+    alpha: float
+    B: int
+    n_valid: int
+
+    def __repr__(self) -> str:
+        lp = ", ".join(f"[{lo:.3f},{hi:.3f}]" for lo, hi in self.left_params)
+        rp = ", ".join(f"[{lo:.3f},{hi:.3f}]" for lo, hi in self.right_params)
+        return (
+            f"BivariateBootstrapCI({100*(1-self.alpha):.0f}%, "
+            f"B={self.n_valid}/{self.B}, "
+            f"tau_k=[{self.tau_k[0]:.3f},{self.tau_k[1]:.3f}], "
+            f"left=[{lp}], right=[{rp}])"
+        )
+
+
+# ---------------------------------------------------------------------------
+# BivariateFitResult
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BivariateFitResult:
+    """Returned by :meth:`BivariateLaw.fit`."""
+
+    bivariate:      "BivariateLaw"
+    copula_fit:     FitResult
+    left_params:    tuple
+    right_params:   tuple
+    log_likelihood: float       # ∑ log f(x_i, y_i) on the original data
+    n_obs:          int
+    data:           np.ndarray  # (n, 2) original data, kept for GoF / bootstrap
+
+    @property
+    def n_params(self) -> int:
+        return len(self.left_params) + len(self.right_params) + self.copula_fit.n_params
+
+    @property
+    def aic(self) -> float:
+        return 2.0 * self.n_params - 2.0 * self.log_likelihood
+
+    @property
+    def bic(self) -> float:
+        return self.n_params * np.log(self.n_obs) - 2.0 * self.log_likelihood
+
+    @property
+    def aicc(self) -> float:
+        """Corrected AIC for small samples: AIC + 2k(k+1)/(n−k−1)."""
+        k, n = self.n_params, self.n_obs
+        if n - k - 1 <= 0:
+            return float("nan")
+        return self.aic + 2.0 * k * (k + 1) / (n - k - 1)
+
+    @property
+    def hqc(self) -> float:
+        """Hannan-Quinn: 2k·log(log n) − 2·loglik."""
+        return (
+            2.0 * self.n_params * np.log(np.log(self.n_obs)) - 2.0 * self.log_likelihood
+        )
+
+    def __repr__(self) -> str:
+        cop = self.bivariate.copula.copula_enum.value.LONG_NAME
+        lm = self.bivariate.left_margin["dist_name"]
+        rm = self.bivariate.right_margin["dist_name"]
+        return (
+            f"BivariateFitResult(copula={cop!r}, "
+            f"left={lm!r}{self.left_params}, "
+            f"right={rm!r}{self.right_params}, "
+            f"loglik={self.log_likelihood:.2f}, "
+            f"AIC={self.aic:.2f}, BIC={self.bic:.2f}, n={self.n_obs})"
+        )
+
+    # ------------------------------------------------------------------
+    # Goodness-of-fit on the joint (margins + copula)
+    # ------------------------------------------------------------------
+    def gof_test(self, B: int = 100, seed: int | None = None) -> GoFResult:
+        """Cramér-von Mises GoF test on the joint distribution.
+
+        Tests H₀: data was generated by the fitted bivariate (margins + copula).
+        Bootstrap resamples from the fitted BivariateLaw and refits at each
+        iteration — heavier than the copula-only test in :class:`FitResult`,
+        but penalises misspecified margins as well.
+        """
+        # Lazy import to avoid the bivariate ↔ _bivariate_fit cycle
+        from prg.copulas.bivariate import BivariateLaw
+
+        try:
+            self.bivariate.copula.cdf([0.5, 0.5])
+        except NotImplementedError:
+            raise NotImplementedError(
+                "GoF test requires the copula CDF; not available for "
+                f"{self.bivariate.copula.__class__.__name__}."
+            )
+        rng = np.random.default_rng(seed)
+        S_n = _joint_cvm_statistic(self.data, self.bivariate)
+
+        cop_class    = self.copula_fit.copula.__class__
+        left_family  = self.bivariate.left_margin["dist"]
+        right_family = self.bivariate.right_margin["dist"]
+        method       = self.copula_fit.method
+
+        stats = np.full(B, np.nan)
+        log_every = max(B // 10, 1)
+        for b in range(B):
+            self.bivariate.set_seed(int(rng.integers(0, 2**31 - 1)))
+            sample = self.bivariate.sample(n=self.n_obs)
+            try:
+                r_b = BivariateLaw.fit(
+                    sample, cop_class, left_family, right_family, copula_method=method
+                )
+                stats[b] = _joint_cvm_statistic(sample, r_b.bivariate)
+            except Exception as e:
+                logger.debug("Bootstrap iter %d failed: %s", b, e)
+            if (b + 1) % log_every == 0:
+                logger.info("Joint GoF bootstrap: %d / %d done", b + 1, B)
+
+        valid = ~np.isnan(stats)
+        n_valid = int(valid.sum())
+        p_value = float(np.mean(stats[valid] >= S_n)) if n_valid > 0 else float("nan")
+        return GoFResult(
+            statistic=S_n,
+            p_value=p_value,
+            B=B,
+            n_valid_bootstrap=n_valid,
+            bootstrap_stats=stats[valid],
+        )
+
+    # ------------------------------------------------------------------
+    # Bootstrap CI on all parameters (margins + tau_k)
+    # ------------------------------------------------------------------
+    def bootstrap_ci(
+        self, B: int = 500, alpha: float = 0.05, seed: int | None = None
+    ) -> BivariateBootstrapCI:
+        """Non-parametric bootstrap percentile CI on every fitted parameter.
+
+        Resamples (X_i, Y_i) pairs with replacement, refits the entire
+        BivariateLaw (margins + copula), and returns (alpha/2, 1-alpha/2)
+        quantiles for τ_k and each marginal parameter.
+        """
+        from prg.copulas.bivariate import BivariateLaw
+
+        rng       = np.random.default_rng(seed)
+        cop_class = self.copula_fit.copula.__class__
+        left_family  = self.bivariate.left_margin["dist"]
+        right_family = self.bivariate.right_margin["dist"]
+        method  = self.copula_fit.method
+        n_left  = len(self.left_params)
+        n_right = len(self.right_params)
+
+        tau_boots   = np.full(B, np.nan)
+        left_boots  = np.full((B, n_left),  np.nan)
+        right_boots = np.full((B, n_right), np.nan)
+        log_every   = max(B // 10, 1)
+
+        for b in range(B):
+            idx = rng.integers(0, self.n_obs, size=self.n_obs)
+            sample = self.data[idx]
+            try:
+                r_b = BivariateLaw.fit(
+                    sample, cop_class, left_family, right_family, copula_method=method
+                )
+                tau_boots[b]   = r_b.copula_fit.tau_k
+                left_boots[b]  = r_b.left_params
+                right_boots[b] = r_b.right_params
+            except Exception as e:
+                logger.debug("Bootstrap iter %d failed: %s", b, e)
+            if (b + 1) % log_every == 0:
+                logger.info("Bivariate bootstrap-CI: %d / %d done", b + 1, B)
+
+        valid = ~np.isnan(tau_boots)
+        if valid.sum() < 10:
+            raise RuntimeError(
+                f"Bootstrap failed: only {valid.sum()}/{B} valid replicates."
+            )
+
+        q_lo, q_hi = alpha / 2.0, 1.0 - alpha / 2.0
+        tau_ci = (
+            float(np.quantile(tau_boots[valid], q_lo)),
+            float(np.quantile(tau_boots[valid], q_hi)),
+        )
+        left_ci = [
+            (
+                float(np.quantile(left_boots[valid, k], q_lo)),
+                float(np.quantile(left_boots[valid, k], q_hi)),
+            )
+            for k in range(n_left)
+        ]
+        right_ci = [
+            (
+                float(np.quantile(right_boots[valid, k], q_lo)),
+                float(np.quantile(right_boots[valid, k], q_hi)),
+            )
+            for k in range(n_right)
+        ]
+        return BivariateBootstrapCI(
+            tau_k=tau_ci,
+            left_params=left_ci,
+            right_params=right_ci,
+            alpha=alpha,
+            B=B,
+            n_valid=int(valid.sum()),
+        )
+
+    # ------------------------------------------------------------------
+    # K-fold cross-validation log-likelihood
+    # ------------------------------------------------------------------
+    def cv_loglik(self, K: int = 5, seed: int | None = None) -> float:
+        """K-fold CV log-likelihood for the full bivariate model.
+
+        For each fold, both margins (MLE) and the copula are refitted on the
+        training set, and ∑ log f(x,y) is accumulated on the held-out test set.
+        Higher is better. Cleaner than AIC: penalises overfitting honestly.
+
+        Numerical floor
+        ---------------
+        When a fitted margin's support excludes some test point (typical for
+        ``expon`` / ``triang`` / similar location-shifted families on
+        small-N folds), ``log f(x, y) = -∞``. We clip these contributions
+        at **-100 nats** rather than ``log(MIN_POSITIVE) ≈ -708``. The choice
+        is intentional:
+        * -100 keeps the CV score finite and on a comparable scale across
+          folds (a single -708 outlier would dominate the sum);
+        * -100 still penalises support violations heavily (e^{-100} ≈ 0,
+          a fold with several violations clearly loses to its peers);
+        * the absolute value of the CV score is rarely used — only the
+          relative ranking across competing models matters.
+        """
+        from prg.copulas.bivariate import BivariateLaw
+
+        if K < 2 or K > self.n_obs:
+            raise ValueError(f"K must be in [2, n_obs], got {K} for n={self.n_obs}.")
+        rng   = np.random.default_rng(seed)
+        idx   = rng.permutation(self.n_obs)
+        folds = np.array_split(idx, K)
+        cop_class    = self.copula_fit.copula.__class__
+        left_family  = self.bivariate.left_margin["dist"]
+        right_family = self.bivariate.right_margin["dist"]
+        method = self.copula_fit.method
+
+        cv_ll = 0.0
+        for k in range(K):
+            test_idx  = folds[k]
+            train_idx = np.concatenate([folds[j] for j in range(K) if j != k])
+            try:
+                r_k = BivariateLaw.fit(
+                    self.data[train_idx],
+                    cop_class,
+                    left_family,
+                    right_family,
+                    copula_method=method,
+                )
+                for i in test_idx:
+                    # Clip −∞ (support violation) at a large negative penalty.
+                    # Common when expon/triang's fitted location excludes a test point.
+                    log_p = float(r_k.bivariate.log_pdf(self.data[i]))
+                    cv_ll += log_p if np.isfinite(log_p) else -100.0
+            except Exception as e:
+                logger.warning("CV fold %d failed: %s", k, e)
+                return float("nan")
+        return float(cv_ll)
+
+    # ------------------------------------------------------------------
+    # Visual diagnostics
+    # ------------------------------------------------------------------
+    def plot_diagnostics(self, plot_dir: str, prefix: str = "") -> None:
+        """6-panel diagnostic plot:
+        (0,0) data scatter + fitted joint PDF contours
+        (0,1) QQ plot — left margin
+        (0,2) lower tail dependence  λ̂_L(u) vs fitted λ_L (on parametric pseudo-obs)
+        (1,0) QQ plot — right margin
+        (1,1) PP plot of the joint CDF  F_n vs F_θ
+        (1,2) upper tail dependence  λ̂_U(u) vs fitted λ_U
+        """
+        cop_name = self.bivariate.copula.copula_enum.value.LONG_NAME
+        n = self.n_obs
+        fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+        fig.suptitle(
+            f"Bivariate fit diagnostics  ({cop_name}, n={n})",
+            fontsize=FONT_SIZE + 1,
+            y=0.995,
+        )
+
+        # (0,0) — data over fitted joint PDF
+        ax = axes[0, 0]
+        Z = self.bivariate._compute_pdf_grid()
+        vmax = float(np.nanpercentile(Z, 95))
+        ax.contourf(
+            self.bivariate._X,
+            self.bivariate._Y,
+            Z,
+            levels=10,
+            cmap="Blues",
+            alpha=0.45,
+            vmin=0,
+            vmax=max(vmax, 1e-10),
+        )
+        ax.scatter(self.data[:, 0], self.data[:, 1], s=4, alpha=0.6, c="black")
+        ax.set_title("Data + fitted joint PDF")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+
+        pp = (np.arange(1, n + 1) - 0.5) / n
+
+        # (0,1) — left QQ
+        ax = axes[0, 1]
+        lm = self.bivariate.left_margin
+        sx = np.sort(self.data[:, 0])
+        tx = lm["dist"].ppf(pp, *lm["params"])
+        ax.scatter(tx, sx, s=6, alpha=0.6)
+        lo, hi = float(min(tx.min(), sx.min())), float(max(tx.max(), sx.max()))
+        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
+        ax.set_title(f"Left margin QQ  ({lm['dist_name']})")
+        ax.set_xlabel("Theoretical")
+        ax.set_ylabel("Empirical")
+
+        # (1,0) — right QQ
+        ax = axes[1, 0]
+        rm = self.bivariate.right_margin
+        sy = np.sort(self.data[:, 1])
+        ty = rm["dist"].ppf(pp, *rm["params"])
+        ax.scatter(ty, sy, s=6, alpha=0.6)
+        lo, hi = float(min(ty.min(), sy.min())), float(max(ty.max(), sy.max()))
+        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
+        ax.set_title(f"Right margin QQ  ({rm['dist_name']})")
+        ax.set_xlabel("Theoretical")
+        ax.set_ylabel("Empirical")
+
+        # (1,1) — joint PP plot
+        ax = axes[1, 1]
+        try:
+            self.bivariate.copula.cdf([0.5, 0.5])
+            Fn = _empirical_joint_cdf(self.data, self.data)
+            Ft = np.array([self.bivariate.cdf(self.data[i]) for i in range(n)])
+            ax.scatter(Fn, Ft, s=6, alpha=0.6)
+            ax.plot([0, 1], [0, 1], "r--", lw=1)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.set_aspect("equal")
+            ax.set_xlabel("$F_n$ (empirical)")
+            ax.set_ylabel(r"$F_\theta$ (fitted)")
+            ax.set_title("Joint PP plot")
+        except NotImplementedError:
+            ax.axis("off")
+            ax.text(
+                0.5,
+                0.5,
+                "Joint CDF not available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+
+        # Tail dependence — pseudo-obs via FITTED margin CDFs (parametric)
+        u1 = lm["dist"].cdf(self.data[:, 0], *lm["params"])
+        u2 = rm["dist"].cdf(self.data[:, 1], *rm["params"])
+        uv = np.column_stack([u1, u2])
+
+        u_low  = np.linspace(0.02, 0.30, 25)
+        u_high = np.linspace(0.70, 0.98, 25)
+        lL_emp = _empirical_tail_dep(uv, u_low,  "lower")
+        lU_emp = _empirical_tail_dep(uv, u_high, "upper")
+        lL_th, lU_th = self.bivariate.copula.tail_dependence()
+
+        # (0,2) — lower tail
+        ax = axes[0, 2]
+        ax.plot(u_low, lL_emp, "o-", ms=4, label=r"Empirical $\hat\lambda_L(u)$")
+        if not np.isnan(lL_th):
+            ax.axhline(
+                lL_th,
+                color="red",
+                ls="--",
+                lw=1.2,
+                label=rf"Fitted $\lambda_L = {lL_th:.3f}$",
+            )
+        ax.set_xlabel("u")
+        ax.set_ylabel(r"$\lambda_L$")
+        ax.set_title("Lower tail dependence")
+        ax.set_ylim(-0.05, 1.05)
+        ax.legend(fontsize=9)
+
+        # (1,2) — upper tail
+        ax = axes[1, 2]
+        ax.plot(u_high, lU_emp, "o-", ms=4, label=r"Empirical $\hat\lambda_U(u)$")
+        if not np.isnan(lU_th):
+            ax.axhline(
+                lU_th,
+                color="red",
+                ls="--",
+                lw=1.2,
+                label=rf"Fitted $\lambda_U = {lU_th:.3f}$",
+            )
+        ax.set_xlabel("u")
+        ax.set_ylabel(r"$\lambda_U$")
+        ax.set_title("Upper tail dependence")
+        ax.set_ylim(-0.05, 1.05)
+        ax.legend(fontsize=9)
+
+        plt.tight_layout()
+        plt.savefig(
+            os.path.join(plot_dir, f"{prefix}BivariateDiagnostics.png"),
+            bbox_inches="tight",
+        )
+        plt.close()

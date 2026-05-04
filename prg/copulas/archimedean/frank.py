@@ -6,7 +6,8 @@ CDF: C(u,v) = -(1/θ) log(1 + (e^{-θu}-1)(e^{-θv}-1)/(e^{-θ}-1))
 τ_K range: (−1, 1)  [full range via Debye function inversion]
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -16,7 +17,7 @@ from scipy.optimize  import root_scalar
 from statsmodels.distributions.copula.api import FrankCopula
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,79 @@ class CopulaFrank(CopulaVirt):
             )
             return fallback
 
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF — bypasses ``log(max(pdf, EPS))``.
+
+        With g = e^{−θ} − 1, g_u = e^{−θu} − 1, g_v = e^{−θv} − 1:
+            c(u, v) = θ · g · e^{−θ(u+v)} / (g + g_u·g_v)²
+        and so
+            log c = log|θ| + log|g| − θ(u+v) − 2 log|g + g_u g_v|.
+
+        For θ ≈ 0 the copula is near-independence; we fall back to log(1)=0.
+        """
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        if abs(th) < 1e-10:
+            return np.zeros_like(u)
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            g  = np.exp(-th)        - 1.0
+            gu = np.exp(-th * u)    - 1.0
+            gv = np.exp(-th * v)    - 1.0
+            denom = g + gu * gv
+            return (np.log(abs(th))
+                    + np.log(np.maximum(np.abs(g),     EPS))
+                    + (-th) * (u + v)
+                    - 2.0 * np.log(np.maximum(np.abs(denom), EPS)))
+
+    def inv_h(self, w: float, u: float) -> float:
+        """Closed-form inverse of h(v|u): solve h(v|u) = w analytically.
+
+        Derivation (from h(v|u) = exp(−θu)·(exp(−θv) − 1) / D, where
+        D = (exp(−θ) − 1) + (exp(−θu) − 1)·(exp(−θv) − 1)):
+
+            exp(−θv) = 1 + w·(exp(−θ) − 1) / [exp(−θu) − w·(exp(−θu) − 1)]
+            v        = −1/θ · log(1 + w(e^{-θ}-1) / (e^{-θu} - w(e^{-θu}-1)))
+
+        For θ ≈ 0 the copula is near-independent: v = w (Brent fallback would
+        suffice but the closed form is numerically stable here too).
+        """
+        u = minmaxEPS(u)
+        w = minmaxEPS(w)
+        th = self.theta
+        if abs(th) < 1e-10:
+            return float(w)   # near-independence
+        try:
+            eu     = np.exp(-th * u)
+            ed     = np.exp(-th) - 1.0
+            denom  = eu - w * (eu - 1.0)
+            if denom == 0.0 or not np.isfinite(denom):
+                raise ZeroDivisionError(f"denom={denom}")
+            arg    = 1.0 + w * ed / denom
+            if arg <= 0.0 or not np.isfinite(arg):
+                raise ValueError(f"non-positive arg={arg}")
+            v = -np.log(arg) / th
+            return minmaxEPS(float(v))
+        except (ZeroDivisionError, ValueError, OverflowError):
+            # Fall back to numerical inversion on edge cases
+            return super().inv_h(w, u)
+
+    def inv_h_array(self, w: np.ndarray, u: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form inverse h-function."""
+        w = np.clip(np.asarray(w, dtype=float), EPS, ONE_MINUS_EPS)
+        u = np.clip(np.asarray(u, dtype=float), EPS, ONE_MINUS_EPS)
+        th = self.theta
+        if abs(th) < 1e-10:
+            return w.copy()        # near-independence
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            eu    = np.exp(-th * u)
+            ed    = np.exp(-th) - 1.0
+            denom = eu - w * (eu - 1.0)
+            arg   = 1.0 + w * ed / np.where(denom != 0.0, denom, EPS)
+            v     = -np.log(np.maximum(arg, EPS)) / th
+        return np.clip(np.where(np.isfinite(v), v, w), EPS, ONE_MINUS_EPS)
+
     def tail_dependence(self) -> tuple[float, float]:
         """Frank copula: λ_L = λ_U = 0 (no tail dependence for any finite θ)."""
         return 0.0, 0.0
@@ -157,7 +231,7 @@ if __name__ == '__main__':
     print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}')
     print(f'cdf(0.3, 0.7) = {cop.cdf([0.3, 0.7]):.6f}')
     print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
-    print(f'tail dep : λ_L = 0,  λ_U = 0  [Frank has no tail dependence]')
+    print('tail dep : λ_L = 0,  λ_U = 0  [Frank has no tail dependence]')
 
     # Test negative tau
     cop_neg = CopulaFrank(tau_k=-0.5)

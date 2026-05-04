@@ -1,9 +1,10 @@
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import minmaxEPS
+from prg.numerics   import minmaxEPS
 
 
 class CopulaProduct(CopulaVirt):
@@ -41,8 +42,8 @@ if __name__ == '__main__':
     print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}  [= 1 everywhere]')
     print(f'cdf(0.3, 0.7) = {cop.cdf([0.3, 0.7]):.6f}  [= u·v]')
     print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}  [= v, independence]')
-    print(f'tail dep : λ_L = λ_U = 0')
-    print(f'(plot_multi_tau skipped: single point τ=0)')
+    print('tail dep : λ_L = λ_U = 0')
+    print('(plot_multi_tau skipped: single point τ=0)')
 
     plot_dir = Path('./data/Plots/Copulas')
     plot_dir.mkdir(parents=True, exist_ok=True)

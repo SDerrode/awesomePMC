@@ -16,7 +16,8 @@ h:    h(v|u) = v·(1 − θ(1−v)) / W²
 λ_L = λ_U = 0  (no tail dependence).
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -24,7 +25,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,30 @@ class CopulaAMH(CopulaVirt):
             return float(EPS)
         return float(np.clip(u * v / W, 0.0, 1.0))
 
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF — bypasses ``log(max(pdf, EPS))``.
+
+            log c = log[1 − θ(2−u−v−uv) + θ²(1−u)(1−v)] − 3 log W,
+                W = 1 − θ(1−u)(1−v).
+        """
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        W      = np.maximum(1.0 - th * (1.0 - u) * (1.0 - v), EPS)
+        numer  = 1.0 - th * (2.0 - u - v - u * v) + th * th * (1.0 - u) * (1.0 - v)
+        return np.log(np.maximum(numer, EPS)) - 3.0 * np.log(W)
+
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (AMH has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        W  = 1.0 - self.theta * (1.0 - u) * (1.0 - v)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            result = u * v / np.maximum(W, EPS)
+        return np.clip(np.where(np.isfinite(result), result, EPS), 0.0, 1.0)
+
     def pdf(self, uv) -> float:
         """c(u,v) = [1 − θ(2−u−v−uv) + θ²(1−u)(1−v)] / W³."""
         u = minmaxEPS(uv[0])
@@ -124,6 +149,18 @@ class CopulaAMH(CopulaVirt):
             )
             return float(EPS)
         return float(result)
+
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (AMH has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        W = 1.0 - th * (1.0 - u) * (1.0 - v)
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            numer  = 1.0 - th * (2.0 - u - v - u * v) + th ** 2 * (1.0 - u) * (1.0 - v)
+            result = numer / np.power(np.maximum(W, EPS), 3)
+        return np.where(np.isfinite(result) & (result > 0.0), result, EPS)
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = v·(1 − θ(1−v)) / W²."""
@@ -161,7 +198,7 @@ if __name__ == '__main__':
     print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}')
     print(f'cdf(0.3, 0.7) = {cop.cdf([0.3, 0.7]):.6f}')
     print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
-    print(f'tail dep : λ_L = 0,  λ_U = 0')
+    print('tail dep : λ_L = 0,  λ_U = 0')
 
     # Verify independence at tau=0
     cop0 = CopulaAMH(tau_k=0.0)

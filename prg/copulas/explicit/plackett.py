@@ -17,7 +17,8 @@ h:    h(v|u) = [1 − (S − 2θv)/√Δ] / 2   (= v at θ=1)
 λ_L = λ_U = 0  (no tail dependence).
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -25,7 +26,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,21 @@ class CopulaPlackett(CopulaVirt):
             )
             return float(EPS)
 
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (Plackett has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        eps = th - 1.0
+        if abs(eps) < 1e-10:
+            return np.clip(u * v, 0.0, 1.0)        # independence limit
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            S   = 1.0 + eps * (u + v)
+            Dlt = np.maximum(S * S - 4.0 * th * eps * u * v, 0.0)
+            result = (S - np.sqrt(Dlt)) / (2.0 * eps)
+        return np.clip(np.where(np.isfinite(result), result, EPS), 0.0, 1.0)
+
     def pdf(self, uv) -> float:
         """c(u,v) = θ·[1 + (θ−1)(u+v−2uv)] / Δ^{3/2}."""
         u  = minmaxEPS(uv[0])
@@ -161,6 +177,32 @@ class CopulaPlackett(CopulaVirt):
             )
             return float(EPS)
 
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (Plackett has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            S   = 1.0 + (th - 1.0) * (u + v)
+            Dlt = S * S - 4.0 * th * (th - 1.0) * u * v
+            numer  = th * (1.0 + (th - 1.0) * (u + v - 2.0 * u * v))
+            result = numer / np.power(np.maximum(Dlt, EPS), 1.5)
+        return np.where(np.isfinite(result) & (result > 0.0), result, EPS)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF: log θ + log[1 + (θ−1)(u+v−2uv)] − 1.5 log Δ."""
+        uv = np.asarray(uv, dtype=float)
+        u = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            S   = 1.0 + (th - 1.0) * (u + v)
+            Dlt = S * S - 4.0 * th * (th - 1.0) * u * v
+            numer  = th * (1.0 + (th - 1.0) * (u + v - 2.0 * u * v))
+            return (np.log(np.maximum(numer, EPS))
+                    - 1.5 * np.log(np.maximum(Dlt, EPS)))
+
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = [√Δ − (S − 2θv)] / (2√Δ).
 
@@ -179,7 +221,7 @@ class CopulaPlackett(CopulaVirt):
                 Dlt = 0.0
             sqrt_D = np.sqrt(Dlt)
             if sqrt_D < 1e-15:
-                raise ZeroDivisionError(f'√Δ≈0')
+                raise ZeroDivisionError('√Δ≈0')
             result = (sqrt_D - (S - 2.0 * th * v)) / (2.0 * sqrt_D)
             if not np.isfinite(result):
                 raise ValueError(f'non-finite: {result}')
@@ -208,7 +250,7 @@ if __name__ == '__main__':
     print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}')
     print(f'cdf(0.3, 0.7) = {cop.cdf([0.3, 0.7]):.6f}')
     print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
-    print(f'tail dep : λ_L = 0,  λ_U = 0')
+    print('tail dep : λ_L = 0,  λ_U = 0')
 
     # Independence at tau=0
     cop0 = CopulaPlackett(tau_k=0.0)

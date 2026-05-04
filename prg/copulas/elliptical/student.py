@@ -27,7 +27,8 @@ Notes
     silently skipped and the GoF test based on CDF is not available.
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -39,7 +40,7 @@ from statsmodels.distributions.copula.api import StudentTCopula
 
 from prg.copulas._base import CopulaVirt, FitResult
 from prg.exceptions    import CopulaParameterError
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, EPS_MINUS_ONE, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, EPS_MINUS_ONE, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +222,7 @@ if __name__ == '__main__':
     print(f'pdf(0.3, 0.7) = {cop.pdf([0.3, 0.7]):.6f}')
     print(f'h(0.7 | 0.3)  = {cop.conditional_cdf(0.7, 0.3):.6f}')
     print(f'tail dep : λ_L = λ_U = {lL:.4f}  [symmetric, heavier than Gaussian]')
-    print(f'(CDF has no closed form — plot_cdf silently skipped)')
+    print('(CDF has no closed form — plot_cdf silently skipped)')
 
     # Test with custom df
     cop8 = CopulaStudent(tau_k=0.5, df=8.0)

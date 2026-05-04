@@ -21,7 +21,8 @@ Parameters stored in `params`:
 n_params = 2 — fitting always uses 2-D MLE over (θ, δ).
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -30,7 +31,7 @@ from scipy.optimize import minimize
 
 from prg.copulas._base import CopulaVirt, FitResult
 from prg.exceptions    import CopulaParameterError
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,20 @@ class CopulaBB1(CopulaVirt):
             )
             return float(EPS)
 
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (BB1 has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th, de = self.theta, self.delta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            A = u ** (-th) - 1.0
+            B = v ** (-th) - 1.0
+            P = A ** de + B ** de
+            S = P ** (1.0 / de)
+            result = (1.0 + S) ** (-1.0 / th)
+        return np.clip(np.where(np.isfinite(result), result, EPS), 0.0, 1.0)
+
     def pdf(self, uv):
         """c(u,v) = u^{-θ-1}·v^{-θ-1}·A^{δ-1}·B^{δ-1}·S^{1-2δ}·(1+S)^{-1/θ-2}·[θ(δ-1)+(θδ+1)S]."""
         u = minmaxEPS(uv[0])
@@ -143,6 +158,53 @@ class CopulaBB1(CopulaVirt):
                 exc, self.theta, self.delta, u, v,
             )
             return float(EPS)
+
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (BB1 has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th, de = self.theta, self.delta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            A = u ** (-th) - 1.0
+            B = v ** (-th) - 1.0
+            P = A ** de + B ** de
+            S = P ** (1.0 / de)
+            result = (
+                u ** (-th - 1.0)
+                * v ** (-th - 1.0)
+                * A ** (de - 1.0)
+                * B ** (de - 1.0)
+                * S ** (1.0 - 2.0 * de)
+                * (1.0 + S) ** (-1.0 / th - 2.0)
+                * (th * (de - 1.0) + (th * de + 1.0) * S)
+            )
+        return np.where(np.isfinite(result) & (result > 0.0), result, EPS)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF — bypasses ``log(max(pdf, EPS))``.
+
+        With A = u^{−θ} − 1, B = v^{−θ} − 1, S = (A^δ + B^δ)^{1/δ}:
+            log c(u, v) = (−θ − 1)(log u + log v)
+                        + (δ − 1)(log A + log B)
+                        + (1 − 2δ) log S
+                        + (−1/θ − 2) log(1 + S)
+                        + log(θ(δ − 1) + (θδ + 1) S)
+        """
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th, de = self.theta, self.delta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            A = np.maximum(u ** (-th) - 1.0, EPS)
+            B = np.maximum(v ** (-th) - 1.0, EPS)
+            P = A ** de + B ** de
+            S = P ** (1.0 / de)
+            return ((-th - 1.0) * (np.log(u) + np.log(v))
+                    + (de - 1.0) * (np.log(A) + np.log(B))
+                    + (1.0 - 2.0 * de) * np.log(np.maximum(S, EPS))
+                    + (-1.0 / th - 2.0) * np.log1p(S)
+                    + np.log(np.maximum(th * (de - 1.0) + (th * de + 1.0) * S, EPS)))
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = u^{-θ-1} · A^{δ-1} · S^{1-δ} · (1+S)^{-1/θ-1}."""
@@ -278,7 +340,7 @@ if __name__ == '__main__':
     cop_c = CopulaBB1(tau_k=0.5, delta=1.0)
     from prg.copulas.archimedean.clayton import CopulaClayton
     cop_clay = CopulaClayton(tau_k=0.5)
-    print(f'\nδ=1 vs Clayton @ (0.3, 0.7):')
+    print('\nδ=1 vs Clayton @ (0.3, 0.7):')
     print(f'  BB1.pdf={cop_c.pdf([0.3,0.7]):.6f}  Clayton.pdf={cop_clay.pdf([0.3,0.7]):.6f}')
     print(f'  BB1.cdf={cop_c.cdf([0.3,0.7]):.6f}  Clayton.cdf={cop_clay.cdf([0.3,0.7]):.6f}')
     lL_c, lU_c = cop_c.tail_dependence()

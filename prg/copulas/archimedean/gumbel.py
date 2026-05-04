@@ -1,12 +1,13 @@
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import numpy as np
 from statsmodels.distributions.copula.api import GumbelCopula
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, minmaxEPS
+from prg.numerics   import minmaxEPS
 
 
 class CopulaGH(CopulaVirt):

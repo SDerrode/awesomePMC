@@ -8,6 +8,9 @@ du module ; cet __init__.py reste intact.
 
 import importlib
 
+# Apply package-wide matplotlib defaults (white facecolor, dpi=150, font_size=12).
+import prg.plot_style  # noqa: F401
+
 from prg.copulas._base     import CopulaEnum, CopulaVirt, FitResult, GoFResult
 from prg.copulas.bivariate import BivariateLaw, ConditionalLaw, BivariateFitResult, BivariateBootstrapCI
 

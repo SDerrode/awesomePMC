@@ -1,0 +1,57 @@
+# PMC model — K=2 classes, Gaussian margins + Gaussian copulas.
+#
+# Variant: PMC  (full Pairwise Markov Chain)
+#   • Joint density of (y_n, y_{n+1}) given (X_n=i, X_{n+1}=j):
+#       f_i(y_n) * f_j(y_{n+1}) * c_{ij}(F_i(y_n), F_j(y_{n+1}))
+#   • K margin blocks (one per state — SR-PMC contract)
+#   • K² copula blocks
+#   • Prior: K×K symmetric joint distribution p[i][j] (sum to 1)
+#
+# Parameters inspired by Table 1 of CSDA 2013 (Pieczynski & Derrode).
+
+[model]
+name      = "PMC Gaussien K=2"
+variant   = "PMC"
+K         = 2
+N_default = 5000
+
+[prior]
+# p[i][j] = P(X_n=i, X_{n+1}=j) — symmetric and sum to 1.
+p = [[0.45, 0.05],
+     [0.05, 0.45]]
+
+# ── Margins (K-format: one block per state) ──────────────────────────────────
+[[margins]]
+i      = 0
+dist   = "norm"
+params = {loc = -1.0, scale = 1.0}
+
+[[margins]]
+i      = 1
+dist   = "norm"
+params = {loc = 1.0, scale = 1.0}
+
+# ── Copulas ───────────────────────────────────────────────────────────────────
+[[copulas]]
+i    = 0
+j    = 0
+name = "Gauss"
+tau  = 0.6
+
+[[copulas]]
+i    = 0
+j    = 1
+name = "Gauss"
+tau  = 0.0
+
+[[copulas]]
+i    = 1
+j    = 0
+name = "Gauss"
+tau  = 0.0
+
+[[copulas]]
+i    = 1
+j    = 1
+name = "Gauss"
+tau  = 0.6

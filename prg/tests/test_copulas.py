@@ -1,4 +1,8 @@
 """Tests for the copula layer — instantiation, PDF, majorant, exceptions."""
+import logging
+import math
+
+import numpy as np
 import pytest
 
 from prg.copulas import (
@@ -7,7 +11,7 @@ from prg.copulas import (
     CopulaGH, CopulaClayton, CopulaA12, CopulaA14,
     CopulaProduct, CopulaFGM, CopulaCubSec,
 )
-from prg.exceptions import CopulaParameterError, CopulaNotAvailableError
+from prg.exceptions import CopulaParameterError
 
 
 # ---------------------------------------------------------------------------
@@ -102,3 +106,181 @@ def test_from_short_name():
 
 def test_favorite():
     assert CopulaEnum.favorite() is CopulaEnum.GAUSSIAN
+
+
+# ---------------------------------------------------------------------------
+# Boundary tests — τ_K → τ_max (Archimedean families)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the upper edge of each Archimedean copula's valid τ
+# range, which is precisely where ``θ → ∞`` (perfect concordance) and naive
+# implementations either overflow, return non-finite log-pdfs, or saturate
+# the inv-h solver. They also confirm that ``CopulaEnum.correct_tau`` clips
+# silently-but-loudly at the boundaries (cf. CHANGELOG: clip warnings).
+
+# All Archimedean families with a finite, non-trivial upper τ bound.
+ARCHI_FAMILIES = [
+    CopulaEnum.GH,
+    CopulaEnum.CLAYTON,
+    CopulaEnum.JOE,
+    CopulaEnum.SURVIVAL_CLAYTON,
+    CopulaEnum.SURVIVAL_GH,
+    CopulaEnum.SURVIVAL_JOE,
+    CopulaEnum.A12,
+    CopulaEnum.A14,
+    CopulaEnum.AMH,
+    CopulaEnum.FRANK,
+    CopulaEnum.BB1,
+]
+
+# How close to the boundary the "near τ_max / τ_min" tests probe. We use
+# a 5 % margin (so τ = τ_min + 0.95·span) instead of a 0.1 % margin: at
+# τ → τ_max the underlying θ blows up (Clayton θ → ∞, Joe θ → ∞, GH θ → ∞)
+# and the resulting copula concentrates on the diagonal — evaluating any
+# off-diagonal pdf is mathematically meaningful but numerically saturates.
+# 95 % of the range is still firmly "near the boundary" (well inside the
+# region where ``correct_tau`` clips) while leaving room for finite-precision
+# arithmetic to remain meaningful.
+_BOUNDARY_FRACTION = 0.95
+
+
+def _instantiate_at_tau(entry: CopulaEnum, tau: float):
+    """Build a copula at ``tau`` filling other required params with defaults."""
+    cls = entry.klass
+    kwargs: dict = {"tau_k": float(tau)}
+    # BB1 needs a δ ≥ 1 in addition to τ_K. With δ = 1.5 the *effective*
+    # lower τ-bound rises to ~1/3, so the lower-bound test is skipped for
+    # BB1 in :func:`test_tau_near_lower_bound` below.
+    if "delta" in entry.value.PARAMETERS_SET_NAME:
+        kwargs["delta"] = 1.5
+    if "df" in entry.value.PARAMETERS_SET_NAME:
+        kwargs["df"] = 4.0
+    return cls(**kwargs)
+
+
+def _tau_near_upper(entry: CopulaEnum) -> float:
+    tau_min, tau_max = entry.value.TAU_MIN_MAX
+    span = tau_max - tau_min
+    return tau_min + _BOUNDARY_FRACTION * span
+
+
+def _tau_near_lower(entry: CopulaEnum) -> float:
+    tau_min, tau_max = entry.value.TAU_MIN_MAX
+    span = tau_max - tau_min
+    return tau_min + (1.0 - _BOUNDARY_FRACTION) * span
+
+
+@pytest.mark.parametrize("entry", ARCHI_FAMILIES,
+                         ids=[e.value.SHORT_NAME for e in ARCHI_FAMILIES])
+def test_tau_near_upper_bound(entry):
+    """At τ → τ_max the copula must remain finite and produce a positive PDF."""
+    cop = _instantiate_at_tau(entry, _tau_near_upper(entry))
+
+    # Off-diagonal eval — avoids the corner singularity at u = v = 1.
+    pdf  = cop.pdf([0.4, 0.6])
+    assert math.isfinite(pdf), f"{entry.value.SHORT_NAME}: pdf non-finite near τ_max"
+    assert pdf >= 0.0, f"{entry.value.SHORT_NAME}: negative pdf near τ_max"
+
+    cdf = cop.cdf([0.4, 0.6])
+    assert math.isfinite(cdf)
+    assert 0.0 <= cdf <= 1.0
+
+    h = cop.conditional_cdf(0.6, 0.4)
+    assert math.isfinite(h)
+    assert 0.0 <= h <= 1.0
+
+
+# BB1 has a τ_min that depends on δ (with δ = 1.5 the effective floor is
+# ~1/3, *not* the generic Archimedean ε declared in TAU_MIN_MAX); testing
+# near that nominal floor is meaningless, so we exclude BB1 here.
+_LOWER_BOUND_FAMILIES = [e for e in ARCHI_FAMILIES if e is not CopulaEnum.BB1]
+
+
+@pytest.mark.parametrize("entry", _LOWER_BOUND_FAMILIES,
+                         ids=[e.value.SHORT_NAME for e in _LOWER_BOUND_FAMILIES])
+def test_tau_near_lower_bound(entry):
+    """At τ → τ_min the copula must remain numerically well-behaved."""
+    cop = _instantiate_at_tau(entry, _tau_near_lower(entry))
+    pdf = cop.pdf([0.4, 0.6])
+    assert math.isfinite(pdf) and pdf >= 0.0
+
+
+@pytest.mark.parametrize("entry", ARCHI_FAMILIES,
+                         ids=[e.value.SHORT_NAME for e in ARCHI_FAMILIES])
+def test_correct_tau_clips_with_warning(entry, caplog):
+    """``correct_tau`` must clip out-of-range τ and emit a WARNING.
+
+    Regression guard against silent truncation: callers (notably ICE
+    candidate selection) must be able to detect that their τ estimate was
+    censored.
+    """
+    _, tau_max = entry.value.TAU_MIN_MAX
+    too_high = tau_max + max(1e-2, 0.1 * (tau_max - entry.value.TAU_MIN_MAX[0]))
+
+    with caplog.at_level(logging.WARNING, logger="prg.copulas._base"):
+        clipped = entry.correct_tau(too_high)
+
+    assert clipped == pytest.approx(tau_max), \
+        f"{entry.value.SHORT_NAME}: clip target should be τ_max"
+    assert any(
+        "outside valid range" in rec.message
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING
+    ), f"{entry.value.SHORT_NAME}: no WARNING emitted on out-of-range τ"
+
+
+@pytest.mark.parametrize("entry", ARCHI_FAMILIES,
+                         ids=[e.value.SHORT_NAME for e in ARCHI_FAMILIES])
+def test_correct_tau_handles_nan(entry, caplog):
+    """Non-finite τ must be replaced with the midpoint and warned about."""
+    tau_min, tau_max = entry.value.TAU_MIN_MAX
+    mid = 0.5 * (tau_min + tau_max)
+
+    with caplog.at_level(logging.WARNING, logger="prg.copulas._base"):
+        out = entry.correct_tau(float("nan"))
+
+    assert out == pytest.approx(mid)
+    assert any("non-finite" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.parametrize("entry", ARCHI_FAMILIES,
+                         ids=[e.value.SHORT_NAME for e in ARCHI_FAMILIES])
+def test_logpdf_array_finite_near_upper_bound(entry):
+    """Vectorised log-PDF must stay finite at τ → τ_max (no -inf saturation)."""
+    cop = _instantiate_at_tau(entry, _tau_near_upper(entry))
+
+    # Random points well inside (0, 1) and concentrated near the principal
+    # diagonal — at high τ the copula puts almost all its mass there, and
+    # off-diagonal evaluation is legitimately near-zero (which would be a
+    # false positive for the saturation guard below).
+    rng = np.random.default_rng(0)
+    centre = rng.uniform(0.2, 0.8, size=64)
+    spread = 0.05 * rng.standard_normal(size=64)          # very tight band around v ≈ u
+    uv = np.column_stack((centre, np.clip(centre + spread, 1e-3, 1.0 - 1e-3)))
+    log_pdfs = cop.logpdf_array(uv)
+
+    assert log_pdfs.shape == (64,)
+    assert np.all(np.isfinite(log_pdfs)), \
+        f"{entry.value.SHORT_NAME}: non-finite log-pdf near τ_max"
+    # Diagonal samples should give clearly positive log-pdf; the EPS-saturation
+    # tell-tale was around -36, so anything well above that means the native
+    # log-pdf path is engaging (and not silently falling back to log(EPS)).
+    assert log_pdfs.max() > -30.0, \
+        f"{entry.value.SHORT_NAME}: log-pdf appears saturated near τ_max"
+
+
+@pytest.mark.parametrize("entry", ARCHI_FAMILIES,
+                         ids=[e.value.SHORT_NAME for e in ARCHI_FAMILIES])
+def test_inv_h_array_within_unit_near_upper_bound(entry):
+    """``inv_h_array`` must return values strictly inside (0, 1) near τ_max."""
+    cop = _instantiate_at_tau(entry, _tau_near_upper(entry))
+
+    rng = np.random.default_rng(1)
+    w   = rng.uniform(0.1, 0.9, size=200)
+    u   = rng.uniform(0.1, 0.9, size=200)
+    v   = cop.inv_h_array(w, u)
+
+    assert v.shape == (200,)
+    assert np.all(np.isfinite(v))
+    assert np.all(v > 0.0) and np.all(v < 1.0), \
+        f"{entry.value.SHORT_NAME}: inv_h escaped (0, 1) near τ_max"

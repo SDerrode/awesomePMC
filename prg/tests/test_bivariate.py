@@ -10,7 +10,7 @@ import scipy.stats as st
 
 from prg.copulas import (
     BivariateLaw, ConditionalLaw,
-    CopulaGaussian, CopulaProduct, CopulaFGM, CopulaClayton,
+    CopulaGaussian, CopulaProduct,
 )
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,698 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(no changes yet)
+
+---
+
+## [0.5.0] - 2026-05-04
+
+This is a substantial release covering three audit cycles, a new ICE
+diagnostics layer (12 GUI views + animated playback), and a
+**breaking-change** clean-up of the SR-PMC marginal-density contract.
+
+Highlights:
+
+- **Breaking** — ``ice()`` now returns ``(PMCModel, IceTrace)`` instead
+  of ``(PMCModel, list[float])``. Use ``trace.log_liks`` for the plain
+  history.
+- **Breaking** — TOML margin schema migrated to K-format (one block per
+  state). Legacy K² format is still accepted (with INFO/WARNING).
+- **Breaking** — ``PMCModel.margin(i, j)`` now ignores the second
+  argument under the SR-PMC contract; ``j`` is optional.
+
+### Breaking — SR-PMC marginals contract enforced
+
+The package now enforces the SR-PMC reversibility identity from CSDA 2013:
+the marginal density of an observation depends **only on its current
+state**, never on the other state of the bivariate pair. There are
+therefore exactly **K marginal densities** in every variant — not K² —
+and they are indexed by ``i`` only.
+
+* **TOML schema** — the canonical [[margins]] format now lists K blocks
+  (``i``, ``dist``, ``params``); the legacy K² (``i``, ``j``)-keyed
+  format is still accepted but:
+    * INFO-logged as legacy when entries respect tying;
+    * WARN-logged listing each conflicting (i, j) when entries violate
+      tying — the (i, 0) anchor is kept as the canonical density.
+* **`PMCModel.margin(i, j=None)`** — second argument is now optional and
+  ignored under SR-PMC. ``margin(i, 0) is margin(i, 1) is margin(i)``.
+* **`PMCModel._state_margins: dict[int, _MarginDist]`** is the new
+  internal source of truth (K entries instead of K²); the legacy
+  ``_margins[(i, j)]`` mapping is still present for back-compat but all
+  entries with the same ``i`` point to the same instance.
+* **`PMCModel.margin_blocks()`** always returns the canonical K-format
+  (regardless of how the source TOML was written).
+* **`PMCModel.weight()` formulas** rewritten in per-state notation
+  (``f_i(y_n) · f_j(y_{n+1}) · c_{ij}(F_i(y_n), F_j(y_{n+1}))``).
+* **ICE M-step** now fits exactly K marginal densities (one per state)
+  weighted by the full ``γ_n(i) = P(X_n=i | Y)``, instead of K² densities
+  with partial dual-view weights. Saves K-fold redundant MLE per
+  iteration and eliminates the "K replicas drift apart from each other"
+  failure mode at finite N.
+* **`precompute_weights`** evaluates K margin PDFs/CDFs (vector form)
+  and broadcasts to the legacy (N, K, K) tensor shape. Same numerical
+  result, K× less work.
+* **`simulate._sample_copula_conditional`** uses
+  ``model.margin(i).cdf`` and ``model.margin(j).ppf`` (state-only
+  indexing) — Rosenblatt inversion is unchanged.
+* **TOML model fixtures rewritten** in K-format:
+  ``pmc_gauss_k2.toml``, ``pmc_in_gauss_k2.toml``,
+  ``hmc_in2_gauss_k2.toml``, ``hmc_dn_gauss_k2.toml``.
+  ``hmc_in_gauss_k2.toml`` and ``hmc_in_gauss_k3.toml`` already used the
+  K-format.
+* **GUI Margins tab** — collapsed from K×K grid to **K cells (one per
+  state)**, with explanatory caption. The Copulas tab remains K×K
+  (copulas ARE pair-indexed).
+* **`Variant.per_class_margin`** is now ``True`` for every variant
+  (was: only HMC-IN). Property kept for API stability; it now describes
+  a contract, not a per-variant difference.
+
+### Tests added
+
+- ``test_pmcmodel_collapses_legacy_k2_margins`` — tied legacy TOML loads
+  with INFO log.
+- ``test_pmcmodel_warns_on_legacy_k2_untied_margins`` — untied legacy
+  TOML logs a WARNING listing conflicts.
+- ``test_pmcmodel_k_format_canonical`` — round-trip and identity of
+  ``margin(i, *)`` lookups.
+- ``test_ice_preserves_state_margin_tying`` — after ICE,
+  ``margin(i, j) is margin(i)`` for every (i, j).
+
+### Refactor (codage audit — third pass)
+
+- **`EXTRA_PARAM_BOUNDS` deduplicated** — single source of truth in
+  ``prg.pmc.ice``; the GUI dialog imports it instead of holding a copy.
+- **`_BlockGridTab` base class** in ``prg.pmc.gui.tabs`` — Margins and
+  Copulas tabs shared 90 % of their code; now each subclass only sets four
+  class attributes and overrides ``_format_block`` (~80 LOC saved).
+- **`IceResult` dataclass** packages
+  ``(initial_model, fitted_model, Y, trace)`` — replaces the worker's
+  ad-hoc 4-tuple and shrinks ``PMCMainWindow`` instance state.
+- **`_compute_marginal_cdfs(model, Y)`** helper — replaces three
+  duplicated ``f_cdf`` K×K loops in ``_do_gof_test``,
+  ``_plot_ice_pseudos``, ``_plot_ice_pp``.
+- **`_begin_figure()` / `_finalize_plot()` lifecycle helpers** — every
+  ``_plot_*`` method now relies on the single canvas-clear and the single
+  ``_has_plot``/Export-plot toggle in ``_render_view``. ~30 lines of
+  boilerplate eliminated.
+- **`_VIEW_DISPATCH` table** replaces the 17-branch ``if/elif`` chain in
+  ``_render_view``; adding a view is a one-line entry + a new
+  ``_plot_*`` method.
+- **`_render_error()` UI** — render failures inside a view now paint a
+  friendly message on the canvas and append the exception to the log
+  panel (was: silent debug log).
+- **Imports hoisted** — ``EPS``, ``ONE_MINUS_EPS``, ``classify``,
+  ``error_rate``, ``_empirical_copula``, ``IceTrace`` moved to module
+  scope; redundant ``Qt as _Qt`` alias and ``np as _np`` alias removed.
+- **Type hints on ICE plot methods** — ``_plot_ice_*`` now declare
+  ``trace: IceTrace`` (and ``model: PMCModel`` / ``Y: np.ndarray`` where
+  applicable); the diagnostics layer is statically checkable.
+- **`IceTrace` type hints tightened** — ``tau_history`` and
+  ``p_history`` are now plain ``np.ndarray`` (never ``None``); empty
+  traces use ``np.empty((0, 0, 0))``. Docstring gains an ASCII timeline
+  diagram explaining snapshot semantics.
+- **HMC-IN trace test** verifies ``tau_history`` is all-NaN /
+  ``family_history`` all-empty / ``p_history`` sums to 1 for the
+  no-copula variant.
+- **Top-of-file docstring of ``main_window``** rewritten to describe the
+  View-selector architecture and the dispatch flow.
+
+### Added (ICE diagnostics — visual layer)
+
+- **`IceTrace` dataclass** captured per iteration by the ICE driver:
+  ``log_liks``, ``tau_history`` ``(T, K, K)``, ``family_history``
+  ``(T × K × K SHORT_NAMEs)``, ``p_history`` ``(T, K, K)``,
+  ``margin_history`` (per-block params), ``multistart_runs`` (losing
+  traces when ``n_starts > 1``), ``run_tag``, ``candidates``.
+- **`ice()` now returns ``(PMCModel, IceTrace)``** — backward-incompatible
+  signature change. Use ``trace.log_liks`` for the plain LL history.
+- **GUI View selector** (combobox above the canvas) — single dispatch
+  point for every visualisation; unavailable views are kept in the list
+  but disabled with an explanatory tooltip.
+- **12 ICE diagnostic views** accessible from the View selector:
+  - **A.** τ trajectories per pair (★ markers at family changes)
+  - **B.** Family-selection ribbon (one row per pair × T columns,
+        candidate-coloured bands)
+  - **C.** Pseudo-observations + fitted log-PDF contours, K×K
+        small-multiples
+  - **D.** Multistart comparison (winner highlighted, losing runs grey)
+  - **E.** Joint-prior evolution + ‖Δp‖_F log-y
+  - **F.** Margin-parameter evolution (per-block small-multiples)
+  - **G.** ICE dashboard (3×2: LL, τ, family, ‖Δp‖, AIC/BIC, summary)
+  - **H.** PP plot of fitted copulas (K×K)
+  - **I.** Tail dependence λ_L / λ_U heatmap per pair
+  - **J.** γ posterior comparison BEFORE vs AFTER ICE
+  - **K.** Animated playback — QSlider + Play/Pause button advances
+        through iterations, refreshing a 4-panel snapshot view
+        (LL / τ / family / p heatmap)
+- **CLI / notebook updated** to consume ``IceTrace`` (``trace.log_liks``).
+
+### Added (GUI — second pass)
+
+- **Auto-mirror of SR-PMC `p` cells** — editing `p[i,j]` now mirrors to
+  `p[j,i]` live (with an explanatory caption above the table).
+- **Modified-indicator (`*`)** in the window title flags unsaved edits;
+  reset on Save / Save As / Open / ICE finish.
+- **Recent-files submenu** in *File* — last 5 TOML paths persisted via
+  `QSettings`; "Clear list" entry to wipe the history.
+- **GoF p-value heatmap** — after running GoF, the canvas now shows a
+  K×K colour-coded heatmap (red→green, with a 0.05-contour and ‘×’
+  markers for errored pairs) in addition to the textual log entry.
+- **Per-pair GoF progress** — the determinate progress bar advances one
+  step per copula pair (pair tag shown in the status bar).
+- **Confirmation before Simulate overwrite** — if `(X, Y)` are already
+  loaded, the user is asked before they get overwritten.
+- **Auto-scroll log panel** — newly-appended lines are always visible.
+- **Pointing-hand cursor** on margin/copula table cells (visual hint
+  that double-click opens an editor).
+- **Package version in *About*** — reads `prg.__version__`.
+- **Export-plot disabled when canvas is empty** — no more accidental
+  blank PNG dumps.
+- **Symmetrize feedback** — clicking *Symmetrize p* logs
+  ``"Symmetrized prior: max asymmetry was 3.4e-04"`` in the log panel
+  via the new `_PriorTab.symmetrized(asym, was_renorm)` signal.
+
+### Fixed (GUI — second pass)
+
+- **`closeEvent` waits for the worker** — closing the window during a
+  long ICE / GoF run prompts the user (Wait / Terminate / Cancel)
+  instead of leaking the `QThread`.
+- **`_PriorTab` cell validation** — invalid cells (typos like ``"0.4x"``)
+  now raise a typed `PriorTabError` caught by the host, surfaced as a
+  friendly QMessageBox; previously they were silently treated as 0.
+- **`_Worker.set_progress_cb`** — public setter replaces the previous
+  `_kwargs` mutation hack from the host window.
+- **Imports cleanup** — `QHBoxLayout/QWidget` now imported at the top of
+  `dialogs.py`; `matplotlib.pyplot` imported once at the top of
+  `main_window.py` (after `matplotlib.use("QtAgg")`).
+
+### Tests
+
+- 14 new tests in `test_gui_dialogs.py` covering: auto-mirror, prior
+  cell validation, symmetrize signal, ICE-tab `changed` signal,
+  `_do_gof_test` schema and progress-callback, `_perturb_initial_model`
+  non-trivial perturbation, `_read_data_csv` happy path / empty / missing
+  Y / non-numeric Y / non-integer X.
+
+### Added (GUI)
+
+- **Multistart controls in the ICE tab** — exposes the four new options
+  (`n_starts`, `multistart_seed`, `multistart_jitter`, `patience`).
+  Seed/jitter spinboxes auto-disable when `n_starts == 1`.
+- **Family-aware copula dialog** — the τ spinbox is reranged dynamically
+  to match the selected family's `TAU_MIN_MAX`, and extra-parameter
+  widgets (BB1 `δ`, Student `df`) appear only when the chosen family
+  declares them. Eliminates the silent τ-clip footgun.
+- **Robust margin parameters parser** — accepts both spaces and commas
+  as separators (`"loc=0, scale=1"` works as well as `"loc=0 scale=1"`),
+  flags unparseable tokens via a friendly `QMessageBox` instead of
+  silently dropping them.
+- **Symmetrize-p button** in the Prior tab — one-click enforcement of
+  `p[i,j] = p[j,i]` for SR-PMC joint priors (visible only for those
+  variants).
+- **GoF test action** — a new button runs the Cramér-von Mises GoF
+  (parametric bootstrap, `B=200`) on every pair-copula and reports
+  per-pair p-values in a dialog and the log panel.
+- **File ▸ Save data (CSV)** — saves the current `(X, Y)` sequence,
+  symmetric with *Load data*.
+- **File ▸ Export plot…** — writes the matplotlib canvas to PNG/PDF/SVG.
+- **Edit ▸ Reset session (Ctrl+R)** — clears loaded data, canvas, and log.
+- **Determinate ICE progress bar** — `ice()` now accepts
+  `progress_cb=callable`. The GUI worker connects this to a Qt signal so
+  the bar advances iteration-by-iteration, with per-run tagging when
+  multistart is on (`ICE [perturbed-1] iter 3/8 …`).
+
+### Fixed (GUI)
+
+- `_load_model` no longer commits `_model_path` until `PMCModel()`
+  succeeds — failed loads leave the GUI consistent.
+- `_on_load_data` now validates that every `Y` cell parses as a float
+  and reports the offending row number; non-integer `X` cells are
+  ignored with a warning rather than crashing.
+- Removed dead code (`_IceTab._cop_visible` was set and never read;
+  unused `mdl` parameter on `_MarginTab._refresh_table`).
+
+### Added
+
+- **ICE multistart** — `ice()` now accepts `n_starts` (default `1`),
+  `multistart_seed` and `multistart_jitter` config keys. With
+  `n_starts > 1` the driver runs ICE several times from random
+  perturbations of the initial model and returns the run with the highest
+  final log-likelihood. The first start is always the unperturbed model,
+  so the legacy single-start behaviour is preserved by default.
+  Hardens fits against multimodal log-likelihoods (Archimedean copula
+  selection, HMC variants with similar margins).
+- **Data-aware init in `_fit_copula_params`** — weighted Kendall's τ on
+  the pseudo-observations is now computed once and used (a) as the
+  initial value for the multi-parameter L-BFGS-B (BB1, Student) and
+  (b) as the fallback when the 1-D `minimize_scalar` path errors.
+  Replaces the previous mid-range / Pearson-based fallbacks.
+- **Boundary tests for Archimedean copulas** — `prg/tests/test_copulas.py`
+  now exercises every Archimedean family (GH, Clayton, Joe, A12, A14,
+  AMH, Frank, BB1, plus the three Survival rotations) at τ_K = τ_min +
+  0.95·span and τ_min + 0.05·span. Verifies (i) finite PDF / CDF /
+  conditional CDF, (ii) `correct_tau` clips out-of-range τ with a
+  WARNING, (iii) `correct_tau` handles NaN, (iv) `logpdf_array` does
+  not silently saturate near `-36`, (v) `inv_h_array` returns values
+  strictly inside (0, 1).
+
+### Fixed
+
+- **`CopulaA12.conditional_cdf`** now traps `OverflowError` /
+  `ZeroDivisionError` and returns the diagonal limit `𝟙{v ≥ u}` (same
+  pattern as A14). Previously raised for τ ≳ 0.85 when probed at
+  v = EPS, which made `inv_h(brentq)` fail near the boundary. Surfaced
+  by the new boundary tests.
+
+### Changed
+
+- **`CopulaVirt.sample` uses Rosenblatt inversion via `inv_h`** instead
+  of inlined Brent search. Combined with the new vectorised
+  `inv_h_array` (Gaussian, Clayton, Frank), this gives:
+    - Gaussian sample(2000): **1.67 s → 0.001 s** (~1500×)
+    - Clayton  sample(2000): **0.21 s → 0.001 s** (~200×)
+    - Frank    sample(2000): **~50× faster**
+- **`BivariateLaw.sample_conditional` uses Rosenblatt** instead of
+  acceptance-rejection. Removes the `MAX_AR_ITER` failure mode for
+  high-correlation cases and gives O(1) per sample for closed-form-`inv_h`
+  copulas. The `MAX_AR_ITER` constant and `SamplingConvergenceError`
+  exception are kept exported for backward compatibility.
+- **`CopulaVirt.fit(method='mle')` for multi-parameter families** —
+  the base-class implementation now does joint L-BFGS-B over (τ, *extras)
+  for any family declared with extra parameters in `CopulaEnum`. Student
+  and BB1 keep their existing per-class overrides; the base path is the
+  fallback for any future 2-parameter family.
+- **`CopulaEnum.correct_tau` warns on clipping** — when the input τ is
+  outside the family's valid range or non-finite, a `WARNING` is logged
+  with the original and clipped values.
+- **Bootstrap progress logging** — `gof_test`, `bootstrap_ci`,
+  `BivariateFitResult.gof_test` and `bootstrap_ci` now emit a
+  `logger.info(...)` at every 10 % of progress for B ≥ 10.
+
+### Added
+
+- **`CopulaVirt.inv_h_array(w, u)`** — vectorised inverse h-function.
+  Default fallback is a scalar Python loop; closed-form vectorised
+  overrides on Gaussian, Clayton, Frank.
+- **Native `logpdf_array` overrides** on six additional copulas:
+  AMH, A12, A14, FGM, CubSec, Plackett. Combined with the existing five
+  (Gaussian, Clayton, Frank, Joe, BB1) and the three Survival wrappers
+  that delegate to their base, **14/17 copulas now have a native
+  log-PDF** with extended dynamic range.
+
+- **Native `logpdf_array` overrides** on the five most-used copulas:
+  Gaussian, Clayton, Frank, Joe, BB1. These compute log c(u, v) directly
+  in the log domain, bypassing the ``log(max(pdf, EPS))`` floor of the
+  base implementation. Dynamic range extends below −36 nats (the
+  saturation point of the floored path), useful for tails and
+  goodness-of-fit on small-density regions.
+- **`prg/tests/test_pdf_array.py::test_logpdf_array_native_extends_dynamic_range`**
+  — verifies that for the 5 native overrides, (a) the regular range
+  matches the floored path to 1e-9 and (b) at least one extreme-tail
+  point goes strictly below the floored saturation.
+- **SR-PMC dual-view margin update in ICE** — for pair-indexed margins
+  (`HMC-IN2`, `HMC-DN`, `PMC-IN`, `PMC`), each `Y[k]` now contributes to
+  the weighted MLE of `f_{ij}` from BOTH its "first observation" view
+  (weighted by `ξ[k, i, j]`) and its "second observation" view of the
+  reversed pair (weighted by `ξ[k-1, j, i]`). Effectively doubles the
+  sample size used for each margin, giving ~√2× tighter parameter
+  estimates without violating the SR-PMC factorisation.
+- **SR-PMC stationary-reversibility diagnostic** — `PMCModel` warns at
+  construction if `[prior].p` is not symmetric (max |p[i,j] − p[j,i]| ≥
+  1e-6). The package commits to the SR-PMC factorisation; non-symmetric
+  `p` matrices give a non-reversible chain and the inference may
+  produce statistically dubious results.
+- **`error_rate` symmetric warning** — also warns when `X̂` uses labels
+  *outside* the true set (typical of a mis-specified K), in addition to
+  the existing warning when `X̂` collapses to fewer classes.
+
+### Fixed
+
+- **🔴 ICE `fit_margins=True` no longer overwrites the declared margin family.**
+  The previous `_fit_gaussian_margin_weighted` always returned
+  `dist="norm"`, silently replacing any non-Gaussian margin (`expon`,
+  `lognorm`, `gamma`, …) with a Gaussian. The new `_fit_margin_weighted`:
+
+  - keeps the closed-form Gaussian fast path,
+  - dispatches to a generic `scipy.optimize.minimize` (L-BFGS-B) on the
+    weighted negative log-likelihood for any other `scipy.stats` family,
+  - preserves the `dist` field — only `params` are updated,
+  - logs a warning and keeps initial parameters on optimiser failure.
+
+  Verified on `(norm, lognorm)` mixed-margin model: families preserved,
+  parameters recovered to within ~10 % on N=2000.
+
+- **🟡 `precompute_weights` (and therefore `forward`, `classify`, `ice`)
+  now reject `N < 2`** with a clear error message instead of crashing
+  on a cryptic NumPy ``zero-size array reduction`` deep inside the
+  call stack.
+
+- **🟡 `CopulaVirt.majorant` is now a guaranteed upper bound** on
+  `max_v c(u, v)`. The default has been replaced by a hybrid:
+  150-point grid → 1-D scalar refinement → ×1.02 safety multiplier.
+  In addition, `CopulaGaussian.majorant` and `CopulaClayton.majorant`
+  now use closed-form expressions and return exact bounds.
+
+  Empirical deficit (`true_max / bound − 1`) across 11 families went
+  from up to **0.17 %** (Clayton τ=0.5) down to **0**; the AR sampler
+  in `BivariateLaw.sample_conditional` is now unconditionally unbiased.
+
+### Added
+
+- **`prg/tests/test_majorant.py`** — 17 tests (one per copula family)
+  verifying `cop.majorant(u) ≥ max_v c(u, v)` against a high-precision
+  reference computed via `scipy.optimize.minimize_scalar`.
+- **`prg/tests/test_pmc.py::test_ice_fit_margins_preserves_family`** —
+  regression test for the silent-overwrite fix.
+
+- **`prg/tests/test_forward_backward_invariants.py`** — 36 tests
+  (6 invariants × 6 demo models) verifying the probability-conservation
+  laws of the forward-backward algorithm:
+  - `Σ_j α̂_n(j) = 1` (filtered posterior),
+  - `Σ_j β̂_n(j) = 1` (Devijver-normalised backward),
+  - `Σ_j γ_n(j) = 1` (smoothed posterior),
+  - `Σ_{i,j} ξ_n(i, j) = 1` (joint pair posterior),
+  - `Σ_j ξ_n(i, j) = γ_n(i)` (left-marginal consistency),
+  - `Σ_i ξ_n(i, j) = γ_{n+1}(j)` (right-marginal consistency).
+
+  Observed deviations are at machine epsilon (~2e-16) on all six demo
+  models. These invariants would have caught the PMC kernel bug fixed
+  earlier in this release.
+
+- **`CopulaVirt.cdf_array(uv)`** — vectorised CDF on an `(M, 2)` array,
+  same fast-path strategy as `pdf_array`. Closed-form overrides for FGM,
+  AMH, A12, A14, BB1, CubSec, Plackett, Joe, and the three Survival
+  wrappers. Used by the GoF bootstrap.
+- **`prg/tests/test_pdf_array.py::test_cdf_array_matches_scalar`** —
+  parametrised over all 17 copulas; Student is correctly skipped (no
+  closed-form CDF).
+- **`logger.warning`** in `prg.pmc.inference.error_rate` when X̂ uses
+  fewer classes than X_true (typical symptom of a degenerate ICE solution).
+- **Sanity assertion** in `CopulaVirt.inv_h` — verifies that
+  `conditional_cdf` is monotone in v before launching Brent. Catches
+  buggy custom copulas with a clear message instead of an opaque
+  `bracket bracket` error from scipy.
+
+### Changed
+
+- **`prg.copulas._fit._eval_log_likelihood`** uses the vectorised
+  `logpdf_array` (≈ **300×** faster on N=5000 — was 0.30 s, now 0.001 s).
+- **`prg.copulas._fit._cvm_statistic`** uses `cdf_array` (~5× faster on
+  the CDF-evaluation step; the `(n×n)` empirical-copula matrix remains
+  the dominant cost for large N).
+- **`_class_colors(n_classes)`** indexes the `tab10` palette modulo 10
+  rather than dividing the discrete index. K ≤ 10 callers get the
+  canonical colours; K > 10 callers cycle (rather than getting
+  interpolated intermediates).
+- **`BivariateFitResult.cv_loglik`** docstring documents the choice of
+  −100 nats as the support-violation floor (vs `log(MIN_POSITIVE) ≈ -708`).
+
+### Fixed
+
+- **🔴 Critical: `prg.pmc.inference.precompute_weights` for PMC and PMC-IN
+  variants double-counted the marginal density `f_{ij}(y_n)`** at every
+  recursion step. The transition kernel was the *joint* pair density rather
+  than the *conditional* kernel. As a consequence:
+  - the reported log-likelihood was off by an additive Y-dependent term
+    (≈ -2 nats per step on the demo models);
+  - smoothed posteriors `γ_n(j)` and joint posteriors `ξ_n(i, j)` were
+    biased — by up to 0.6 in extreme cases;
+  - MPM error rate was degraded by 1–3 percentage points;
+  - ICE optimised a wrong objective and reported wrong AIC/BIC.
+
+  The fix divides the joint kernel by `D[n, i] = Σ_{j'} p[i, j'] · f_{ij'}(y_n)`
+  (the marginal `p(X_n=i, Y_n=y_n)`), recovering the correct conditional
+  transition kernel. After the fix:
+  - all 5 variants match brute-force enumeration to **machine precision**
+    (1e-14 on K=2, N=5);
+  - PMC-IN now coincides with HMC-IN2 when `p[i,j] = π_i · A[i,j]` (as
+    expected mathematically);
+  - PMC classification error on `pmc_gauss_k2` drops from **10.7 % to 7.7 %**.
+
+### Added
+
+- **`prg/tests/test_forward_correctness.py`** — 19 tests guarding the
+  Devijver kernel against future regressions:
+  - 18 parametrised cases (5 demo models + K=3 × 3 seeds) compare
+    `forward()` to brute-force enumeration of all `K^(N+1)` state
+    sequences (N=5);
+  - one test verifies that PMC-IN and HMC-IN2 give identical log-lik
+    when `p[i,j] = π_i · A[i,j]` and margins coincide.
+
+- **`examples/quickstart.ipynb`** — end-to-end demo notebook (25 cells, 14
+  code) covering: copula PDF / fitting / sampling, vectorised `pdf_array`
+  benchmark, Sklar bivariate law, PMC simulation → classification → ICE,
+  K=3 example.
+- **`prg/tests/test_quickstart_notebook.py`** — `slow`-marked regression
+  test that re-runs every cell with a fresh kernel; fails on any cell
+  exception.
+
+- **`prg/pmc/models/hmc_in_gauss_k3.toml`** — first K=3 example model (three
+  well-separated Gaussian regimes, sticky transitions). All `test_pmc.py`
+  parametrised tests pick it up automatically; a dedicated
+  `test_classify_hmc_in_k3` verifies error rate < 5 %.
+- **`prg/tests/test_logging_setup.py`** — 5 tests covering `configure()`
+  (no-file, explicit-path, idempotence, unwriteable-path) and
+  `add_widget_handler()` (PyQt6 round-trip).  Coverage of
+  `logging_setup.py`: 27 % → **95 %**.
+- **`CSVLoadError`** in `prg.exceptions` (replaces the private
+  `_DataLoadError` from `cli.py`). Now reusable from library code; keeps
+  the same hierarchy (`PMCError, IOError`).
+
+### Changed
+
+- **`MAX_AR_ITER`** in `prg.copulas.bivariate` — renamed from `_NBITERMAX`,
+  now public and documented (Sphinx-compatible `#:` comments). Tweak via
+  `prg.copulas.bivariate.MAX_AR_ITER = …` if a custom copula has a poor
+  majorant.
+- **`CopulaEnum` access aligned** — every iteration now uses
+  `c.value.X` (CLASS_NAME, MODULE, AVAILABLE, …) instead of mixing
+  `c.X` and `c.value.X`. The dataclass mixin still accepts both, but the
+  codebase is internally consistent.
+- **`_class_colors(K)` → `_class_colors(n_classes)`** — PEP-8 compliant
+  parameter name. The `import matplotlib.pyplot as plt` was hoisted out
+  of the function body (lazy import was unnecessary in a Qt module).
+
+### Added
+
+- **`Variant` enum properties** — `variant.uses_copula`, `variant.has_markov_prior`,
+  `variant.per_class_margin`. The legacy `USES_COPULA` / `MARKOV_PRIOR` /
+  `PER_CLASS_MARGIN` sets are kept as backward-compatible aliases.
+- **`prg/tests/test_cli.py`** — 7 subprocess-based smoke tests for the
+  ``pmc`` console script (``--help``, simulate, classify, estimate;
+  reproducibility, missing-data error path).
+- **`pytest.mark.slow`** — marker registered in pyproject; CLI estimate
+  (the longest single test at ~2 s) is tagged. Run `pytest -m "not slow"`
+  for fast iteration.
+- **CI updated** (`.gitlab-ci.yml`) — Python 3.11 / 3.12 / 3.13 matrix,
+  ruff lint stage, coverage gauge, Cobertura report artefact, headless
+  Qt deps installed for `test_gui_dialogs`.
+
+### Changed
+
+- **`prg/__init__.py`** docstring — replaced the obsolete "Public API
+  (to be defined)" placeholder with three concrete quickstart examples
+  (copula, PMC, CLI).
+
+### Added
+
+- **`CopulaVirt.inv_h(w, u)`** — Rosenblatt inverse step (used by `simulate`).
+  Default uses Brent's method; `CopulaGaussian` and `CopulaClayton` override
+  with closed-form expressions (~50× faster).
+- **`[project.scripts] pmc`** — installs a `pmc` console script
+  (`pmc simulate ...`, `pmc classify ...`, `pmc estimate ...`, `pmc gui`).
+- **`[project.optional-dependencies] gui`** — `pip install copulasformm[gui]`
+  pulls PyQt6.
+- **`[tool.coverage]` config** — `pytest --cov` runs out of the box.
+- **`prg/copulas/_fit.py`** — extracted from `_base.py`: `FitResult`,
+  `GoFResult`, `_eval_log_likelihood`, `_empirical_copula`, `_cvm_statistic`,
+  `_empirical_tail_dep`. `_base.py` re-exports for backward compatibility.
+- **`prg/pmc/gui/dialogs.py`** — extracted `_MarginDialog` and `_CopulaDialog`
+  from `main_window.py`. Now unit-testable in isolation.
+- **`prg/pmc/gui/tabs.py`** — extracted the four parameter tabs (`_PriorTab`,
+  `_MarginTab`, `_CopulaTab`, `_IceTab`) from `main_window.py`.
+- **`prg/pmc/gui/worker.py`** — extracted `_Worker` (background `QThread`).
+- **`prg/copulas/_bivariate_fit.py`** — extracted `BivariateFitResult`,
+  `BivariateBootstrapCI`, `_empirical_joint_cdf` and `_joint_cvm_statistic`
+  from `bivariate.py`. The runtime cycle is broken by lazy imports of
+  `BivariateLaw` inside the bootstrap / cv methods.
+- **`CopulaFrank.inv_h`** — closed-form override (Aas et al. 2009 derivation):
+    v = -1/θ · log(1 + w(e^{-θ}-1) / (e^{-θu} - w(e^{-θu}-1)))
+- **`prg/tests/test_gui_dialogs.py`** — 7 unit tests for `_MarginDialog` and
+  `_CopulaDialog` (round-trip, defaults, parameter parsing, full copula list).
+  Skipped gracefully when PyQt6 is not installed.
+- **`prg/tests/test_pdf_array.py`** — 36 new tests verifying that every
+  copula's `pdf_array` matches `[pdf([u,v]) for u,v in uv]` and that
+  `inv_h` is a true inverse of `conditional_cdf` for Gaussian and Clayton.
+
+### Changed
+
+- **`pyproject.toml`** — multiple correctness fixes:
+  - `requires-python = ">=3.11"` (was `>=3.10`; we use `tomllib` from stdlib).
+  - Removed `pandas`, `rich` from dependencies (never imported).
+  - Added `statsmodels>=0.14` (used by 5 copulas, was undeclared → install
+    on a clean env was broken).
+  - Classifier list updated to reflect 3.11 / 3.12 / 3.13.
+- **`prg.pmc.simulate`** — uses the new `cop.inv_h(w, u)` instead of an
+  in-module `brentq` call. The two `simulate(N=10_000)` tests went from
+  8.1 s → 1.2 s each; total test suite **22.78 s → 7.25 s**.
+- **`prg.pmc.ice._joint_posteriors`** — vectorised via numpy broadcasting;
+  removed the `for n in range(N-1)` loop.
+- **`BIGGER_SIZE` → `FONT_SIZE`** across the package (the legacy alias was
+  misleading; the rename clarifies intent).
+- **Logger placement** — moved `logger = logging.getLogger(__name__)` after
+  the imports in `prg.pmc.gui.main_window` (was the only file with it before
+  imports).
+- **`scripts/update_readme_structure.sh`** — moved from the repo root to
+  `scripts/` and the in-script usage doc updated.
+
+### Removed
+
+- **`prg.pmc.ice.ice_from_files`** — dead helper (61 LOC), never called from
+  anywhere. The CLI uses `cmd_estimate` directly.
+- **`prg/tests/__init__.py`** and **`prg/tests/conftest.py`** (empty).
+- **`prg.pmc.simulate._inv_h`** — superseded by `CopulaVirt.inv_h`.
+
+### Added (earlier in this cycle, kept here for completeness)
+
+- **`CopulaVirt.pdf_array(uv)` / `logpdf_array(uv)`** — vectorised PDF / log-PDF
+  evaluation on an `(M, 2)` array of pseudo-observations. Default fast path
+  uses `self._model.pdf` (statsmodels) when available; falls back to a Python
+  loop otherwise.
+- **`CopulaJoe.pdf_array`** — vectorised closed-form override (Joe has no
+  statsmodels backend).
+- **`PMCModel` public read API** — `raw`, `path`, `ice_config()`,
+  `margin_blocks()`, `copula_blocks()`. All return deep copies — safe to
+  mutate. External callers (ICE, GUI) no longer reach into `_raw`.
+- **`prg.configure_logging`** re-exported at the top-level package.
+- **`prg/tests/test_pmc.py`** — 39 new tests covering model loading,
+  prior consistency, weight() formula, save/load round-trip, simulate()
+  empirical π, forward/backward invariants, classify() error rate,
+  K=3 label permutations, and ICE convergence + τ recovery.
+
+### Changed
+
+- **`prg.pmc.inference.precompute_weights`** — vectorised:
+  - HMC-IN/IN2/PMC-IN: full numpy broadcast (no Python loop on N).
+  - HMC-DN/PMC: the `(N-1)` Python loop on copula PDFs is replaced by a
+    single `cop.pdf_array(uv)` call per `(i, j)` pair.
+  - **Speedup**: classify on PMC/HMC-DN, N=5000 → ≈55× (1.2 s → 0.02 s).
+- **`prg.pmc.ice._neg_wll` and `_weighted_log_likelihood`** — use
+  `cop.logpdf_array(uv)` instead of a Python list comprehension over scalars.
+  - **Speedup**: ICE 5 iterations on PMC, N=2000 → ≈130× (27 s → 0.2 s).
+- **`prg.pmc.inference.error_rate`** — handles arbitrary K via the
+  Hungarian algorithm (`scipy.optimize.linear_sum_assignment`) on the
+  confusion matrix; returns the minimum error over all label permutations.
+- **`prg.pmc.model.PMCModel.save`** — uses `tomli_w` instead of a custom
+  TOML serialiser (~50 LOC removed).
+- **`PMCModel.from_dict(raw)`** now deep-copies `raw`, eliminating the
+  aliasing pitfall where mutating the source dict silently affected the model.
+
+- **`PMCModel._parse`** — exhaustive `[[margins]]` and `[[copulas]]`
+  validation: detects duplicate `(i, j)` keys, missing pairs, and missing
+  required fields (`dist`, `i`, `j`). 4 new tests cover these paths.
+- **`prg.pmc.ice.ice()`** — distinguishes log-likelihood **regression** from
+  convergence: emits a `WARNING` on each decreasing step and stops early
+  after `patience` (default 3) consecutive regressions.
+- **`prg.copulas._base.CopulaEnum.klass`** — cached lazy property that
+  returns the implementation class. Replaces repeated
+  `importlib.import_module` calls in `_build_copula` and ICE candidate
+  resolution.
+- **GUI** — added a **Seed** field to the model header. Empty = random;
+  any integer = reproducible simulation. Parsing is tolerant: a non-integer
+  value logs a warning and falls back to ``None``.
+- **`prg.pmc.gui._MarginDialog` / `_CopulaDialog`** — now inherit directly
+  from `QDialog` instead of wrapping a contained `QDialog` in a `QWidget`.
+- **CLI** — extracted `_read_observations(path, ref_col)` helper; removed
+  duplicated CSV-reading code from `cmd_classify` and `cmd_estimate`.
+
+- **Vectorised `pdf_array` overrides** for every copula without a
+  `statsmodels` backend: `BB1`, `AMH`, `A12`, `A14`, `FGM`, `Plackett`,
+  `CubSec`, and the three `Survival*` wrappers. Bench against the scalar
+  loop on N=2000 random pseudo-observations: speedups from **14× to 100×**;
+  numerical match within 1 ulp on every family.
+- **`prg/tools/tools.py`** — added `MIN_POSITIVE = sys.float_info.min`
+  (smallest strictly-positive normal float, used as a safe non-zero floor
+  in normalisation). Previously `1e-300` was hardcoded in five places.
+- **`prg.pmc.inference.forward`** — when α₁ has zero density under every
+  state (e.g. Y[0] outside every margin's support), the function now
+  raises `IncompatibleObservationError` instead of silently flooring
+  `C₁` to `1e-300` and producing a meaningless log-likelihood. Test
+  added.
+- **`prg.pmc.model._stationary_distribution`** — replaces the
+  `np.linalg.eig`-based extraction of π with **power iteration**. The
+  previous approach could pick the wrong eigenvector for nearly-reducible
+  chains (multiple eigenvalues close to 1). Test added on a near-reducible
+  3-state chain.
+- **`prg.pmc.ice._fit_copula_params`** — multi-parameter copula fitting
+  via L-BFGS-B. BB1 (`tau_k`, `delta`) and Student (`tau_k`, `df`) now
+  jointly maximise the weighted log-likelihood instead of using the
+  hardcoded defaults `delta = 1.5` / `df = 4.0`.
+
+### Removed
+
+- **`prg/logging_config.py`** — superseded by `prg/pmc/logging_setup.py`
+  (unused since 0.4.0).
+
+### Dependencies
+
+- Added **`tomli_w>=1.0`** (TOML serialisation).
+
+---
+
+## [0.4.0] - 2026-05-04
+
+### Added
+
+- **`prg/pmc/`** — full Pairwise Markov Chain (PMC) package with 5 model variants:
+  - **`HMC-IN`** — Hidden Markov Chain, one marginal per class (classical HMM).
+  - **`HMC-IN2`** — HMC with pair-indexed marginals f_{ij}.
+  - **`HMC-DN`** — HMC with copula-based temporal dependence.
+  - **`PMC-IN`** — Pairwise Markov Chain, independent observations.
+  - **`PMC`** — Full PMC with copula-based transitions.
+
+- **`PMCModel`** (`prg/pmc/model.py`) — loads/validates/saves models from TOML.
+  - Supports all 5 variants; validates K, prior (A or p), K² margins, K² copulas.
+  - `prior_p`, `transition_A`, `stationary_pi` properties.
+  - `pdf(i,j,y)`, `cdf(i,j,y)`, `ppf(i,j,q)` — margin access.
+  - `copula(i,j)` — returns `CopulaVirt` instance.
+  - `weight(i,j,y_n,y_{n+1})` — unified transition weight for all 5 variants.
+  - Custom TOML writer (no `tomli_w` dependency).
+
+- **`simulate`** (`prg/pmc/simulate.py`) — sequence generator for all 5 variants.
+  - Latent chain sampled from row-stochastic A; observations via Rosenblatt h-inversion for copula variants.
+  - `simulate(model, N=None, seed=None) → (X, Y)`.
+
+- **`classify`** / **`forward`** / **`backward`** / **`smooth`** / **`mpm`** (`prg/pmc/inference.py`) — Baum-Welch forward-backward with Devijver normalization.
+  - Initialization: α_1(j) = Σ_i p[i,j]·f_{ji}(y_1) — works for all 5 variants.
+  - `classify(model, Y) → (X_hat, gamma, log_lik)`.
+  - `error_rate(X_true, X_hat)` — handles K=2 label permutation.
+
+- **`ice`** (`prg/pmc/ice.py`) — Iterative Conditional Estimation (ICE) for unsupervised parameter fitting.
+  - E-step: forward-backward → marginal γ and joint ξ posteriors.
+  - M-step: prior update, copula selection by weighted log-likelihood, τ by weighted MLE.
+  - Optional margin re-estimation (Gaussian: weighted mean/std).
+  - Convergence by relative log-likelihood change.
+
+- **CLI** (`prg/pmc/cli.py`, `prg/pmc/__main__.py`):
+  - `python -m prg.pmc simulate --model M.toml --N 5000 --seed 42 --out seq.csv`
+  - `python -m prg.pmc classify --model M.toml --data seq.csv --out cls.csv`
+  - `python -m prg.pmc estimate --model INIT.toml --data seq.csv --out fitted.toml`
+  - `python -m prg.pmc gui [M.toml]`
+
+- **PyQt6 GUI** (`prg/pmc/gui/`):
+  - Single window with three action buttons: **Simulate**, **Classify**, **Estimate**.
+  - Tabbed model editor: Prior (K×K editable matrix), Margins (K×K cells), Copulas (K×K cells), ICE Config.
+  - Double-click cell dialogs for per-pair margin and copula editing.
+  - Matplotlib result panel: scatter + histogram + pair-scatter for simulation; posterior + error map for classification; log-lik convergence for ICE.
+  - Background QThread worker keeps GUI responsive during long computations.
+  - File menu: Open / Save / Save As TOML; Load data CSV.
+
+- **5 example TOML models** (`prg/pmc/models/`):
+  - `hmc_in_gauss_k2.toml`, `hmc_in2_gauss_k2.toml`, `hmc_dn_gauss_k2.toml`
+  - `pmc_in_gauss_k2.toml`, `pmc_gauss_k2.toml`
+
 ---
 
 ## [0.3.5] - 2026-05-04
@@ -138,7 +830,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial project scaffold: `pyproject.toml`, `README.md`, `CHANGELOG.md`, `.gitignore`, `prg/__init__.py`
 
-[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.5...HEAD
+[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.4.0...HEAD
+[0.4.0]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.5...v0.4.0
 [0.3.5]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.4...v0.3.5
 [0.3.4]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.3...v0.3.4
 [0.3.3]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.2...v0.3.3

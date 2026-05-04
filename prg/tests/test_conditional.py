@@ -12,7 +12,7 @@ from prg.copulas import (
     CopulaGH, CopulaClayton, CopulaA12, CopulaA14,
     CopulaProduct, CopulaFGM, CopulaCubSec,
 )
-from prg.tools.tools import EPS, ONE_MINUS_EPS
+from prg.numerics import EPS, ONE_MINUS_EPS
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -7,14 +7,15 @@ CDF:       C(u,v) = 1 / (1 + (U1 + U2)^{1/θ})
 θ = 2 / (3(1 − τ_K)),  τ_K ∈ [1/3, 1).
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
 import numpy as np
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -67,17 +68,85 @@ class CopulaA12(CopulaVirt):
         U2 = np.pow(1.0 / u2 - 1.0, self.theta)
         return float(1.0 / (1.0 + np.pow(U1 + U2, 1.0 / self.theta)))
 
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (A12 has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u1 = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        u2 = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            U1 = (1.0 / u1 - 1.0) ** th
+            U2 = (1.0 / u2 - 1.0) ** th
+            result = 1.0 / (1.0 + (U1 + U2) ** (1.0 / th))
+        return np.clip(np.where(np.isfinite(result), result, EPS), 0.0, 1.0)
+
+    def _logpdf_array_core(self, uv: np.ndarray) -> np.ndarray:
+        """Log-space helper used by both ``pdf_array`` and ``logpdf_array``."""
+        uv = np.asarray(uv, dtype=float)
+        u1 = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        u2 = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th     = self.theta
+        inv_th = 1.0 / th
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            log_a1  = np.log(1.0 / u1 - 1.0)
+            log_a2  = np.log(1.0 / u2 - 1.0)
+            log_U1  = th * log_a1
+            log_U2  = th * log_a2
+            log_max = np.maximum(log_U1, log_U2)
+            log_S   = log_max + np.log(np.exp(log_U1 - log_max) + np.exp(log_U2 - log_max))
+            S1th    = np.exp(log_S * inv_th)
+            factor  = (th - 1.0) + (th + 1.0) * S1th
+            return (
+                log_U1 - np.log(u1) - np.log(1.0 - u1)
+                + log_U2 - np.log(u2) - np.log(1.0 - u2)
+                + np.log(np.maximum(factor, EPS))
+                + (inv_th - 2.0) * log_S
+                - 3.0 * np.log1p(S1th)
+            )
+
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (A12 has no statsmodels backend)."""
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            result = np.exp(self._logpdf_array_core(uv))
+        return np.where(np.isfinite(result) & (result > 0.0), result, EPS)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF — bypasses ``log(max(pdf, EPS))`` floor."""
+        return self._logpdf_array_core(uv)
+
     def conditional_cdf(self, v: float, u: float) -> float:
-        """h(v|u) = (1+S^{1/θ})^{−2} · S^{1/θ−1} · (1/u−1)^{θ−1} / u²."""
+        """h(v|u) = (1+S^{1/θ})^{−2} · S^{1/θ−1} · (1/u−1)^{θ−1} / u².
+
+        For τ → 1 (θ → ∞) the term ``(1/v − 1)^θ`` overflows for any v ≪ u
+        (typical in the brentq bracket of :meth:`inv_h`). In that limit the
+        copula concentrates on the diagonal v = u, so h(v|u) → 𝟙{v ≥ u}.
+        We catch the overflow and return that limiting indicator — the same
+        pattern used by :class:`CopulaA14`.
+        """
         u = minmaxEPS(u)
         v = minmaxEPS(v)
-        U1 = (1.0/u - 1.0) ** self.theta
-        U2 = (1.0/v - 1.0) ** self.theta
-        S   = U1 + U2
-        S1t = S ** (1.0 / self.theta)
-        result = ((1.0 + S1t)**(-2.0) * S**(1.0/self.theta - 1.0) *
-                  (1.0/u - 1.0)**(self.theta - 1.0) / u**2)
-        return float(np.clip(result, 0.0, 1.0))
+        try:
+            U1 = (1.0/u - 1.0) ** self.theta
+            U2 = (1.0/v - 1.0) ** self.theta
+            S   = U1 + U2
+            S1t = S ** (1.0 / self.theta)
+            result = ((1.0 + S1t)**(-2.0) * S**(1.0/self.theta - 1.0) *
+                      (1.0/u - 1.0)**(self.theta - 1.0) / u**2)
+            if not np.isfinite(result):
+                fallback = 1.0 if v >= u else 0.0
+                logger.debug(
+                    "A12.h: result non-fini (θ=%.3f, u=%.3e, v=%.3e) → fallback %.1f",
+                    self.theta, u, v, fallback,
+                )
+                return fallback
+            return float(np.clip(result, 0.0, 1.0))
+        except (ZeroDivisionError, ValueError, OverflowError) as e:
+            fallback = 1.0 if v >= u else 0.0
+            logger.debug(
+                "A12.h: exception numérique (θ=%.3f, u=%.3e, v=%.3e): %s → fallback %.1f",
+                self.theta, u, v, e, fallback,
+            )
+            return fallback
 
     # Numerical majorant (inherited from CopulaVirt)
 

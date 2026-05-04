@@ -1,0 +1,1119 @@
+"""
+ice.py — Iterative Conditional Estimation (ICE) for unsupervised PMC/HMC fitting.
+
+Public API
+----------
+ice(model, Y, ice_cfg=None) -> (PMCModel, IceTrace)
+    Fit a PMCModel to the observation sequence Y using ICE.
+    Returns the fitted model and an :class:`IceTrace` capturing per-iteration
+    diagnostics (log-lik, τ, family, prior matrix, margin params; plus the
+    losing runs when multistart is enabled). Use ``trace.log_liks`` for the
+    plain log-likelihood history.
+
+Algorithm (ICE for SR-PMC)
+--------------------------
+Given an initial model θ^(0) and observations Y = y_{1:N}:
+
+Iterate until convergence:
+
+  E-step:
+    Compute forward-backward quantities:
+      α̂_n(j), β̂_n(j)          — normalized forward/backward variables
+      γ_n(j)   = P(X_n=j | Y)  — marginal posteriors
+      ξ_n(i,j) = P(X_n=i, X_{n+1}=j | Y)  — joint posteriors
+
+  M-step (Conditional estimation):
+    1. Prior p̂[i,j] = (1/N-1) Σ_n ξ_n(i,j)
+
+    2. For each pair (i,j) — copula selection + τ estimation:
+       a. Collect pseudo-observations (u_n, v_n) = (F_{ij}(y_n), F_{ji}(y_{n+1}))
+          weighted by ξ_n(i,j)  for n = 1, …, N-1.
+       b. Select best copula family from 'candidates' by weighted log-likelihood.
+       c. Estimate τ_{ij} by weighted MLE on τ ∈ [τ_min, τ_max].
+
+    3. (Optional) Margin re-estimation for Gaussian margins:
+       μ̂_{ij} = Σ_n w_n y_n;   σ̂_{ij} = sqrt(Σ_n w_n (y_n - μ̂)²)
+       where w_n = ξ_n(i,j) / Σ_n ξ_n(i,j).
+
+ICE configuration (TOML [ice] section or dict)
+-----------------------------------------------
+  fit_margins : bool   (default False) — re-estimate margin parameters.
+  max_iter    : int    (default 50)    — maximum EM iterations.
+  tol         : float  (default 1e-4)  — relative log-likelihood convergence threshold.
+  candidates  : list[str]              — SHORT_NAMEs of candidate copula families.
+                 default: all 1-parameter available families except Product.
+"""
+
+import copy as _copy
+import logging
+from dataclasses import dataclass, field
+
+import numpy as np
+from scipy.optimize import minimize, minimize_scalar
+
+from prg.copulas._base import CopulaEnum
+from prg.pmc.inference import backward, forward, precompute_weights, smooth
+from prg.pmc.model import PMCModel, Variant
+from prg.numerics import EPS, ONE_MINUS_EPS, MIN_POSITIVE
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# IceTrace — captured per-iteration diagnostics
+# ---------------------------------------------------------------------------
+
+@dataclass
+class IceTrace:
+    """Per-iteration ICE history, captured for diagnostic visualisations.
+
+    Snapshot semantics
+    ------------------
+    All time-indexed arrays/lists have length ``T`` = number of completed
+    E-steps. The snapshot at index ``t`` reflects the model state *as the
+    log-likelihood ``log_liks[t]`` was computed* — i.e. just before the
+    M-step that produces the model used for ``log_liks[t + 1]``::
+
+           E-step ──→  M-step  ──→  E-step ──→ …
+              ▲              ▲
+              │              │
+        snapshot[t]     snapshot[t+1]
+        log_liks[t]     log_liks[t+1]
+
+    For T = 0 (no completed iteration), the array fields are empty arrays
+    of shape ``(0, K, K)`` — never ``None``.
+
+    Fields
+    ------
+    log_liks       : ``list[float]`` — log-likelihood trace.
+    tau_history    : ``np.ndarray`` shape ``(T, K, K)``, dtype float —
+                     τ_K of the copula at pair ``(i, j)`` for each iteration.
+                     ``NaN`` if the variant has no copula at that pair (e.g.
+                     HMC-IN) or the candidate selection failed.
+    family_history : ``list[list[list[str]]]`` — same shape ``(T, K, K)``,
+                     each entry is the SHORT_NAME of the selected family
+                     (or ``""`` if no copula).
+    p_history      : ``np.ndarray`` shape ``(T, K, K)`` — joint prior
+                     ``p[i,j] = P(X_n=i, X_{n+1}=j)`` (computed as
+                     ``π·A`` for HMC variants).
+    margin_history : ``list[list[dict]]`` — at index ``t`` a list of margin
+                     blocks ``{"i": ..., "j": ..., "dist": ..., "params": {...}}``
+                     in declaration order, mirroring ``model.margin_blocks()``.
+    multistart_runs: ``list[IceTrace]`` — when ``n_starts > 1``, the traces
+                     from the *non-best* runs (the chosen run is the trace
+                     itself). Empty list when single-start.
+    run_tag        : str — label of this run (``"unperturbed"``,
+                     ``"perturbed-3"``, …) when multistart was used.
+    candidates     : ``list[str]`` — copula candidate SHORT_NAMEs that ICE
+                     iterated over, captured for the family-ribbon legend.
+    """
+    log_liks:        list[float]              = field(default_factory=list)
+    # Always an ndarray (possibly shape (0, K, K)); the ``field(default=…)``
+    # rule prevents mutable defaults so we use a default_factory here too.
+    tau_history:     np.ndarray               = field(
+        default_factory=lambda: np.empty((0, 0, 0), dtype=float)
+    )
+    family_history:  list[list[list[str]]]    = field(default_factory=list)
+    p_history:       np.ndarray               = field(
+        default_factory=lambda: np.empty((0, 0, 0), dtype=float)
+    )
+    margin_history:  list[list[dict]]         = field(default_factory=list)
+    multistart_runs: list["IceTrace"]         = field(default_factory=list)
+    run_tag:         str                      = ""
+    candidates:      list[str]                = field(default_factory=list)
+
+    @property
+    def n_iters(self) -> int:
+        return len(self.log_liks)
+
+    def __len__(self) -> int:
+        return self.n_iters
+
+
+@dataclass
+class IceResult:
+    """Bundle returned by GUI/diagnostics layers around an ICE run.
+
+    Carries everything the View-selector needs to draw the 12 ICE views
+    (the trace alone is not sufficient — view ``J`` needs the *initial*
+    model, view ``C`` and ``H`` need the observation sequence ``Y``).
+
+    Fields
+    ------
+    initial_model : :class:`PMCModel` — the model handed to ``ice()``.
+    fitted_model  : :class:`PMCModel` — the best-run model returned by ICE.
+    Y             : ``np.ndarray`` — observations ICE was fitted to.
+    trace         : :class:`IceTrace` — per-iteration history.
+    """
+    initial_model: PMCModel
+    fitted_model:  PMCModel
+    Y:             np.ndarray
+    trace:         IceTrace
+
+
+# ---------------------------------------------------------------------------
+# Per-iteration snapshot helpers
+# ---------------------------------------------------------------------------
+
+def _snapshot_tau_family(model: PMCModel) -> tuple[np.ndarray, list[list[str]]]:
+    """Return ``(tau_kk, family_kk)`` for the current model.
+
+    ``tau_kk`` is a ``(K, K)`` float array (NaN where no copula is declared);
+    ``family_kk`` is a ``K × K`` list-of-lists of SHORT_NAME strings (``""``
+    where no copula).
+    """
+    K = model.K
+    tau = np.full((K, K), np.nan, dtype=float)
+    fam = [["" for _ in range(K)] for _ in range(K)]
+    if not model.variant.uses_copula:
+        return tau, fam
+    for blk in model.copula_blocks():
+        i = int(blk["i"]); j = int(blk["j"])
+        tau[i, j] = float(blk.get("tau", np.nan))
+        fam[i][j] = str(blk.get("name", ""))
+    return tau, fam
+
+
+def _snapshot_prior_p(model: PMCModel) -> np.ndarray:
+    """Joint prior ``p[i, j]`` regardless of variant.
+
+    For HMC variants the model stores a row-stochastic ``A``; the joint is
+    recovered as ``p[i, j] = π_i · A[i, j]`` (always exists since the
+    stationary distribution is computed at construction time).
+    """
+    if model.variant.has_markov_prior:
+        pi = np.asarray(model.stationary_pi, dtype=float)
+        A  = np.asarray(model.transition_A,   dtype=float)
+        return pi[:, None] * A
+    return np.asarray(model.prior_p, dtype=float).copy()
+
+
+def _snapshot_margins(model: PMCModel) -> list[dict]:
+    """Deep-copy of the ``margins`` blocks in declaration order."""
+    return _copy.deepcopy(list(model.margin_blocks()))
+
+# Default candidate SHORT_NAMEs (1-parameter families, no Product)
+_DEFAULT_CANDIDATES = ["Gauss", "GH", "Clayton", "Frank", "Joe"]
+
+
+# Bounds and initial values for the *non*-τ parameters of multi-parameter
+# copula families. Single source of truth — also consumed by the GUI
+# copula dialog (``prg.pmc.gui.dialogs``). Keyed by ``CopulaVirt`` subclass
+# name; each entry maps a parameter name to ``(lower, upper, init)``.
+EXTRA_PARAM_BOUNDS: dict[str, dict[str, tuple[float, float, float]]] = {
+    "CopulaBB1":     {"delta": (1.0,   10.0,  1.5)},
+    "CopulaStudent": {"df":    (2.0,  100.0,  4.0)},
+}
+# Backward-compatibility shim — the underscore-prefixed name was used
+# internally before ``EXTRA_PARAM_BOUNDS`` was promoted to public API.
+_EXTRA_PARAM_BOUNDS = EXTRA_PARAM_BOUNDS
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _weighted_kendall_tau(
+    u: np.ndarray,
+    v: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """Weighted Kendall's τ on pseudo-observations (u, v).
+
+    Definition (weighted version of the Mann/Kendall coefficient)::
+
+        τ = ( Σ_{i<j} w_i w_j · sign(u_i − u_j) · sign(v_i − v_j) )
+            ────────────────────────────────────────────────────────
+            ( Σ_{i<j} w_i w_j )
+
+    Implementation is fully vectorised (O(N²) memory, O(N²) ops). For
+    typical ICE workloads (N ≲ a few thousand) this costs a handful of
+    milliseconds — negligible compared to the per-iteration MLE.
+
+    Returns ``0.0`` for degenerate inputs (zero total weight, all-equal
+    observations, …) so the caller can safely use the result as an
+    optimiser initial value.
+    """
+    u = np.asarray(u, dtype=float).ravel()
+    v = np.asarray(v, dtype=float).ravel()
+    w = np.asarray(weights, dtype=float).ravel()
+    n = u.size
+    if n < 2:
+        return 0.0
+
+    w_sum = float(w.sum())
+    if not np.isfinite(w_sum) or w_sum <= MIN_POSITIVE:
+        return 0.0
+
+    # Pairwise sign products restricted to the strict upper triangle
+    # (avoid double counting and the diagonal).
+    du   = np.sign(u[:, None] - u[None, :])
+    dv   = np.sign(v[:, None] - v[None, :])
+    sgn  = du * dv                            # (n, n) ∈ {-1, 0, +1}
+    W    = w[:, None] * w[None, :]            # (n, n) outer product
+    triu = np.triu_indices(n, k=1)
+
+    den = float(W[triu].sum())
+    if den <= MIN_POSITIVE:
+        return 0.0
+    num = float((W * sgn)[triu].sum())
+    return float(np.clip(num / den, -1.0, 1.0))
+
+
+def _joint_posteriors(
+    alpha_hat: np.ndarray,
+    W: np.ndarray,
+    beta_hat: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute  ξ_n(i,j) = P(X_n=i, X_{n+1}=j | Y)  for n = 0, …, N-2.
+
+    Vectorised expression:
+        ξ_n(i,j) ∝ α̂_n(i) · W[n,i,j] · β̂_{n+1}(j)
+    using broadcasting on the (N-1, K, K) axes.
+
+    Returns
+    -------
+    xi : (N-1, K, K)
+    """
+    # alpha_hat[:-1, :, None] : (N-1, K, 1)
+    # beta_hat[1:,  None, :]  : (N-1, 1, K)
+    xi = alpha_hat[:-1, :, None] * W * beta_hat[1:, None, :]
+
+    # Per-step normalisation; rows that summed to zero stay zero (no division)
+    sums = xi.sum(axis=(1, 2), keepdims=True)
+    np.divide(xi, sums, out=xi, where=sums > 0)
+    return xi
+
+
+def _resolve_candidate(short_name: str):
+    """Return (CopulaEnum_entry, class) for a SHORT_NAME. Raises if not found."""
+    entry = CopulaEnum.from_short_name(short_name)
+    if entry is None:
+        available = [c.value.SHORT_NAME for c in CopulaEnum.available()]
+        raise ValueError(
+            f"Candidate copula {short_name!r} not found. "
+            f"Available SHORT_NAMEs: {available}"
+        )
+    return entry, entry.klass
+
+
+def _weighted_mle_tau(
+    cls,
+    entry,
+    u: np.ndarray,
+    v: np.ndarray,
+    weights: np.ndarray,
+    tau_init: float | None = None,
+) -> float:
+    """
+    Weighted MLE estimate of τ for copula class `cls` on pseudo-observations (u, v).
+
+    Returns the τ̂ that maximises  Σ_n w_n · log c_{τ}(u_n, v_n).
+
+    ``tau_init`` is an optional data-aware starting guess (e.g. weighted
+    Kendall's τ) used as the fallback if the bounded optimiser fails. The
+    ``minimize_scalar(method="bounded")`` Brent search is bracketed and
+    therefore does not consume an initial value, but it is still useful
+    as a safety-net so we don't fall back to a generic Pearson moment.
+    """
+    tau_min, tau_max = entry.value.TAU_MIN_MAX
+    pad = max(1e-4 * (tau_max - tau_min), 1e-8)
+    lo, hi = tau_min + pad, tau_max - pad
+
+    w  = weights / (weights.sum() + MIN_POSITIVE)
+    uv = np.column_stack((np.asarray(u, dtype=float),
+                          np.asarray(v, dtype=float)))
+
+    def _neg_wll(tau: float) -> float:
+        try:
+            cop = cls(tau_k=float(tau))
+            log_pdfs = cop.logpdf_array(uv)
+            return -float(np.dot(w, log_pdfs))
+        except Exception as exc:
+            logger.debug(
+                "_neg_wll: copula eval failed at tau=%.6f — %s", tau, exc,
+                exc_info=True,
+            )
+            return 1e12
+
+    try:
+        res = minimize_scalar(_neg_wll, bounds=(lo, hi), method="bounded",
+                              options={"xatol": 1e-6})
+        return float(np.clip(res.x, lo, hi))
+    except Exception as exc:
+        logger.debug(
+            "_weighted_mle_tau failed (%s); falling back to data-aware Kendall.",
+            exc,
+        )
+        # Prefer the supplied data-aware estimate (weighted Kendall) when
+        # available; otherwise compute it on the fly. Kendall's τ is the
+        # natural concordance measure for copulas and is far closer to the
+        # true MLE than the previous Pearson-based fallback.
+        if tau_init is None or not np.isfinite(tau_init):
+            tau_init = _weighted_kendall_tau(u, v, weights)
+        return float(np.clip(tau_init, lo, hi))
+
+
+def _weighted_log_likelihood(
+    cls,
+    params: dict,
+    u: np.ndarray,
+    v: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """Weighted log-likelihood of the copula evaluated at the given parameter dict."""
+    try:
+        cop = cls(**params)
+        w   = weights / (weights.sum() + MIN_POSITIVE)
+        uv  = np.column_stack((np.asarray(u, dtype=float),
+                               np.asarray(v, dtype=float)))
+        return float(np.dot(w, cop.logpdf_array(uv)))
+    except Exception as exc:
+        logger.debug(
+            "_weighted_log_likelihood: failed for params=%s — %s",
+            params, exc, exc_info=True,
+        )
+        return -1e12
+
+
+def _fit_copula_params(
+    cls,
+    entry,
+    u: np.ndarray,
+    v: np.ndarray,
+    weights: np.ndarray,
+) -> dict:
+    """Weighted MLE for **all** free parameters of `cls`.
+
+    For 1-parameter families this is just τ̂ (delegated to ``_weighted_mle_tau``).
+    For multi-parameter families (BB1, Student) it runs a joint L-BFGS-B
+    optimisation over (τ, *extras) using the bounds in ``_EXTRA_PARAM_BOUNDS``.
+
+    Returns
+    -------
+    dict — keyword arguments suitable for ``cls(**dict)``.  Always contains
+    ``tau_k`` and any extra parameters declared in the registry.
+    """
+    extras = _EXTRA_PARAM_BOUNDS.get(cls.__name__, {})
+
+    # Data-aware initial value: weighted Kendall's τ, clipped to the
+    # family's valid τ range. This is the natural concordance measure
+    # for copulas; for many one-parameter families θ̂(τ_emp) is already
+    # within ~10⁻² of the MLE, so the optimiser typically converges in
+    # 1–2 fewer iterations and the fallback is far more robust than a
+    # generic mid-range guess.
+    tau_min, tau_max = entry.value.TAU_MIN_MAX
+    pad     = max(1e-4 * (tau_max - tau_min), 1e-8)
+    lo, hi  = tau_min + pad, tau_max - pad
+    tau_emp = float(np.clip(_weighted_kendall_tau(u, v, weights), lo, hi))
+
+    # 1-D case — fall back to the existing dedicated routine, supplying
+    # the data-aware estimate as a robust fallback / hint.
+    if not extras:
+        tau_hat = _weighted_mle_tau(cls, entry, u, v, weights, tau_init=tau_emp)
+        return {"tau_k": float(tau_hat)}
+
+    # n-D case — joint optimisation, started at (τ_emp, default extras).
+    bounds_list: list[tuple[float, float]] = [(lo, hi)]
+    init: list[float]      = [tau_emp]
+    extra_names: list[str] = []
+    for name, (xlo, xhi, x0) in extras.items():
+        bounds_list.append((xlo, xhi))
+        init.append(x0)
+        extra_names.append(name)
+
+    w  = weights / (weights.sum() + MIN_POSITIVE)
+    uv = np.column_stack((np.asarray(u, dtype=float),
+                          np.asarray(v, dtype=float)))
+
+    def _neg_ll(x: np.ndarray) -> float:
+        kw: dict = {"tau_k": float(x[0])}
+        for k, name in enumerate(extra_names):
+            kw[name] = float(x[k + 1])
+        try:
+            cop = cls(**kw)
+            return -float(np.dot(w, cop.logpdf_array(uv)))
+        except Exception as exc:
+            logger.debug(
+                "_fit_copula_params: %s failed at %s — %s",
+                cls.__name__, kw, exc, exc_info=True,
+            )
+            return 1e12
+
+    try:
+        res = minimize(
+            _neg_ll, init, method="L-BFGS-B", bounds=bounds_list,
+            options={"maxiter": 80, "ftol": 1e-7},
+        )
+        out = {"tau_k": float(np.clip(res.x[0], *bounds_list[0]))}
+        for k, name in enumerate(extra_names):
+            out[name] = float(np.clip(res.x[k + 1], *bounds_list[k + 1]))
+        return out
+    except Exception as exc:
+        logger.debug(
+            "Multi-parameter MLE failed for %s (%s); using initial values.",
+            cls.__name__, exc,
+        )
+        out = {"tau_k": init[0]}
+        for k, name in enumerate(extra_names):
+            out[name] = init[k + 1]
+        return out
+
+
+def _select_and_fit_copula(
+    candidates: list[str],
+    u: np.ndarray,
+    v: np.ndarray,
+    weights: np.ndarray,
+) -> dict:
+    """
+    Select the best copula family from `candidates` by weighted log-likelihood,
+    estimate all of its free parameters, and return a TOML-compatible block.
+    """
+    best_ll   = -np.inf
+    best_block: dict = {"name": candidates[0], "tau": 0.0}
+
+    for short in candidates:
+        try:
+            entry, cls = _resolve_candidate(short)
+        except ValueError as exc:
+            logger.warning("Skipping candidate %r: %s", short, exc)
+            continue
+
+        params = _fit_copula_params(cls, entry, u, v, weights)
+        ll     = _weighted_log_likelihood(cls, params, u, v, weights)
+        logger.debug("  candidate=%s  params=%s  wll=%.4f", short, params, ll)
+
+        if ll > best_ll:
+            best_ll = ll
+            # TOML uses `tau` (not `tau_k`) as the user-facing key.
+            best_block = {"name": short, "tau": params["tau_k"]}
+            for k, val in params.items():
+                if k != "tau_k":
+                    best_block[k] = val
+
+    return best_block
+
+
+# ---------------------------------------------------------------------------
+# Weighted MLE for an arbitrary scipy.stats margin
+# ---------------------------------------------------------------------------
+#
+# Default per-parameter bounds for the numerical optimiser. Any name not
+# listed defaults to ``(-inf, +inf)``. Convention: scipy.stats spells the
+# scale parameter "scale" and shape parameters use family-specific names
+# ("a", "b" for beta; "df" for t; "s" for lognorm; "a" for gamma; …).
+_DEFAULT_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
+    "loc":   (-np.inf, np.inf),
+    "scale": (1e-8,    np.inf),
+    # Shape-parameter conventions (scipy.stats):
+    "df":    (1.0,     np.inf),     # Student-t:    df > 0
+    "a":     (1e-8,    np.inf),     # gamma, beta:  shape > 0
+    "b":     (1e-8,    np.inf),     # beta:         second shape > 0
+    "s":     (1e-8,    np.inf),     # lognorm:      σ > 0
+    "c":     (1e-8,    np.inf),     # weibull, etc.
+    "alpha": (1e-8,    np.inf),
+    "beta":  (1e-8,    np.inf),
+}
+
+
+def _fit_margin_weighted(blk: dict, y: np.ndarray, weights: np.ndarray) -> dict:
+    """Weighted maximum-likelihood update for a single ``[[margins]]`` block.
+
+    Strategy:
+
+    * **Closed form** for Gaussian (``dist="norm"``) — the only family with
+      a one-shot weighted MLE.  μ̂ = Σ w_i y_i, σ̂² = Σ w_i (y_i − μ̂)².
+
+    * **Numerical fit** for every other ``scipy.stats`` continuous family
+      via ``scipy.optimize.minimize`` (L-BFGS-B) on the negative weighted
+      log-likelihood. Bounds come from :data:`_DEFAULT_PARAM_BOUNDS`.
+
+    Importantly, the **family is preserved**: only the ``params`` are
+    updated. (The previous ``_fit_gaussian_margin_weighted`` silently
+    replaced any margin with a Gaussian, which was a footgun.)
+
+    On any optimisation failure the original block is returned unchanged
+    and a warning is logged.
+
+    Returns a *new* dict ``{"params": {...}}`` suitable for
+    ``blk.update(...)``.
+    """
+    dist_name   = blk.get("dist", "norm")
+    init_params = dict(blk.get("params", {}))
+    w_norm      = weights / (weights.sum() + MIN_POSITIVE)
+
+    # ── Fast path: Gaussian — closed form ─────────────────────────────
+    if dist_name == "norm":
+        mu   = float(np.dot(w_norm, y))
+        sig2 = float(np.dot(w_norm, (y - mu) ** 2))
+        sig  = float(np.sqrt(max(sig2, 1e-8)))
+        return {"params": {"loc": mu, "scale": sig}}
+
+    # ── Numerical path for any other scipy.stats family ───────────────
+    return _fit_margin_weighted_numerical(dist_name, init_params, y, w_norm)
+
+
+def _fit_margin_weighted_numerical(
+    dist_name:    str,
+    init_params:  dict,
+    y:            np.ndarray,
+    w_norm:       np.ndarray,
+) -> dict:
+    """Generic numerical weighted MLE via L-BFGS-B on neg log-likelihood."""
+    import scipy.stats as _ss
+    from scipy.optimize import minimize
+
+    try:
+        dist_cls = getattr(_ss, dist_name)
+    except AttributeError:
+        logger.warning(
+            "fit_margins: unknown scipy.stats family %r; keeping original params.",
+            dist_name,
+        )
+        return {}
+
+    if not init_params:
+        logger.warning(
+            "fit_margins: no initial params for %r; cannot run weighted MLE.",
+            dist_name,
+        )
+        return {}
+
+    # Preserve insertion order so the bounds and x0 vectors match.
+    param_names = list(init_params.keys())
+    x0          = np.array([init_params[k] for k in param_names], dtype=float)
+    bounds      = [_DEFAULT_PARAM_BOUNDS.get(k, (-np.inf, np.inf))
+                   for k in param_names]
+
+    def _neg_loglik(theta: np.ndarray) -> float:
+        kwargs = {k: float(theta[i]) for i, k in enumerate(param_names)}
+        try:
+            log_pdfs = dist_cls.logpdf(np.asarray(y, dtype=float), **kwargs)
+            log_pdfs = np.where(np.isfinite(log_pdfs), log_pdfs, -1e8)
+            return -float(np.dot(w_norm, log_pdfs))
+        except Exception as exc:
+            logger.debug(
+                "fit_margins[%s]: logpdf failed at %s — %s",
+                dist_name, kwargs, exc,
+            )
+            return 1e15
+
+    try:
+        res = minimize(
+            _neg_loglik, x0,
+            method="L-BFGS-B", bounds=bounds,
+            options={"maxiter": 80, "ftol": 1e-7},
+        )
+        if not np.all(np.isfinite(res.x)):
+            raise ValueError("optimiser returned non-finite parameters")
+        new_params = {k: float(res.x[i]) for i, k in enumerate(param_names)}
+        return {"params": new_params}
+    except Exception as exc:
+        logger.warning(
+            "fit_margins: numerical MLE failed for %r (%s); keeping initial params.",
+            dist_name, exc,
+        )
+        return {}
+
+
+# Back-compat alias — previously-public name; preserves the old return shape
+# (with a redundant "dist" key) so any external caller still works.
+def _fit_gaussian_margin_weighted(y: np.ndarray, weights: np.ndarray) -> dict:
+    """Deprecated shim — call :func:`_fit_margin_weighted` instead."""
+    out = _fit_margin_weighted({"dist": "norm"}, y, weights)
+    return {"dist": "norm", **out}
+
+
+# ---------------------------------------------------------------------------
+# ICE configuration parser
+# ---------------------------------------------------------------------------
+
+def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
+    """Merge TOML [ice] section with defaults.
+
+    Recognised keys
+    ---------------
+    * ``fit_margins``      (bool, default False) — re-estimate margin params.
+    * ``max_iter``         (int,  default 50)    — max EM iterations per start.
+    * ``tol``              (float,default 1e-4)  — relative LL convergence.
+    * ``candidates``       (list[str])           — copula SHORT_NAMEs.
+    * ``patience``         (int,  default 3)     — consecutive LL regressions
+                                                  before early stop.
+    * ``n_starts``         (int,  default 1)     — number of independent ICE
+                                                  runs from perturbed initial
+                                                  models; the run with the
+                                                  highest final log-likelihood
+                                                  wins.
+    * ``multistart_seed``  (int,  default 0)     — RNG seed for the
+                                                  perturbations.
+    * ``multistart_jitter``(float,default 0.10)  — relative perturbation
+                                                  amplitude (10 % of each
+                                                  parameter's natural scale).
+    """
+    defaults: dict = {
+        "fit_margins":       False,
+        "max_iter":          50,
+        "tol":               1e-4,
+        "candidates":        _DEFAULT_CANDIDATES,
+        "patience":          3,
+        "n_starts":          1,
+        "multistart_seed":   0,
+        "multistart_jitter": 0.10,
+    }
+    toml_ice = model.ice_config()
+    cfg = {**defaults, **toml_ice}
+    if ice_cfg:
+        cfg.update(ice_cfg)
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# Multistart: random perturbation of an initial model
+# ---------------------------------------------------------------------------
+
+def _perturb_initial_model(
+    model: PMCModel,
+    rng:   np.random.Generator,
+    jitter: float = 0.10,
+) -> PMCModel:
+    """Return a *new* PMCModel obtained by perturbing the parameters of
+    ``model`` with random noise of relative amplitude ``jitter``.
+
+    The perturbations are designed to stay inside each parameter's valid
+    domain so the rebuilt model is always a legal starting point:
+
+    * **Prior** ``p`` (or ``A``): multiplied by ``exp(jitter · N(0,1))`` and
+      renormalised. Symmetry is preserved for SR-PMC variants.
+    * **Margin params**: ``loc`` is shifted by ``jitter · |scale|``; ``scale``
+      and other strictly-positive params are scaled by ``exp(jitter · N(0,1))``.
+    * **Copula τ**: shifted by ``jitter · (τ_max − τ_min)``, clipped via
+      :meth:`CopulaEnum.correct_tau`.
+
+    The perturbation amplitude is intentionally modest (10 % by default) so
+    that the multistart explores nearby basins without throwing ICE at a
+    completely different region of parameter space.
+    """
+    raw = model.raw  # already a deep copy
+
+    # --- prior ---------------------------------------------------------
+    prior = raw.get("prior", {})
+    if "p" in prior:
+        p = np.asarray(prior["p"], dtype=float)
+        noise = np.exp(jitter * rng.standard_normal(p.shape))
+        p = p * noise
+        # Preserve SR-PMC symmetry of the joint: p[i,j] = p[j,i].
+        p = 0.5 * (p + p.T)
+        p = np.clip(p, 0.0, None)
+        p /= p.sum()
+        prior["p"] = p.tolist()
+    elif "A" in prior:
+        A = np.asarray(prior["A"], dtype=float)
+        noise = np.exp(jitter * rng.standard_normal(A.shape))
+        A = A * noise
+        A = np.clip(A, 0.0, None)
+        A /= A.sum(axis=1, keepdims=True)
+        prior["A"] = A.tolist()
+
+    # --- margins -------------------------------------------------------
+    for blk in raw.get("margins", []):
+        params = blk.get("params", {})
+        if not params:
+            continue
+        scale = float(params.get("scale", 1.0))
+        for k, v in list(params.items()):
+            if k == "loc":
+                params[k] = float(v) + jitter * abs(scale) * float(rng.standard_normal())
+            elif k in ("scale", "df", "a", "b", "s", "c", "alpha", "beta"):
+                # Strictly-positive params: log-normal multiplicative noise.
+                params[k] = float(v) * float(np.exp(jitter * rng.standard_normal()))
+
+    # --- copulas -------------------------------------------------------
+    for blk in raw.get("copulas", []):
+        short = blk.get("name")
+        entry = CopulaEnum.from_short_name(short) if short else None
+        if entry is None:
+            continue
+        tau_min, tau_max = entry.value.TAU_MIN_MAX
+        span = tau_max - tau_min
+        tau  = float(blk.get("tau", 0.5 * (tau_min + tau_max)))
+        tau += jitter * span * float(rng.standard_normal())
+        # Use correct_tau to clip + log if out-of-range.
+        blk["tau"] = entry.correct_tau(tau)
+        # Perturb extra parameters of multi-parameter copulas
+        # (currently: BB1.delta, Student.df).
+        cls_name = entry.value.CLASS_NAME
+        for ekey, (xlo, xhi, _) in _EXTRA_PARAM_BOUNDS.get(cls_name, {}).items():
+            if ekey in blk:
+                v = float(blk[ekey]) * float(np.exp(jitter * rng.standard_normal()))
+                blk[ekey] = float(np.clip(v, xlo, xhi))
+
+    return PMCModel.from_dict(raw)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def ice(
+    model: PMCModel,
+    Y: np.ndarray,
+    ice_cfg: dict | None = None,
+    progress_cb=None,
+) -> tuple[PMCModel, IceTrace]:
+    """Iterative Conditional Estimation (ICE) for unsupervised PMC/HMC fitting.
+
+    With ``n_starts > 1`` (config), runs ICE several times from random
+    perturbations of ``model`` and keeps the run with the highest final
+    log-likelihood — this hardens the fit against multimodal log-likelihoods
+    (a real concern for archimedean copula mixtures and HMC variants with
+    many similar margins). The first start is always the unperturbed model.
+
+    Parameters
+    ----------
+    model        : PMCModel — initial parameter values (starting point).
+    Y            : np.ndarray, shape (N,) — observation sequence.
+    ice_cfg      : dict, optional — override ICE settings from TOML [ice] section.
+                    See :func:`_parse_ice_cfg` for the recognised keys.
+    progress_cb  : callable, optional — invoked as
+                    ``progress_cb(it, max_iter, log_lik, run_tag)`` after every
+                    E-step. Designed for the GUI's progress bar; safe to leave
+                    as ``None`` for headless / scripted use.
+
+    Returns
+    -------
+    fitted_model : PMCModel — model with updated parameters (the best run
+                              when multistart is enabled).
+    trace        : IceTrace — captured per-iteration diagnostics. Use
+                    ``trace.log_liks`` for the plain log-likelihood history.
+                    When multistart was active, ``trace.multistart_runs``
+                    holds the traces of the non-best runs.
+    """
+    cfg       = _parse_ice_cfg(model, ice_cfg)
+    n_starts  = max(1, int(cfg.get("n_starts", 1)))
+
+    if n_starts == 1:
+        return _ice_single_run(model, Y, cfg, progress_cb=progress_cb)
+
+    rng = np.random.default_rng(int(cfg.get("multistart_seed", 0)))
+    jitter = float(cfg.get("multistart_jitter", 0.10))
+
+    # Mute the per-run "ICE: variant=…" header except for the first run, to
+    # avoid log spam — instead we emit a single summary at the end.
+    runs: list[tuple[float, PMCModel, IceTrace]] = []
+
+    logger.info("ICE multistart: n_starts=%d  jitter=%.2f", n_starts, jitter)
+
+    for s in range(n_starts):
+        if s == 0:
+            init_mdl = model
+            tag = "unperturbed"
+        else:
+            init_mdl = _perturb_initial_model(model, rng, jitter=jitter)
+            tag = f"perturbed-{s}"
+        try:
+            fitted_s, trace_s = _ice_single_run(
+                init_mdl, Y, cfg, run_tag=tag, progress_cb=progress_cb,
+            )
+            final_ll = trace_s.log_liks[-1] if trace_s.log_liks else -np.inf
+        except Exception as exc:                          # pragma: no cover
+            logger.warning("ICE multistart: run %d (%s) failed: %s", s, tag, exc)
+            continue
+        logger.info(
+            "ICE multistart: run %d (%s) → final log-lik = %.4f  (iters=%d)",
+            s, tag, final_ll, len(trace_s.log_liks),
+        )
+        runs.append((final_ll, fitted_s, trace_s))
+
+    if not runs:                                          # pragma: no cover
+        # All runs failed — fall back to a single unperturbed run so callers
+        # always get a model back (matches the original semantics).
+        return _ice_single_run(model, Y, cfg, progress_cb=progress_cb)
+
+    best_idx, (best_ll, best_mdl, best_trace) = max(
+        enumerate(runs), key=lambda kv: kv[1][0],
+    )
+    logger.info(
+        "ICE multistart: best run = #%d  (final log-lik = %.4f)",
+        best_idx, best_ll,
+    )
+    # Keep the losing-run traces for the GUI's multistart-comparison view.
+    best_trace.multistart_runs = [
+        trace for k, (_, _, trace) in enumerate(runs) if k != best_idx
+    ]
+    return best_mdl, best_trace
+
+
+def _ice_single_run(
+    model: PMCModel,
+    Y: np.ndarray,
+    cfg: dict,
+    run_tag: str = "",
+    progress_cb=None,
+) -> tuple[PMCModel, IceTrace]:
+    """Single ICE run — extracted from :func:`ice` to support multistart.
+
+    ``cfg`` must already be the merged dict returned by :func:`_parse_ice_cfg`.
+    ``run_tag`` is an optional label included in log messages (used by the
+    multistart driver to disambiguate concurrent runs in the log).
+    """
+    max_iter  = int(cfg["max_iter"])
+    tol       = float(cfg["tol"])
+    candidates = list(cfg["candidates"])
+    fit_margins = bool(cfg["fit_margins"])
+    # Patience: stop early if LL regresses on this many consecutive iterations.
+    patience  = int(cfg.get("patience", 3))
+    log_prefix = f"ICE[{run_tag}]" if run_tag else "ICE"
+
+    var = model.variant
+    K   = model.K
+    N   = len(Y)
+
+    log_liks: list[float] = []
+    # Per-iteration trace buffers (captured BEFORE the M-step at iter t, so
+    # they correspond to the model that produced ``log_liks[t]``).
+    tau_buf:    list[np.ndarray]        = []
+    fam_buf:    list[list[list[str]]]   = []
+    p_buf:      list[np.ndarray]        = []
+    margin_buf: list[list[dict]]        = []
+
+    regress_streak  = 0   # consecutive iterations with LL decrease
+
+    # Public ``raw`` already returns a deep copy — safe to mutate.
+    raw = model.raw
+
+    # Build a mutable model reference updated each iteration
+    current = PMCModel.from_dict(raw)
+
+    logger.info(
+        "%s: variant=%s  K=%d  N=%d  max_iter=%d  candidates=%s",
+        log_prefix, var.value, K, N, max_iter, candidates,
+    )
+
+    for it in range(max_iter):
+        # ── E-step ────────────────────────────────────────────────────────
+        W, f_pdf = precompute_weights(current, Y)
+        alpha_hat, log_lik = forward(current, Y, W=W, f_pdf=f_pdf)
+        beta_hat  = backward(current, Y, W=W)
+        gamma     = smooth(alpha_hat, beta_hat)       # (N, K) marginal posteriors
+        xi        = _joint_posteriors(alpha_hat, W, beta_hat)  # (N-1, K, K)
+
+        log_liks.append(log_lik)
+        # Capture the snapshot of ``current`` corresponding to this LL value.
+        tau_kk, fam_kk = _snapshot_tau_family(current)
+        tau_buf.append(tau_kk)
+        fam_buf.append(fam_kk)
+        p_buf.append(_snapshot_prior_p(current))
+        margin_buf.append(_snapshot_margins(current))
+
+        logger.info("%s iter %d: log-lik = %.4f", log_prefix, it, log_lik)
+        if progress_cb is not None:
+            try:
+                progress_cb(it, max_iter, float(log_lik), run_tag)
+            except Exception as exc:                       # pragma: no cover
+                # A faulty callback must not abort the optimisation.
+                logger.debug("ICE progress_cb raised %s; ignoring.", exc)
+
+        # Convergence / regression check (after first iteration)
+        if it > 0:
+            diff_signed = log_liks[-1] - log_liks[-2]   # >0 if improving
+            ref         = abs(log_liks[-2]) + 1e-10
+
+            # Regression: LL went down. ICE is not strictly EM, so isolated
+            # decreases are tolerable, but persistent regression signals a bug
+            # or a degenerate optimum.
+            if diff_signed < -tol * ref:
+                regress_streak += 1
+                logger.warning(
+                    "%s iter %d: log-lik regressed by %.4e (streak=%d/%d).",
+                    log_prefix, it, -diff_signed, regress_streak, patience,
+                )
+                if regress_streak >= patience:
+                    logger.warning(
+                        "%s: %d consecutive regressions — stopping early at iter %d.",
+                        log_prefix, regress_streak, it,
+                    )
+                    break
+            else:
+                regress_streak = 0
+
+            # Convergence on absolute relative change
+            if abs(diff_signed) / ref < tol:
+                logger.info(
+                    "%s converged at iteration %d (Δ/|LL| = %.2e).",
+                    log_prefix, it, abs(diff_signed) / ref,
+                )
+                break
+
+        # ── M-step ───────────────────────────────────────────────────────
+
+        # 1. Update prior distribution.
+        # The raw average of ξ_n is asymmetric by O(1/√N) finite-sample noise;
+        # under SR-PMC (the framework this package commits to) the true joint
+        # ``p[i,j]`` is *exactly* symmetric. We therefore symmetrise ξ̄
+        # before further processing — this both eliminates noise in p_hat
+        # and prevents the SR-symmetry warning in PMCModel from firing
+        # at every ICE iteration on PMC variants.
+        p_hat = xi.sum(axis=0) / (N - 1)
+        p_hat = 0.5 * (p_hat + p_hat.T)            # SR-PMC: enforce p[i,j] = p[j,i]
+        p_hat = np.clip(p_hat, 0.0, None)
+        p_hat /= p_hat.sum()
+
+        if var in (Variant.HMC_IN, Variant.HMC_IN2, Variant.HMC_DN):
+            # Convert joint → row-stochastic A
+            pi_hat = p_hat.sum(axis=1)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                A_hat = np.where(pi_hat[:, None] > 0, p_hat / pi_hat[:, None], 1.0 / K)
+            # Normalize rows
+            row_s = A_hat.sum(axis=1, keepdims=True)
+            A_hat = np.where(row_s > 0, A_hat / row_s, 1.0 / K)
+            raw["prior"]["A"] = A_hat.tolist()
+        else:
+            raw["prior"]["p"] = p_hat.tolist()
+
+        # 2. Update margins (optional). Under SR-PMC there are exactly K
+        #    state-indexed densities, regardless of variant; the family
+        #    declared in each block is preserved, only the params are
+        #    re-estimated by weighted MLE.
+        #
+        #    The weight on Y[k] for state i is the *full* posterior of being
+        #    in state i at time k:
+        #
+        #        w_i[k] = γ_k(i) = P(X_k = i | Y)
+        #
+        #    Equivalently in terms of joint posteriors:
+        #
+        #        w_i[k] = Σ_j ξ[k, i, j]      (k = 0…N-2; "first-view" sum)
+        #               = Σ_j ξ[k-1, j, i]    (k = 1…N-1; "second-view" sum)
+        #               = γ_k(i)              (forward-backward marginal)
+        #
+        #    Pooling over j is the SR-PMC consistent estimator: K MLE per
+        #    M-step instead of K² (one per (i, j) block) — eliminating the
+        #    redundant K-fold replication of each f_i.
+        #
+        #    Reference: SR-PMC reversibility — Derrode-Pieczynski (CSDA 2013),
+        #    Eq. (14).
+        if fit_margins:
+            margins_raw = raw.get("margins", [])
+            for blk in margins_raw:
+                i_idx = int(blk["i"])
+                w_n   = gamma[:, i_idx]            # P(X_n=i | Y)
+                blk.update(_fit_margin_weighted(blk, Y, w_n))
+
+        # 3. Update copulas (only for variants that use copulas)
+        if var.uses_copula:
+            copulas_raw = raw.get("copulas", [])
+
+            # Pre-compute marginal CDFs once per state (K cdf vectors,
+            # not K²) — under SR-PMC, F_{ij} = F_i regardless of j.
+            f_cdf_state = np.zeros((N, K))
+            for kk in range(K):
+                f_cdf_state[:, kk] = current.margin(kk).cdf_vec(Y)
+            np.clip(f_cdf_state, EPS, ONE_MINUS_EPS, out=f_cdf_state)
+
+            for blk in copulas_raw:
+                ii = int(blk["i"])
+                jj = int(blk["j"])
+
+                # Weighted pseudo-observations
+                weights_pair = xi[:, ii, jj]          # shape (N-1,)
+                total_w = weights_pair.sum()
+                if total_w < 1e-12:
+                    logger.debug("  (i=%d,j=%d): negligible weight, skip.", ii, jj)
+                    continue
+
+                # Pseudo-obs of pair (i, j): u = F_i(Y_n), v = F_j(Y_{n+1}).
+                u_arr = f_cdf_state[: N - 1, ii]
+                v_arr = f_cdf_state[1:,      jj]
+
+                logger.debug("  fitting copula (i=%d, j=%d)  Σw=%.4f", ii, jj, total_w)
+                best_blk = _select_and_fit_copula(candidates, u_arr, v_arr, weights_pair)
+                blk.update(best_blk)
+
+        # Rebuild the model with updated raw dict
+        current = PMCModel.from_dict(raw)
+
+    # Pack the per-iteration buffers into an :class:`IceTrace`.
+    trace = IceTrace(
+        log_liks       = log_liks,
+        tau_history    = (np.stack(tau_buf, axis=0) if tau_buf
+                          else np.empty((0, K, K), dtype=float)),
+        family_history = fam_buf,
+        p_history      = (np.stack(p_buf, axis=0) if p_buf
+                          else np.empty((0, K, K), dtype=float)),
+        margin_history = margin_buf,
+        run_tag        = run_tag,
+        candidates     = list(candidates),
+    )
+    return current, trace
+
+
+# ---------------------------------------------------------------------------
+# Quick smoke-test / demo
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import sys
+    import pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+
+    from prg.pmc.logging_setup import configure as _cfg_log
+    _cfg_log(level=logging.INFO)
+
+    from prg.pmc.model    import PMCModel
+    from prg.pmc.simulate import simulate
+    from prg.pmc.inference import error_rate, classify
+
+    models_dir = pathlib.Path(__file__).parent / "models"
+
+    # Test on a subset of models (those with copulas are more interesting)
+    test_files = [
+        "hmc_in_gauss_k2.toml",
+        "pmc_gauss_k2.toml",
+    ]
+
+    for name in test_files:
+        toml_file = models_dir / name
+        if not toml_file.exists():
+            continue
+        print(f"\n{'='*60}")
+        print(f"  {name}")
+        print(f"{'='*60}")
+        mdl = PMCModel(toml_file)
+
+        # Simulate a sequence
+        X_ref, Y = simulate(mdl, N=1000, seed=42)
+
+        # Build a perturbed initial model (shift means by +0.3, τ by −0.1)
+        raw_init = mdl.raw
+        for blk in raw_init.get("margins", []):
+            p = blk.get("params", {})
+            if "loc" in p:
+                p["loc"] = p["loc"] + 0.3
+        for blk in raw_init.get("copulas", []):
+            blk["tau"] = max(-0.9, blk.get("tau", 0.0) - 0.1)
+        init_mdl = PMCModel.from_dict(raw_init)
+
+        # Run ICE
+        fitted, trace = ice(
+            init_mdl,
+            Y,
+            ice_cfg={"max_iter": 10, "candidates": ["Gauss", "Clayton", "GH"]},
+        )
+        print(f"  log-lik history: {[f'{ll:.2f}' for ll in trace.log_liks]}")
+        if trace.tau_history.size:
+            print(f"  τ_final = {trace.tau_history[-1].round(3).tolist()}")
+
+        # Evaluate on fitted model
+        X_hat, _, _ = classify(fitted, Y)
+        er = error_rate(X_ref, X_hat)
+        print(f"  error rate (fitted): {er:.4f}  ({er*100:.1f} %)")
+
+        print(f"  Fitted prior p =\n{fitted.prior_p.round(4)}")
+        if fitted.variant.uses_copula:
+            for ii in range(fitted.K):
+                for jj in range(fitted.K):
+                    cop = fitted.copula(ii, jj)
+                    print(f"    copula({ii},{jj}): {cop.copula_enum.value.SHORT_NAME}"
+                          f"  τ={cop.params['tau_k']:.4f}")

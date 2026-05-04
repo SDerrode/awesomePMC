@@ -1,0 +1,33 @@
+# HMC-IN2 model — K=2 classes, Gaussian margins, no copula.
+#
+# Variant: HMC-IN2
+#   • Hidden Markov Chain
+#   • Independent observations: f_i(y_n) regardless of the transition
+#     (under SR-PMC there are exactly K marginal densities, one per state)
+#   • K margin blocks (one per state — SR-PMC contract)
+#   • Prior: row-stochastic transition matrix A (rows sum to 1)
+#
+# Note: previous versions of this file used a K² (i, j)-indexed margin
+# layout with state-0 = (loc=-1.0, scale=0.8) anchor (j=0) entries; we keep
+# those parameters as the canonical per-state densities.
+
+[model]
+name      = "HMC-IN2 Gaussien K=2"
+variant   = "HMC-IN2"
+K         = 2
+N_default = 5000
+
+[prior]
+A = [[0.90, 0.10],
+     [0.10, 0.90]]
+
+# ── Margins (K-format: one block per state) ──────────────────────────────────
+[[margins]]
+i      = 0
+dist   = "norm"
+params = {loc = -1.0, scale = 0.8}
+
+[[margins]]
+i      = 1
+dist   = "norm"
+params = {loc = 0.5, scale = 1.0}

@@ -3,9 +3,9 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Usage as a pre-push hook:
-#   ln -sf ../../update_readme_structure.sh .git/hooks/pre-push
-# Or run manually before pushing:
-#   ./update_readme_structure.sh && git push origin main
+#   ln -sf ../scripts/update_readme_structure.sh .git/hooks/pre-push
+# Or run manually before pushing (from the repository root):
+#   bash scripts/update_readme_structure.sh && git push origin main
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------

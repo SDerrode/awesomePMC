@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "copulasformm"
-version = "0.3.5"
+version = "0.5.0"
 description = "Copula-based Markov models for flexible non-Gaussian transition kernels"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"   # tomllib (used by prg.pmc.model) is stdlib since 3.11
 authors = [
     { name = "Derrode Stéphane", email = "stephane.derrode@ec-lyon.fr" },
 ]
@@ -26,9 +26,9 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -37,8 +37,8 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "matplotlib>=3.7",
-    "pandas>=2.0",
-    "rich>=13.0",
+    "statsmodels>=0.14",
+    "tomli_w>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +46,12 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
 ]
+gui = [
+    "PyQt6>=6.4",
+]
+
+[project.scripts]
+pmc = "prg.pmc.cli:main"
 
 [project.urls]
 Homepage   = "https://gitlab.ec-lyon.fr/sderrode/copulasformm"
@@ -54,6 +60,27 @@ Repository = "https://gitlab.ec-lyon.fr/sderrode/copulasformm"
 [tool.pytest.ini_options]
 testpaths = ["prg/tests"]
 python_files = ["test_*.py"]
+markers = [
+    "slow: marks tests that take > ~1 s (run with `pytest -m slow` to opt in, or `-m 'not slow'` to skip).",
+]
+
+[tool.coverage.run]
+source = ["prg"]
+omit = [
+    "prg/tests/*",
+    "prg/pmc/gui/*",        # PyQt6 widgets are not unit-tested
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
 
 [tool.ruff.lint]
 ignore = ["E402", "E702"]

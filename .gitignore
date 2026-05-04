@@ -1,25 +1,34 @@
 # macOS
 .DS_Store
 
+# CLI default outputs at repo root
+/simulation.csv
+/classification.csv
+/fitted.toml
+
 # Données générées (sorties des scripts) — on garde l'arborescence vide via .gitkeep
 data/datafile/*
 data/historyTracker/*
-data/plot/*
-data/realdata/*
+data/Plots/*
 !data/*/.gitkeep
 
 # Logs générés par les scripts
 logs/
 
 # Articles / manuscrits (non versionnés)
-papier*/
-
-# Scripts de développement personnel (non versionnés)
-/prg/testsDev/
+docs/
 
 # VSCodium / VSCode
 copulasformm.code-workspace
+*.code-workspace
 .vscode/
+.vscode-oss/
+.history/
+
+# Editor leftovers
+*~
+*.swp
+*.swo
 
 # Claude Code (no trace in the repo)
 .claude/

@@ -1,0 +1,33 @@
+# HMC-IN model — K=3 classes, Gaussian margins (one per class), no copula.
+#
+# Three well-separated Gaussian regimes with sticky transitions: a typical
+# small benchmark for K>2 inference and label-permutation handling.
+
+[model]
+name      = "HMC-IN Gaussien K=3"
+variant   = "HMC-IN"
+K         = 3
+N_default = 5000
+
+[prior]
+# Row-stochastic A: each class is sticky (0.9 self-transition), with
+# 0.05 transition probability to each of the other two classes.
+A = [[0.90, 0.05, 0.05],
+     [0.05, 0.90, 0.05],
+     [0.05, 0.05, 0.90]]
+
+# Three margin blocks (one per class): well-separated means at -3, 0, +3.
+[[margins]]
+i      = 0
+dist   = "norm"
+params = {loc = -3.0, scale = 1.0}
+
+[[margins]]
+i      = 1
+dist   = "norm"
+params = {loc = 0.0, scale = 1.0}
+
+[[margins]]
+i      = 2
+dist   = "norm"
+params = {loc = 3.0, scale = 1.0}

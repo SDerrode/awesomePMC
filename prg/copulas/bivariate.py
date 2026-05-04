@@ -1,5 +1,6 @@
 if __name__ == "__main__":
-    import sys, pathlib
+    import sys
+    import pathlib
 
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
@@ -8,17 +9,30 @@ import os
 import secrets
 import numpy as np
 import matplotlib.pyplot as plt
-from dataclasses import dataclass
 from matplotlib import gridspec
 
-from prg.tools.tools import minmaxEPS, EPS
-from prg.settings.plot_settings import facecolor, dpi, BIGGER_SIZE
-from prg.exceptions import SamplingConvergenceError
-from prg.copulas._base import FitResult, GoFResult, _empirical_tail_dep
+from prg.numerics import minmaxEPS, EPS, ONE_MINUS_EPS
+# Re-export for backward compatibility — was raised by the AR sampler that
+# is now superseded by Rosenblatt inversion. Kept so existing user code
+# that imports it from ``prg.copulas.bivariate`` still works.
+from prg.exceptions import SamplingConvergenceError       # noqa: F401
+from prg.copulas._bivariate_fit import (   # noqa: F401  (re-export for public API)
+    BivariateBootstrapCI,
+    BivariateFitResult,
+)
 
 logger = logging.getLogger(__name__)
 
-_NBITERMAX = 80_000
+# ---------------------------------------------------------------------------
+# Module-level configuration
+# ---------------------------------------------------------------------------
+#: Maximum number of acceptance-rejection iterations when sampling a
+#: conditional law via the majorant method. Reaching this cap raises
+#: :class:`prg.exceptions.SamplingConvergenceError`. The default of 80 000 is
+#: comfortable for all 17 copulas in their valid τ range; tweak it (e.g.
+#: ``prg.copulas.bivariate.MAX_AR_ITER = 200_000``) if a custom copula has
+#: a poor analytical majorant on some τ regime.
+MAX_AR_ITER = 80_000
 
 
 # ---------------------------------------------------------------------------
@@ -265,24 +279,50 @@ class BivariateLaw:
     # ------------------------------------------------------------------
 
     def sample(self, n: int = 1) -> np.ndarray:
-        """Draw n iid samples from the joint distribution. Returns shape (n, 2)."""
-        out = np.empty((n, 2))
-        for i in range(n):
-            y_left = self._sample_left()
-            out[i, 0] = y_left
-            out[i, 1] = self._sample_right_given_left(y_left)
-        return out
+        """Draw n iid samples from the joint distribution. Returns shape (n, 2).
+
+        Vectorised Rosenblatt:
+            y_left  ~ F_left      (n at once via ``rvs(size=n)``)
+            u_left  = F_left(y_left)
+            w       ~ Uniform(0, 1)  (n at once)
+            v       = inv_h_array(w, u_left)
+            y_right = F_right⁻¹(v)
+        """
+        lm, rm = self.left_margin, self.right_margin
+        y_left  = np.asarray(
+            lm["dist"].rvs(*lm["params"], size=n, random_state=self._rng),
+            dtype=float,
+        )
+        u_left  = np.clip(lm["dist"].cdf(y_left, *lm["params"]),
+                          EPS, ONE_MINUS_EPS)
+        ws      = self._rng.uniform(EPS, ONE_MINUS_EPS, n)
+        v       = self.copula.inv_h_array(ws, u_left)
+        y_right = np.asarray(rm["dist"].ppf(v, *rm["params"]), dtype=float)
+        return np.column_stack((y_left, y_right))
 
     def sample_conditional(
         self, y_obs: float, which: str = "left", n: int = 1
     ) -> np.ndarray:
-        """Draw n iid samples from p(Y_cond | Y_obs = y_obs). Returns shape (n,)."""
+        """Draw n iid samples from p(Y_cond | Y_obs = y_obs). Returns shape (n,).
+
+        Vectorised Rosenblatt — scales as O(n) numpy ops, not O(n) Python
+        loop iterations.
+        """
         if which == "left":
-            return np.array([self._sample_right_given_left(y_obs) for _ in range(n)])
+            obs_margin, cond_margin = self.left_margin, self.right_margin
         elif which == "right":
-            return np.array([self._sample_left_given_right(y_obs) for _ in range(n)])
+            obs_margin, cond_margin = self.right_margin, self.left_margin
         else:
             raise ValueError("which must be 'left' or 'right'.")
+
+        u_obs = float(np.clip(
+            obs_margin["dist"].cdf(y_obs, *obs_margin["params"]),
+            EPS, ONE_MINUS_EPS,
+        ))
+        ws = self._rng.uniform(EPS, ONE_MINUS_EPS, n)
+        v  = self.copula.inv_h_array(ws, np.full(n, u_obs))
+        return np.asarray(cond_margin["dist"].ppf(v, *cond_margin["params"]),
+                          dtype=float)
 
     def _sample_left(self) -> float:
         return float(
@@ -292,68 +332,41 @@ class BivariateLaw:
         )
 
     def _sample_right_given_left(self, y_left: float) -> float:
-        """Accept-reject: sample Y_right | Y_left = y_left."""
+        """Sample Y_right | Y_left = y_left via Rosenblatt inversion.
+
+        Steps:
+            u_left = F_left(y_left)
+            w     ~ Uniform(EPS, 1-EPS)
+            v     = h⁻¹_C(w | u_left)            (closed form when available)
+            y_right = F_right⁻¹(v)
+
+        Closed-form ``inv_h`` (Gaussian, Clayton, Frank) → O(1) per sample.
+        Other families fall back to a Brent inversion of ``conditional_cdf``
+        inside ``CopulaVirt.inv_h``.
+        """
         u_left = minmaxEPS(
             self.left_margin["dist"].cdf(y_left, *self.left_margin["params"])
         )
-        bound = self.copula.majorant(u_left)
-        uv = np.array([u_left, -1.0])
-        cpt = 0
-        threshold = 0.0
-
-        while cpt < _NBITERMAX:
-            cpt += 1
-            y_right = float(
-                self.right_margin["dist"].rvs(
-                    *self.right_margin["params"], random_state=self._rng
-                )
-            )
-            u_right = minmaxEPS(
-                self.right_margin["dist"].cdf(y_right, *self.right_margin["params"])
-            )
-            uv[1] = u_right
-            threshold = self.copula.pdf(uv) / bound
-            if self._rng.uniform() <= threshold:
-                return y_right
-
-        raise SamplingConvergenceError(
-            f"Acceptance-rejection did not converge after {_NBITERMAX} iterations. "
-            f"y_left={y_left}, majorant={bound:.4e}, last threshold={threshold:.4e}. "
-            f"Check the copula majorant or increase _NBITERMAX."
+        w = float(self._rng.uniform(EPS, ONE_MINUS_EPS))
+        v = float(self.copula.inv_h(w, u_left))
+        return float(
+            self.right_margin["dist"].ppf(v, *self.right_margin["params"])
         )
 
     def _sample_left_given_right(self, y_right: float) -> float:
-        """Accept-reject: sample Y_left | Y_right = y_right.
+        """Sample Y_left | Y_right = y_right via Rosenblatt inversion.
 
-        Valid for symmetric copulas (max_u c(u,v) = max_v c(u,v) = majorant(v)).
+        Valid for symmetric copulas, where ``c(u, v) = c(v, u)`` and the
+        conditional CDF satisfies ``h(u | v) = h(v | u)`` after the
+        argument swap. All copulas in this package are symmetric.
         """
         u_right = minmaxEPS(
             self.right_margin["dist"].cdf(y_right, *self.right_margin["params"])
         )
-        bound = self.copula.majorant(u_right)
-        uv = np.array([-1.0, u_right])
-        cpt = 0
-        threshold = 0.0
-
-        while cpt < _NBITERMAX:
-            cpt += 1
-            y_left = float(
-                self.left_margin["dist"].rvs(
-                    *self.left_margin["params"], random_state=self._rng
-                )
-            )
-            u_left = minmaxEPS(
-                self.left_margin["dist"].cdf(y_left, *self.left_margin["params"])
-            )
-            uv[0] = u_left
-            threshold = self.copula.pdf(uv) / bound
-            if self._rng.uniform() <= threshold:
-                return y_left
-
-        raise SamplingConvergenceError(
-            f"Acceptance-rejection did not converge after {_NBITERMAX} iterations. "
-            f"y_right={y_right}, majorant={bound:.4e}, last threshold={threshold:.4e}. "
-            f"Check the copula majorant or increase _NBITERMAX."
+        w = float(self._rng.uniform(EPS, ONE_MINUS_EPS))
+        v = float(self.copula.inv_h(w, u_right))
+        return float(
+            self.left_margin["dist"].ppf(v, *self.left_margin["params"])
         )
 
     # ------------------------------------------------------------------
@@ -459,12 +472,12 @@ class BivariateLaw:
 
             copula_families = []
             for _entry in CopulaEnum:
-                if not _entry.value.AVAILABLE or not _entry.MODULE:
+                if not _entry.value.AVAILABLE or not _entry.value.MODULE:
                     continue
-                if _entry.CLASS_NAME == "CopulaProduct":  # τ fixé à 0, pas de fit utile
+                if _entry.value.CLASS_NAME == "CopulaProduct":  # τ fixé à 0, pas de fit utile
                     continue
-                _mod = _il.import_module(_entry.MODULE)
-                copula_families.append(getattr(_mod, _entry.CLASS_NAME))
+                _mod = _il.import_module(_entry.value.MODULE)
+                copula_families.append(getattr(_mod, _entry.value.CLASS_NAME))
 
         results: list = []
         for cls in copula_families:
@@ -507,7 +520,7 @@ class BivariateLaw:
 
     def plot_pdf(self, plot_dir: str, prefix: str = "") -> None:
         z = self._compute_pdf_grid()
-        fig, ax = plt.subplots(figsize=(6, 6), facecolor=facecolor)
+        fig, ax = plt.subplots(figsize=(6, 6))
         min_ = np.nanpercentile(z, 1.0)
         max_ = np.nanpercentile(z, 99.0)
         vticks = np.linspace(min_, max_, num=self.ticks_nbr)
@@ -520,12 +533,10 @@ class BivariateLaw:
         ax.set_ylabel("Right margin")
         tau = self.copula.params["tau_k"]
         cname = self.copula.copula_enum.value.LONG_NAME
-        plt.suptitle(f"Joint PDF — {cname} (τ={tau})", y=0.85, fontsize=BIGGER_SIZE)
+        plt.suptitle(f"Joint PDF — {cname} (τ={tau})", y=0.85)
         plt.savefig(
             os.path.join(plot_dir, f"{prefix}2D_PdfLaw.png"),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
@@ -534,7 +545,7 @@ class BivariateLaw:
     ) -> None:
         z = self._compute_pdf_grid()
 
-        fig = plt.figure(figsize=(6, 6), facecolor=facecolor)
+        fig = plt.figure(figsize=(6, 6))
         gs = gridspec.GridSpec(
             2,
             2,
@@ -601,420 +612,22 @@ class BivariateLaw:
             tau = self.copula.params["tau_k"]
             cname = self.copula.copula_enum.value.LONG_NAME
             title = f"Copula: {cname} (τ={tau})"
-        fig.suptitle(title, y=0.95, fontsize=BIGGER_SIZE)
+        fig.suptitle(title, y=0.95)
         plt.savefig(
             os.path.join(plot_dir, f"{prefix}2D_PdfLawWithMarginPdfs.png"),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
-
-# ---------------------------------------------------------------------------
-# IFM fit result + GoF + bootstrap helpers
-# ---------------------------------------------------------------------------
-
-
-def _empirical_joint_cdf(data: np.ndarray, points: np.ndarray) -> np.ndarray:
-    """F_n(x,y) = (1/n) Σ 1{X_i ≤ x, Y_i ≤ y} evaluated at given points."""
-    leq_x = data[:, 0][None, :] <= points[:, 0][:, None]
-    leq_y = data[:, 1][None, :] <= points[:, 1][:, None]
-    return (leq_x & leq_y).mean(axis=1)
-
-
-def _joint_cvm_statistic(data: np.ndarray, bivariate: "BivariateLaw") -> float:
-    """Cramér-von Mises statistic on the joint: Σ (F_n(x,y) − F_θ(x,y))²."""
-    Fn = _empirical_joint_cdf(data, data)
-    Ftheta = np.array([bivariate.cdf(data[i]) for i in range(data.shape[0])])
-    return float(np.sum((Fn - Ftheta) ** 2))
-
-
-@dataclass
-class BivariateBootstrapCI:
-    """Returned by :meth:`BivariateFitResult.bootstrap_ci`."""
-
-    tau_k: tuple[float, float]
-    left_params: list[tuple[float, float]]
-    right_params: list[tuple[float, float]]
-    alpha: float
-    B: int
-    n_valid: int
-
-    def __repr__(self) -> str:
-        lp = ", ".join(f"[{lo:.3f},{hi:.3f}]" for lo, hi in self.left_params)
-        rp = ", ".join(f"[{lo:.3f},{hi:.3f}]" for lo, hi in self.right_params)
-        return (
-            f"BivariateBootstrapCI({100*(1-self.alpha):.0f}%, "
-            f"B={self.n_valid}/{self.B}, "
-            f"tau_k=[{self.tau_k[0]:.3f},{self.tau_k[1]:.3f}], "
-            f"left=[{lp}], right=[{rp}])"
-        )
-
-
-@dataclass
-class BivariateFitResult:
-    """Returned by :meth:`BivariateLaw.fit`."""
-
-    bivariate: BivariateLaw
-    copula_fit: FitResult
-    left_params: tuple
-    right_params: tuple
-    log_likelihood: float  # ∑ log f(x_i, y_i) on the original data
-    n_obs: int
-    data: np.ndarray  # (n, 2) original data, kept for GoF / bootstrap
-
-    @property
-    def n_params(self) -> int:
-        return len(self.left_params) + len(self.right_params) + self.copula_fit.n_params
-
-    @property
-    def aic(self) -> float:
-        return 2.0 * self.n_params - 2.0 * self.log_likelihood
-
-    @property
-    def bic(self) -> float:
-        return self.n_params * np.log(self.n_obs) - 2.0 * self.log_likelihood
-
-    @property
-    def aicc(self) -> float:
-        """Corrected AIC for small samples: AIC + 2k(k+1)/(n−k−1)."""
-        k, n = self.n_params, self.n_obs
-        if n - k - 1 <= 0:
-            return float("nan")
-        return self.aic + 2.0 * k * (k + 1) / (n - k - 1)
-
-    @property
-    def hqc(self) -> float:
-        """Hannan-Quinn: 2k·log(log n) − 2·loglik."""
-        return (
-            2.0 * self.n_params * np.log(np.log(self.n_obs)) - 2.0 * self.log_likelihood
-        )
-
-    def __repr__(self) -> str:
-        cop = self.bivariate.copula.copula_enum.value.LONG_NAME
-        lm = self.bivariate.left_margin["dist_name"]
-        rm = self.bivariate.right_margin["dist_name"]
-        return (
-            f"BivariateFitResult(copula={cop!r}, "
-            f"left={lm!r}{self.left_params}, "
-            f"right={rm!r}{self.right_params}, "
-            f"loglik={self.log_likelihood:.2f}, "
-            f"AIC={self.aic:.2f}, BIC={self.bic:.2f}, n={self.n_obs})"
-        )
-
-    # ------------------------------------------------------------------
-    # Goodness-of-fit on the joint (margins + copula)
-    # ------------------------------------------------------------------
-    def gof_test(self, B: int = 100, seed: int | None = None) -> GoFResult:
-        """Cramér-von Mises GoF test on the joint distribution.
-
-        Tests H₀: data was generated by the fitted bivariate (margins + copula).
-        Bootstrap resamples from the fitted BivariateLaw and refits at each
-        iteration — heavier than the copula-only test in :class:`FitResult`,
-        but penalises misspecified margins as well.
-        """
-        try:
-            self.bivariate.copula.cdf([0.5, 0.5])
-        except NotImplementedError:
-            raise NotImplementedError(
-                "GoF test requires the copula CDF; not available for "
-                f"{self.bivariate.copula.__class__.__name__}."
-            )
-        rng = np.random.default_rng(seed)
-        S_n = _joint_cvm_statistic(self.data, self.bivariate)
-
-        cop_class = self.copula_fit.copula.__class__
-        left_family = self.bivariate.left_margin["dist"]
-        right_family = self.bivariate.right_margin["dist"]
-        method = self.copula_fit.method
-
-        stats = np.full(B, np.nan)
-        for b in range(B):
-            self.bivariate.set_seed(int(rng.integers(0, 2**31 - 1)))
-            sample = self.bivariate.sample(n=self.n_obs)
-            try:
-                r_b = BivariateLaw.fit(
-                    sample, cop_class, left_family, right_family, copula_method=method
-                )
-                stats[b] = _joint_cvm_statistic(sample, r_b.bivariate)
-            except Exception as e:
-                logger.debug("Bootstrap iter %d failed: %s", b, e)
-
-        valid = ~np.isnan(stats)
-        n_valid = int(valid.sum())
-        p_value = float(np.mean(stats[valid] >= S_n)) if n_valid > 0 else float("nan")
-        return GoFResult(
-            statistic=S_n,
-            p_value=p_value,
-            B=B,
-            n_valid_bootstrap=n_valid,
-            bootstrap_stats=stats[valid],
-        )
-
-    # ------------------------------------------------------------------
-    # Bootstrap CI on all parameters (margins + tau_k)
-    # ------------------------------------------------------------------
-    def bootstrap_ci(
-        self, B: int = 500, alpha: float = 0.05, seed: int | None = None
-    ) -> BivariateBootstrapCI:
-        """Non-parametric bootstrap percentile CI on every fitted parameter.
-
-        Resamples (X_i, Y_i) pairs with replacement, refits the entire
-        BivariateLaw (margins + copula), and returns (alpha/2, 1-alpha/2)
-        quantiles for τ_k and each marginal parameter.
-        """
-        rng = np.random.default_rng(seed)
-        cop_class = self.copula_fit.copula.__class__
-        left_family = self.bivariate.left_margin["dist"]
-        right_family = self.bivariate.right_margin["dist"]
-        method = self.copula_fit.method
-        n_left = len(self.left_params)
-        n_right = len(self.right_params)
-
-        tau_boots = np.full(B, np.nan)
-        left_boots = np.full((B, n_left), np.nan)
-        right_boots = np.full((B, n_right), np.nan)
-
-        for b in range(B):
-            idx = rng.integers(0, self.n_obs, size=self.n_obs)
-            sample = self.data[idx]
-            try:
-                r_b = BivariateLaw.fit(
-                    sample, cop_class, left_family, right_family, copula_method=method
-                )
-                tau_boots[b] = r_b.copula_fit.tau_k
-                left_boots[b] = r_b.left_params
-                right_boots[b] = r_b.right_params
-            except Exception as e:
-                logger.debug("Bootstrap iter %d failed: %s", b, e)
-
-        valid = ~np.isnan(tau_boots)
-        if valid.sum() < 10:
-            raise RuntimeError(
-                f"Bootstrap failed: only {valid.sum()}/{B} valid replicates."
-            )
-
-        q_lo, q_hi = alpha / 2.0, 1.0 - alpha / 2.0
-        tau_ci = (
-            float(np.quantile(tau_boots[valid], q_lo)),
-            float(np.quantile(tau_boots[valid], q_hi)),
-        )
-        left_ci = [
-            (
-                float(np.quantile(left_boots[valid, k], q_lo)),
-                float(np.quantile(left_boots[valid, k], q_hi)),
-            )
-            for k in range(n_left)
-        ]
-        right_ci = [
-            (
-                float(np.quantile(right_boots[valid, k], q_lo)),
-                float(np.quantile(right_boots[valid, k], q_hi)),
-            )
-            for k in range(n_right)
-        ]
-        return BivariateBootstrapCI(
-            tau_k=tau_ci,
-            left_params=left_ci,
-            right_params=right_ci,
-            alpha=alpha,
-            B=B,
-            n_valid=int(valid.sum()),
-        )
-
-    # ------------------------------------------------------------------
-    # K-fold cross-validation log-likelihood
-    # ------------------------------------------------------------------
-    def cv_loglik(self, K: int = 5, seed: int | None = None) -> float:
-        """K-fold CV log-likelihood for the full bivariate model.
-
-        For each fold, both margins (MLE) and the copula are refitted on the
-        training set, and ∑ log f(x,y) is accumulated on the held-out test set.
-        Higher is better. Cleaner than AIC: penalises overfitting honestly.
-        """
-        if K < 2 or K > self.n_obs:
-            raise ValueError(f"K must be in [2, n_obs], got {K} for n={self.n_obs}.")
-        rng = np.random.default_rng(seed)
-        idx = rng.permutation(self.n_obs)
-        folds = np.array_split(idx, K)
-        cop_class = self.copula_fit.copula.__class__
-        left_family = self.bivariate.left_margin["dist"]
-        right_family = self.bivariate.right_margin["dist"]
-        method = self.copula_fit.method
-
-        cv_ll = 0.0
-        for k in range(K):
-            test_idx = folds[k]
-            train_idx = np.concatenate([folds[j] for j in range(K) if j != k])
-            try:
-                r_k = BivariateLaw.fit(
-                    self.data[train_idx],
-                    cop_class,
-                    left_family,
-                    right_family,
-                    copula_method=method,
-                )
-                for i in test_idx:
-                    # Clip −∞ (support violation) at a large negative penalty.
-                    # Common when expon/triang's fitted location excludes a test point.
-                    log_p = float(r_k.bivariate.log_pdf(self.data[i]))
-                    cv_ll += log_p if np.isfinite(log_p) else -100.0
-            except Exception as e:
-                logger.warning("CV fold %d failed: %s", k, e)
-                return float("nan")
-        return float(cv_ll)
-
-    # ------------------------------------------------------------------
-    # Visual diagnostics
-    # ------------------------------------------------------------------
-    def plot_diagnostics(self, plot_dir: str, prefix: str = "") -> None:
-        """6-panel diagnostic plot:
-        (0,0) data scatter + fitted joint PDF contours
-        (0,1) QQ plot — left margin
-        (0,2) lower tail dependence  λ̂_L(u) vs fitted λ_L (on parametric pseudo-obs)
-        (1,0) QQ plot — right margin
-        (1,1) PP plot of the joint CDF  F_n vs F_θ
-        (1,2) upper tail dependence  λ̂_U(u) vs fitted λ_U
-        """
-        cop_name = self.bivariate.copula.copula_enum.value.LONG_NAME
-        n = self.n_obs
-        fig, axes = plt.subplots(2, 3, figsize=(16, 10), facecolor=facecolor)
-        fig.suptitle(
-            f"Bivariate fit diagnostics  ({cop_name}, n={n})",
-            fontsize=BIGGER_SIZE + 1,
-            y=0.995,
-        )
-
-        # (0,0) — data over fitted joint PDF
-        ax = axes[0, 0]
-        Z = self.bivariate._compute_pdf_grid()
-        vmax = float(np.nanpercentile(Z, 95))
-        ax.contourf(
-            self.bivariate._X,
-            self.bivariate._Y,
-            Z,
-            levels=10,
-            cmap="Blues",
-            alpha=0.45,
-            vmin=0,
-            vmax=max(vmax, 1e-10),
-        )
-        ax.scatter(self.data[:, 0], self.data[:, 1], s=4, alpha=0.6, c="black")
-        ax.set_title("Data + fitted joint PDF", fontsize=BIGGER_SIZE)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-
-        pp = (np.arange(1, n + 1) - 0.5) / n
-
-        # (0,1) — left QQ
-        ax = axes[0, 1]
-        lm = self.bivariate.left_margin
-        sx = np.sort(self.data[:, 0])
-        tx = lm["dist"].ppf(pp, *lm["params"])
-        ax.scatter(tx, sx, s=6, alpha=0.6)
-        lo, hi = float(min(tx.min(), sx.min())), float(max(tx.max(), sx.max()))
-        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
-        ax.set_title(f"Left margin QQ  ({lm['dist_name']})", fontsize=BIGGER_SIZE)
-        ax.set_xlabel("Theoretical")
-        ax.set_ylabel("Empirical")
-
-        # (1,0) — right QQ
-        ax = axes[1, 0]
-        rm = self.bivariate.right_margin
-        sy = np.sort(self.data[:, 1])
-        ty = rm["dist"].ppf(pp, *rm["params"])
-        ax.scatter(ty, sy, s=6, alpha=0.6)
-        lo, hi = float(min(ty.min(), sy.min())), float(max(ty.max(), sy.max()))
-        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
-        ax.set_title(f"Right margin QQ  ({rm['dist_name']})", fontsize=BIGGER_SIZE)
-        ax.set_xlabel("Theoretical")
-        ax.set_ylabel("Empirical")
-
-        # (1,1) — joint PP plot
-        ax = axes[1, 1]
-        try:
-            self.bivariate.copula.cdf([0.5, 0.5])
-            Fn = _empirical_joint_cdf(self.data, self.data)
-            Ft = np.array([self.bivariate.cdf(self.data[i]) for i in range(n)])
-            ax.scatter(Fn, Ft, s=6, alpha=0.6)
-            ax.plot([0, 1], [0, 1], "r--", lw=1)
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.set_aspect("equal")
-            ax.set_xlabel("$F_n$ (empirical)")
-            ax.set_ylabel(r"$F_\theta$ (fitted)")
-            ax.set_title("Joint PP plot", fontsize=BIGGER_SIZE)
-        except NotImplementedError:
-            ax.axis("off")
-            ax.text(
-                0.5,
-                0.5,
-                "Joint CDF not available",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-
-        # Tail dependence — pseudo-obs via FITTED margin CDFs (parametric)
-        u1 = lm["dist"].cdf(self.data[:, 0], *lm["params"])
-        u2 = rm["dist"].cdf(self.data[:, 1], *rm["params"])
-        uv = np.column_stack([u1, u2])
-
-        u_low = np.linspace(0.02, 0.30, 25)
-        u_high = np.linspace(0.70, 0.98, 25)
-        lL_emp = _empirical_tail_dep(uv, u_low, "lower")
-        lU_emp = _empirical_tail_dep(uv, u_high, "upper")
-        lL_th, lU_th = self.bivariate.copula.tail_dependence()
-
-        # (0,2) — lower tail
-        ax = axes[0, 2]
-        ax.plot(u_low, lL_emp, "o-", ms=4, label=r"Empirical $\hat\lambda_L(u)$")
-        if not np.isnan(lL_th):
-            ax.axhline(
-                lL_th,
-                color="red",
-                ls="--",
-                lw=1.2,
-                label=rf"Fitted $\lambda_L = {lL_th:.3f}$",
-            )
-        ax.set_xlabel("u")
-        ax.set_ylabel(r"$\lambda_L$")
-        ax.set_title("Lower tail dependence", fontsize=BIGGER_SIZE)
-        ax.set_ylim(-0.05, 1.05)
-        ax.legend(fontsize=9)
-
-        # (1,2) — upper tail
-        ax = axes[1, 2]
-        ax.plot(u_high, lU_emp, "o-", ms=4, label=r"Empirical $\hat\lambda_U(u)$")
-        if not np.isnan(lU_th):
-            ax.axhline(
-                lU_th,
-                color="red",
-                ls="--",
-                lw=1.2,
-                label=rf"Fitted $\lambda_U = {lU_th:.3f}$",
-            )
-        ax.set_xlabel("u")
-        ax.set_ylabel(r"$\lambda_U$")
-        ax.set_title("Upper tail dependence", fontsize=BIGGER_SIZE)
-        ax.set_ylim(-0.05, 1.05)
-        ax.legend(fontsize=9)
-
-        plt.tight_layout()
-        plt.savefig(
-            os.path.join(plot_dir, f"{prefix}BivariateDiagnostics.png"),
-            bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
-        )
-        plt.close()
 
 
 if __name__ == "__main__":
     import scipy as sc
     from pathlib import Path
-    from prg.copulas import *  # noqa: F401, F403 — script de démo
+    from prg.copulas import (
+        CopulaA12, CopulaA14, CopulaClayton, CopulaCubSec, CopulaFGM,
+        CopulaGaussian, CopulaGH, CopulaProduct, CopulaStudent,
+    )
 
     left_margin = (sc.stats.triang, 0.158, 0.0, 3.0)
     right_margin = (sc.stats.norm, 5.0, 0.5)

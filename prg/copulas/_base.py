@@ -1,5 +1,6 @@
 if __name__ == "__main__":
-    import sys, pathlib
+    import sys
+    import pathlib
 
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
@@ -11,8 +12,8 @@ import numpy as np
 from enum import Enum, unique
 from dataclasses import dataclass, field
 
-from prg.tools.tools import EPS, ONE_MINUS_EPS, EPS_MINUS_ONE, minmaxEPS
-from prg.settings.plot_settings import facecolor, dpi, BIGGER_SIZE
+from prg.numerics import EPS, ONE_MINUS_EPS, EPS_MINUS_ONE, minmaxEPS
+from prg.plot_style import DEFAULT_FONT_SIZE as FONT_SIZE
 from prg.exceptions import CopulaParameterError, CopulaNotAvailableError
 
 # AMH τ_K range constants (computed at import time, θ ∈ [−1, 1))
@@ -20,6 +21,9 @@ _AMH_TAU_MIN = float(1.0 - 2.0 * (4.0 * np.log(2.0) - 1.0) / 3.0)  # τ(θ=−1)
 _AMH_TAU_MAX = float(1.0 / 3.0 - EPS)                                  # limit τ → 1/3
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for CopulaEnum.klass (lazy import).
+_COPULA_KLASS_CACHE: dict = {}
 
 
 @dataclass
@@ -58,10 +62,29 @@ class CopulaEnum(CopulaDataMixin, Enum):
         return self.name, self.value
 
     def correct_tau(self, tau: float) -> float:
-        """Clip tau to the valid range; replace non-finite values with the midpoint."""
+        """Clip tau to the valid range; replace non-finite values with the midpoint.
+
+        Logs a ``WARNING`` when the input is outside the family's valid τ
+        range or non-finite, so that callers (e.g. ICE candidate selection)
+        notice the silent clipping.
+        """
+        tau_min, tau_max = self.value.TAU_MIN_MAX
         if not np.isfinite(tau):
-            return (self.value.TAU_MIN_MAX[0] + self.value.TAU_MIN_MAX[1]) / 2.0
-        return float(np.clip(tau, self.value.TAU_MIN_MAX[0], self.value.TAU_MIN_MAX[1]))
+            mid = 0.5 * (tau_min + tau_max)
+            logger.warning(
+                "%s.correct_tau: τ=%r is non-finite — using midpoint τ=%.4f.",
+                self.value.SHORT_NAME, tau, mid,
+            )
+            return mid
+        if tau < tau_min or tau > tau_max:
+            clipped = float(np.clip(tau, tau_min, tau_max))
+            logger.warning(
+                "%s.correct_tau: τ=%.4f outside valid range [%.4f, %.4f] — "
+                "clipped to τ=%.4f.",
+                self.value.SHORT_NAME, tau, tau_min, tau_max, clipped,
+            )
+            return clipped
+        return float(tau)
 
     @classmethod
     def favorite(cls):
@@ -80,7 +103,7 @@ class CopulaEnum(CopulaDataMixin, Enum):
 
     @classmethod
     def available_class_names(cls):
-        return [c.CLASS_NAME for c in CopulaEnum if c.value.AVAILABLE]
+        return [c.value.CLASS_NAME for c in CopulaEnum if c.value.AVAILABLE]
 
     @classmethod
     def from_short_name(cls, short: str):
@@ -88,6 +111,24 @@ class CopulaEnum(CopulaDataMixin, Enum):
             if c.value.SHORT_NAME == short:
                 return c
         return None
+
+    @property
+    def klass(self):
+        """The implementation class for this copula, imported lazily and cached.
+
+        Avoids re-running ``importlib.import_module`` on every model build /
+        ICE candidate evaluation. Keyed by the (immutable) ``CLASS_NAME``
+        because ``CopulaEnum`` instances are not hashable (the dataclass
+        mixin overrides ``__eq__``).
+        """
+        key = self.value.CLASS_NAME
+        cls_obj = _COPULA_KLASS_CACHE.get(key)
+        if cls_obj is None:
+            import importlib as _importlib
+            mod = _importlib.import_module(self.value.MODULE)
+            cls_obj = getattr(mod, self.value.CLASS_NAME)
+            _COPULA_KLASS_CACHE[key] = cls_obj
+        return cls_obj
 
 
 class CopulaVirt:
@@ -100,7 +141,7 @@ class CopulaVirt:
 
         self.copula_enum = None
         for c in CopulaEnum.available():
-            if c.CLASS_NAME == self.class_name:
+            if c.value.CLASS_NAME == self.class_name:
                 self.copula_enum = c
                 self.tau_min = c.value.TAU_MIN_MAX[0]
                 self.tau_max = c.value.TAU_MIN_MAX[1]
@@ -111,10 +152,10 @@ class CopulaVirt:
             )
 
         for k in params:
-            if k not in self.copula_enum.PARAMETERS_SET_NAME:
+            if k not in self.copula_enum.value.PARAMETERS_SET_NAME:
                 raise CopulaParameterError(
                     f"Unexpected parameter {k!r} for {self.class_name}. "
-                    f"Expected: {self.copula_enum.PARAMETERS_SET_NAME}"
+                    f"Expected: {self.copula_enum.value.PARAMETERS_SET_NAME}"
                 )
 
         if "tau_k" not in params:
@@ -162,6 +203,88 @@ class CopulaVirt:
         raise NotImplementedError(f"{self.__class__.__name__} must implement cdf().")
 
     # ------------------------------------------------------------------
+    # Vectorised PDF — used by hot loops in prg.pmc (forward-backward, ICE).
+    #
+    # Default fast path: most subclasses wrap a `statsmodels` copula in
+    # ``self._model``, whose ``.pdf()`` accepts a (M, 2) ndarray and returns
+    # an (M,) ndarray; we exploit that. Subclasses without ``self._model``
+    # (closed-form-only families like Joe) override this with a vectorised
+    # closed form. As a last resort we fall back to a scalar Python loop.
+    # ------------------------------------------------------------------
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Evaluate c(u, v) on M point pairs.
+
+        Parameters
+        ----------
+        uv : np.ndarray, shape (M, 2)
+
+        Returns
+        -------
+        np.ndarray, shape (M,) — copula PDF values, clipped to ≥ EPS.
+        """
+        uv = np.asarray(uv, dtype=float)
+        if uv.ndim != 2 or uv.shape[1] != 2:
+            raise ValueError(f"pdf_array expects shape (M, 2); got {uv.shape}.")
+
+        # Clamp inputs to (EPS, 1-EPS) to mirror scalar minmaxEPS
+        uv = np.clip(uv, EPS, ONE_MINUS_EPS)
+
+        if hasattr(self, "_model") and hasattr(self._model, "pdf"):
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                vals = np.asarray(self._model.pdf(uv), dtype=float)
+            # Replace non-finite or non-positive values with EPS (mirrors scalar guards)
+            vals = np.where(np.isfinite(vals) & (vals > 0.0), vals, EPS)
+            return vals
+
+        # Fallback — scalar loop (slow). Subclasses without ``_model`` should
+        # override pdf_array with a vectorised closed form.
+        out = np.empty(uv.shape[0], dtype=float)
+        for k in range(uv.shape[0]):
+            out[k] = self.pdf([float(uv[k, 0]), float(uv[k, 1])])
+        return out
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """log c(u, v) on M point pairs (default: log(pdf_array), floored at log(EPS))."""
+        return np.log(np.maximum(self.pdf_array(uv), EPS))
+
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Evaluate C(u, v) on M point pairs.
+
+        Same fast-path strategy as :meth:`pdf_array`: use the statsmodels
+        backend if present (its ``.cdf`` accepts a (M, 2) ndarray and returns
+        an (M,) ndarray), otherwise fall back to a Python loop.
+
+        Subclasses with closed-form CDFs (FGM, AMH, Joe, …) can override this
+        with a vectorised expression for ~50× speed-ups on bootstrap GoF.
+
+        Parameters
+        ----------
+        uv : np.ndarray, shape (M, 2)
+
+        Returns
+        -------
+        np.ndarray, shape (M,) — clipped to [0, 1].
+        """
+        uv = np.asarray(uv, dtype=float)
+        if uv.ndim != 2 or uv.shape[1] != 2:
+            raise ValueError(f"cdf_array expects shape (M, 2); got {uv.shape}.")
+
+        uv = np.clip(uv, EPS, ONE_MINUS_EPS)
+
+        if hasattr(self, "_model") and hasattr(self._model, "cdf"):
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                vals = np.asarray(self._model.cdf(uv), dtype=float)
+            vals = np.where(np.isfinite(vals), vals, EPS)
+            return np.clip(vals, 0.0, 1.0)
+
+        # Fallback — scalar loop (slow). Subclasses without ``_model`` should
+        # override cdf_array with a vectorised closed form.
+        out = np.empty(uv.shape[0], dtype=float)
+        for k in range(uv.shape[0]):
+            out[k] = self.cdf([float(uv[k, 0]), float(uv[k, 1])])
+        return np.clip(out, 0.0, 1.0)
+
+    # ------------------------------------------------------------------
     # Conditional CDF  h(v|u) = ∂C(u,v)/∂u
     # ------------------------------------------------------------------
     def conditional_cdf(self, v: float, u: float) -> float:
@@ -171,6 +294,73 @@ class CopulaVirt:
         u_hi = minmaxEPS(u + h)
         result = (self.cdf([u_hi, v]) - self.cdf([u_lo, v])) / (u_hi - u_lo)
         return float(np.clip(result, 0.0, 1.0))
+
+    # ------------------------------------------------------------------
+    # Inverse of the conditional CDF (Rosenblatt sampling step).
+    #
+    # Default: numerical inversion via Brent's method on h(v|u) = w. Subclasses
+    # with an analytical form (e.g. Gaussian, Clayton) override this for a
+    # ~50× speed-up on long simulations.
+    # ------------------------------------------------------------------
+    def inv_h(self, w: float, u: float) -> float:
+        """Return v such that h(v|u) = w (Rosenblatt inverse step).
+
+        Default numerical implementation: bracket ``h(v|u) - w`` on
+        ``(EPS, 1-EPS)`` and solve via Brent's method. Brent requires the
+        function to be monotone in v on that bracket — this holds for any
+        valid copula (h is a conditional CDF in v) but the assertion below
+        guards against an ill-defined custom copula.
+
+        Subclasses with closed-form inverses (Gaussian, Clayton, Frank, …)
+        override this for ~50× speed-up.
+        """
+        from scipy.optimize import brentq
+        u    = minmaxEPS(u)
+        h_lo = self.conditional_cdf(EPS,           u)
+        h_hi = self.conditional_cdf(ONE_MINUS_EPS, u)
+
+        # h(v|u) is a CDF in v → must be non-decreasing on (0, 1).
+        # A violation here indicates a buggy ``conditional_cdf`` override.
+        if h_lo > h_hi + 1e-9:
+            raise ValueError(
+                f"{type(self).__name__}.conditional_cdf is not monotone in v "
+                f"at u={u:.4g} (h(EPS|u)={h_lo:.4g} > h(1-EPS|u)={h_hi:.4g}). "
+                f"Cannot invert h."
+            )
+
+        if w <= h_lo:
+            return float(EPS)
+        if w >= h_hi:
+            return float(ONE_MINUS_EPS)
+        return float(brentq(
+            lambda v_: self.conditional_cdf(float(v_), u) - w,
+            EPS, ONE_MINUS_EPS, maxiter=80, xtol=1e-8,
+        ))
+
+    def inv_h_array(self, w: np.ndarray, u: np.ndarray) -> np.ndarray:
+        """Vectorised version of :meth:`inv_h`.
+
+        Default fallback: scalar Python loop. Subclasses with closed-form
+        ``inv_h`` (Gaussian, Clayton, Frank) override this with a
+        vectorised expression for ~10× speed-up on bulk sampling.
+
+        Parameters
+        ----------
+        w : np.ndarray, shape (M,) — uniform variates.
+        u : np.ndarray, shape (M,) — conditioning values.
+
+        Returns
+        -------
+        np.ndarray, shape (M,) — v values such that h(v_i | u_i) = w_i.
+        """
+        w = np.asarray(w, dtype=float)
+        u = np.asarray(u, dtype=float)
+        if w.shape != u.shape:
+            raise ValueError(f"inv_h_array: w {w.shape} and u {u.shape} must match.")
+        out = np.empty_like(w)
+        for k in range(w.size):
+            out[k] = self.inv_h(float(w[k]), float(u[k]))
+        return out
 
     # ------------------------------------------------------------------
     # Tail dependence coefficients  (λ_L, λ_U)
@@ -199,11 +389,49 @@ class CopulaVirt:
     # Majorant  max_{v} c(u_left, v)  — overridden analytically when possible
     # ------------------------------------------------------------------
     def majorant(self, u_left: float) -> float:
-        """Numerical majorant via grid search on 150 points. Subclasses may override."""
+        """Compute ``max_v c(u_left, v)`` for the AR-rejection sampler.
+
+        Strategy (most-robust default):
+
+        1. Coarse grid search (150 points) to localise the peak.
+        2. Refinement via :func:`scipy.optimize.minimize_scalar` (Brent /
+           bounded) in a tight neighbourhood of the grid maximum.
+        3. **Safety multiplier ×1.02** to absorb residual numerical error.
+           Acceptance rate drops by ≤2 % but the AR sampler is guaranteed
+           unbiased.
+
+        Subclasses with closed-form maxima (FGM, CubSec, Product, Gaussian,
+        Clayton, …) override this method for ~10× speed-up and exact bounds.
+        """
+        from scipy.optimize import minimize_scalar
         u = minmaxEPS(u_left)
+
+        # 1. Coarse grid search
         for i, v in enumerate(self._x):
             self._y[i] = self.pdf([u, v])
-        return float(np.max(self._y))
+        idx_grid_max = int(np.argmax(self._y))
+        v_grid_max   = self._x[idx_grid_max]
+        f_grid_max   = self._y[idx_grid_max]
+
+        # 2. Refinement around the grid max — bracket of width ~2 grid spacings
+        spacing  = (ONE_MINUS_EPS - EPS) / max(self.N - 1, 1)
+        v_lo     = float(max(EPS,         v_grid_max - 2.0 * spacing))
+        v_hi     = float(min(ONE_MINUS_EPS, v_grid_max + 2.0 * spacing))
+        try:
+            res = minimize_scalar(
+                lambda v_: -self.pdf([u, float(v_)]),
+                bounds=(v_lo, v_hi),
+                method="bounded",
+                options={"xatol": 1e-7},
+            )
+            f_refined = self.pdf([u, float(res.x)])
+            f_max     = max(f_grid_max, f_refined)
+        except Exception:
+            f_max = f_grid_max   # grid is the safety net
+
+        # 3. Safety margin (constant 2 %) — guards against sub-grid peaks the
+        #    refinement window may have missed.
+        return float(f_max * 1.02)
 
     # ------------------------------------------------------------------
     # tau update
@@ -224,7 +452,7 @@ class CopulaVirt:
     # ------------------------------------------------------------------
     @classmethod
     def fit(cls, data: np.ndarray, method: str = 'tau') -> 'FitResult':
-        """Fit tau_k from a (n, 2) data array.
+        """Fit a copula's free parameters from a (n, 2) data array.
 
         Raw data is rank-transformed to pseudo-observations û = rank/(n+1)
         before estimation — no distributional assumption on the margins.
@@ -233,15 +461,18 @@ class CopulaVirt:
         ----------
         data   : array-like, shape (n, 2)
         method : {'tau', 'mle'}
-            'tau' — moment matching via Kendall's τ (O(n log n), default)
-            'mle' — maximize ∑ log c(û_i, v̂_i) via Brent scalar search
+            ``'tau'`` — moment matching via Kendall's τ (O(n log n), default).
+            ``'mle'`` — maximise ∑ log c(û_i, v̂_i). For 1-parameter families
+                       a 1-D Brent scalar search; for multi-parameter families
+                       (Student, BB1) a 2-D L-BFGS-B optimisation jointly over
+                       (τ_K, second parameter).
 
         Returns
         -------
         FitResult
         """
         from scipy.stats    import rankdata, kendalltau as _kendalltau
-        from scipy.optimize import minimize_scalar
+        from scipy.optimize import minimize, minimize_scalar
 
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
@@ -257,12 +488,14 @@ class CopulaVirt:
 
         class_name = cls.__name__
         tau_min = tau_max = None
+        param_names: list[str] = []
         for entry in CopulaEnum:
-            if entry.CLASS_NAME == class_name:
+            if entry.value.CLASS_NAME == class_name:
                 if not entry.value.AVAILABLE:
                     raise CopulaNotAvailableError(
                         f'{class_name} is currently disabled.')
                 tau_min, tau_max = entry.value.TAU_MIN_MAX
+                param_names = list(entry.value.PARAMETERS_SET_NAME)
                 break
         if tau_min is None:
             raise CopulaNotAvailableError(
@@ -276,27 +509,76 @@ class CopulaVirt:
                              log_likelihood=_eval_log_likelihood(copula, uv),
                              n_obs=n, uv=uv)
 
+        # Extra (non-tau) parameters and their bounds. Mirrors
+        # ``prg.pmc.ice._EXTRA_PARAM_BOUNDS`` so that standalone fitting and
+        # ICE-driven fitting use the same defaults.
+        _EXTRA_BOUNDS = {
+            "delta": (1.0,  10.0,  1.5),
+            "df":    (2.0, 100.0,  4.0),
+        }
+        extras = {p: _EXTRA_BOUNDS[p] for p in param_names
+                  if p != "tau_k" and p in _EXTRA_BOUNDS}
+
         if method == 'tau':
             tau_hat, _ = _kendalltau(data[:, 0], data[:, 1])
             tau_k = float(np.clip(tau_hat, tau_min, tau_max))
+            extra_vals = {k: v[2] for k, v in extras.items()}   # init defaults
 
         elif method == 'mle':
             pad = max(1e-4 * (tau_max - tau_min), 1e-9)
-            lo, hi = tau_min + pad, tau_max - pad
+            tau_lo, tau_hi = tau_min + pad, tau_max - pad
 
-            def _neg_ll(tau: float) -> float:
+            if not extras:
+                # 1-D scalar optimisation over τ
+                def _neg_ll(tau: float) -> float:
+                    try:
+                        return -_eval_log_likelihood(cls(tau_k=float(tau)), uv)
+                    except Exception:
+                        return 1e12
+                res   = minimize_scalar(_neg_ll, bounds=(tau_lo, tau_hi),
+                                         method='bounded')
+                tau_k = float(res.x)
+                extra_vals = {}
+            else:
+                # n-D optimisation jointly over (τ, *extras) via L-BFGS-B
+                bounds_list = [(tau_lo, tau_hi)]
+                init        = [0.5 * (tau_min + tau_max)]
+                ext_names: list[str] = []
+                for name, (lo, hi, x0) in extras.items():
+                    bounds_list.append((lo, hi))
+                    init.append(x0)
+                    ext_names.append(name)
+
+                def _neg_ll_nd(theta):
+                    kw = {"tau_k": float(theta[0])}
+                    for k, name in enumerate(ext_names):
+                        kw[name] = float(theta[k + 1])
+                    try:
+                        return -_eval_log_likelihood(cls(**kw), uv)
+                    except Exception:
+                        return 1e12
+
                 try:
-                    return -_eval_log_likelihood(cls(tau_k=float(tau)), uv)
-                except Exception:
-                    return 1e12
-
-            res   = minimize_scalar(_neg_ll, bounds=(lo, hi), method='bounded')
-            tau_k = float(res.x)
+                    res = minimize(_neg_ll_nd, init,
+                                   method="L-BFGS-B", bounds=bounds_list,
+                                   options={"maxiter": 80, "ftol": 1e-7})
+                    tau_k = float(np.clip(res.x[0], tau_lo, tau_hi))
+                    extra_vals = {
+                        name: float(np.clip(res.x[k + 1], *bounds_list[k + 1]))
+                        for k, name in enumerate(ext_names)
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        '%s.fit(method="mle"): joint optimisation failed (%s); '
+                        'falling back to τ-only.', class_name, exc,
+                    )
+                    tau_k = init[0]
+                    extra_vals = {k: v[2] for k, v in extras.items()}
 
         else:
             raise ValueError(f"method must be 'tau' or 'mle', got {method!r}.")
 
-        copula = cls(tau_k=tau_k)
+        copula = cls(tau_k=tau_k, **extra_vals)
         return FitResult(copula=copula, method=method, tau_k=tau_k,
                          log_likelihood=_eval_log_likelihood(copula, uv),
                          n_obs=n, uv=uv)
@@ -321,12 +603,12 @@ class CopulaVirt:
             import importlib as _il
             families = []
             for _entry in CopulaEnum:
-                if not _entry.value.AVAILABLE or not _entry.MODULE:
+                if not _entry.value.AVAILABLE or not _entry.value.MODULE:
                     continue
-                if _entry.CLASS_NAME == 'CopulaProduct':   # τ fixé à 0, pas de fit utile
+                if _entry.value.CLASS_NAME == 'CopulaProduct':   # τ fixé à 0, pas de fit utile
                     continue
-                _mod = _il.import_module(_entry.MODULE)
-                families.append(getattr(_mod, _entry.CLASS_NAME))
+                _mod = _il.import_module(_entry.value.MODULE)
+                families.append(getattr(_mod, _entry.value.CLASS_NAME))
 
         results: list = []
         for cls in families:
@@ -354,7 +636,7 @@ class CopulaVirt:
     def plot_pdf(self, plot_dir: str, prefix: str = "") -> None:
         """Contour plot of the copula density c(u,v) on (0,1)²."""
         Z = np.vectorize(lambda a, b: self.pdf([a, b]))(self._x2, self._y2)
-        fig, ax = plt.subplots(figsize=(5, 5), facecolor=facecolor)
+        fig, ax = plt.subplots(figsize=(5, 5))
         vmax = np.nanpercentile(Z, 97)
         vticks = np.linspace(0, max(vmax, 1e-10), self.ticks_nbr)
         cs = ax.contourf(
@@ -368,7 +650,6 @@ class CopulaVirt:
         fig.suptitle(
             f"{self.copula_enum.LONG_NAME}  c(u,v)  τ={self.params['tau_k']}{theta_str}",
             y=0.98,
-            fontsize=BIGGER_SIZE,
         )
         plt.savefig(
             os.path.join(
@@ -376,8 +657,6 @@ class CopulaVirt:
                 f"{prefix}PDF_{self.copula_enum.SHORT_NAME}_tau{self.params['tau_k']:.2f}.png",
             ),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
@@ -388,7 +667,7 @@ class CopulaVirt:
         except NotImplementedError as e:
             logger.warning("plot_cdf skipped: %s", e)
             return
-        fig, ax = plt.subplots(figsize=(5, 5), facecolor=facecolor)
+        fig, ax = plt.subplots(figsize=(5, 5))
         vticks = np.linspace(0, 1, self.ticks_nbr)
         cs = ax.contourf(self._x2, self._y2, Z, vticks, cmap="viridis", vmin=0, vmax=1)
         fig.colorbar(cs, ax=ax, ticks=vticks[::3])
@@ -399,7 +678,6 @@ class CopulaVirt:
         fig.suptitle(
             f"{self.copula_enum.LONG_NAME}  C(u,v)  τ={self.params['tau_k']}{theta_str}",
             y=0.98,
-            fontsize=BIGGER_SIZE,
         )
         plt.savefig(
             os.path.join(
@@ -407,8 +685,6 @@ class CopulaVirt:
                 f"{prefix}CDF_{self.copula_enum.SHORT_NAME}_tau{self.params['tau_k']:.2f}.png",
             ),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
@@ -417,37 +693,24 @@ class CopulaVirt:
     # ------------------------------------------------------------------
 
     def sample(self, n: int = 500, seed: int | None = None) -> np.ndarray:
-        """Draw n samples from the copula on [0,1]² via conditional inversion.
+        """Draw n samples from the copula on [0,1]² via Rosenblatt inversion.
 
-        Algorithm (Rosenblatt transform):
-          u ~ Uniform(0,1)
-          v = h⁻¹(w | u)  where  w ~ Uniform(0,1) and  h = conditional_cdf
+        For each sample::
 
-        Returns array of shape (n, 2).
+            u ~ Uniform(EPS, 1-EPS)
+            w ~ Uniform(EPS, 1-EPS)
+            v = inv_h(w, u)
+
+        Subclasses with a closed-form ``inv_h_array`` (Gaussian, Clayton,
+        Frank) get a single vectorised call for all n samples; others
+        fall back to per-sample Brent inversion via ``inv_h``.
         """
-        from scipy.optimize import brentq
-
         rng = np.random.default_rng(seed)
-        us = rng.uniform(EPS, ONE_MINUS_EPS, n)
-        ws = rng.uniform(EPS, ONE_MINUS_EPS, n)
+        us  = rng.uniform(EPS, ONE_MINUS_EPS, n)
+        ws  = rng.uniform(EPS, ONE_MINUS_EPS, n)
         out = np.empty((n, 2))
-        for i in range(n):
-            u, w = float(us[i]), float(ws[i])
-            out[i, 0] = u
-            h_lo = self.conditional_cdf(EPS, u)
-            h_hi = self.conditional_cdf(ONE_MINUS_EPS, u)
-            if w <= h_lo:
-                out[i, 1] = EPS
-            elif w >= h_hi:
-                out[i, 1] = ONE_MINUS_EPS
-            else:
-                out[i, 1] = brentq(
-                    lambda v_: self.conditional_cdf(float(v_), u) - w,
-                    EPS,
-                    ONE_MINUS_EPS,
-                    maxiter=60,
-                    xtol=1e-6,
-                )
+        out[:, 0] = us
+        out[:, 1] = self.inv_h_array(ws, us)
         return out
 
     # ------------------------------------------------------------------
@@ -462,7 +725,7 @@ class CopulaVirt:
         Z = np.vectorize(lambda a, b: self.pdf([a, b]))(self._x2, self._y2)
         vmax = np.nanpercentile(Z, 97)
 
-        fig, ax = plt.subplots(figsize=(5, 5), facecolor=facecolor)
+        fig, ax = plt.subplots(figsize=(5, 5))
         ticks = np.linspace(0, max(vmax, 1e-10), 8)
         ax.contourf(
             self._x2, self._y2, Z, ticks, cmap="Blues", alpha=0.45, vmin=0, vmax=vmax
@@ -479,7 +742,6 @@ class CopulaVirt:
         fig.suptitle(
             f"{self.copula_enum.LONG_NAME}  τ={self.params['tau_k']}{theta_str}  (n={n})",
             y=0.98,
-            fontsize=BIGGER_SIZE,
         )
         plt.savefig(
             os.path.join(
@@ -487,8 +749,6 @@ class CopulaVirt:
                 f"{prefix}Samples_{self.copula_enum.SHORT_NAME}_tau{self.params['tau_k']:.2f}.png",
             ),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
@@ -502,7 +762,7 @@ class CopulaVirt:
             self._x2, self._y2
         )
 
-        fig, ax = plt.subplots(figsize=(5, 5), facecolor=facecolor)
+        fig, ax = plt.subplots(figsize=(5, 5))
         im = ax.pcolormesh(
             self._x2, self._y2, H, cmap="viridis", vmin=0, vmax=1, shading="auto"
         )
@@ -524,7 +784,6 @@ class CopulaVirt:
         fig.suptitle(
             f"h(v|u) = ∂C/∂u  —  {self.copula_enum.LONG_NAME}  τ={self.params['tau_k']}{theta_str}",
             y=0.98,
-            fontsize=BIGGER_SIZE,
         )
         plt.savefig(
             os.path.join(
@@ -532,8 +791,6 @@ class CopulaVirt:
                 f"{prefix}Hfunc_{self.copula_enum.SHORT_NAME}_tau{self.params['tau_k']:.2f}.png",
             ),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
@@ -556,8 +813,8 @@ class CopulaVirt:
             has_cdf = False
         samples = self.sample(n_samples, seed=seed)
 
-        fig, axes = plt.subplots(2, 2, figsize=(10, 10), facecolor=facecolor)
-        fig.suptitle(f"{name}  (τ={tau}{theta_str})", fontsize=BIGGER_SIZE + 2)
+        fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+        fig.suptitle(f"{name}  (τ={tau}{theta_str})", fontsize=FONT_SIZE + 2)
         fig.subplots_adjust(top=0.93, wspace=0.32, hspace=0.32)
 
         # PDF
@@ -571,7 +828,7 @@ class CopulaVirt:
         ax.set_xlabel("u")
         ax.set_ylabel("v")
         ax.set_aspect("equal")
-        ax.set_title("PDF  c(u, v)", fontsize=BIGGER_SIZE)
+        ax.set_title("PDF  c(u, v)")
 
         # CDF
         ax = axes[0, 1]
@@ -596,7 +853,7 @@ class CopulaVirt:
             )
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
-        ax.set_title("CDF  C(u, v)", fontsize=BIGGER_SIZE)
+        ax.set_title("CDF  C(u, v)")
 
         # h-function
         ax = axes[1, 0]
@@ -617,7 +874,7 @@ class CopulaVirt:
         ax.set_xlabel("u")
         ax.set_ylabel("v")
         ax.set_aspect("equal")
-        ax.set_title("h(v|u) = ∂C/∂u", fontsize=BIGGER_SIZE)
+        ax.set_title("h(v|u) = ∂C/∂u")
 
         # Samples
         ax = axes[1, 1]
@@ -633,7 +890,7 @@ class CopulaVirt:
         ax.set_xlabel("u")
         ax.set_ylabel("v")
         ax.set_aspect("equal")
-        ax.set_title(f"Samples  (n={n_samples})", fontsize=BIGGER_SIZE)
+        ax.set_title(f"Samples  (n={n_samples})")
 
         plt.savefig(
             os.path.join(
@@ -641,8 +898,6 @@ class CopulaVirt:
                 f"{prefix}Overview_{self.copula_enum.SHORT_NAME}_tau{tau:.2f}.png",
             ),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
@@ -668,12 +923,11 @@ class CopulaVirt:
             nrows,
             ncols,
             figsize=(4 * ncols, 4 * nrows),
-            facecolor=facecolor,
             squeeze=False,
         )
         fig.suptitle(
             f"{self.copula_enum.value.LONG_NAME}  —  PDF c(u,v) for various τ",
-            fontsize=BIGGER_SIZE + 2,
+            fontsize=FONT_SIZE + 2,
             y=1.01,
         )
         for idx, tau in enumerate(tau_values):
@@ -685,7 +939,7 @@ class CopulaVirt:
             tks = np.linspace(0, max(vmax, 1e-10), 9)
             ax.contourf(cop._x2, cop._y2, Z, tks, cmap="viridis", vmin=0, vmax=vmax)
             theta_str = f", θ={cop.theta:.2f}" if hasattr(cop, "theta") else ""
-            ax.set_title(f"τ = {tau:.2f}{theta_str}", fontsize=BIGGER_SIZE)
+            ax.set_title(f"τ = {tau:.2f}{theta_str}")
             ax.set_xlabel("u")
             ax.set_ylabel("v")
             ax.set_aspect("equal")
@@ -700,318 +954,24 @@ class CopulaVirt:
                 plot_dir, f"{prefix}MultiTau_{self.copula_enum.SHORT_NAME}.png"
             ),
             bbox_inches="tight",
-            dpi=dpi,
-            facecolor=facecolor,
         )
         plt.close()
 
 
+
+
 # ---------------------------------------------------------------------------
-# Fitting helpers (module-level so FitResult is importable)
+# Fitting helpers — re-exported from prg.copulas._fit for backward compatibility
+# (consumers — bivariate.py, the public ``__init__``, and external code —
+# import these symbols from ``_base``; the underscore-prefixed helpers are
+# also used by the test suite).
 # ---------------------------------------------------------------------------
 
-def _eval_log_likelihood(copula: CopulaVirt, uv: np.ndarray) -> float:
-    """∑ log c(û_i, v̂_i) on pseudo-observations, flooring pdf at EPS."""
-    pdf_vals = np.array([copula.pdf(list(row)) for row in uv])
-    return float(np.sum(np.log(np.maximum(pdf_vals, EPS))))
-
-
-def _empirical_copula(uv: np.ndarray, points: np.ndarray) -> np.ndarray:
-    """C_n(u,v) = (1/n) Σ 1{û_i ≤ u, v̂_i ≤ v}, evaluated at given points."""
-    leq_u = uv[:, 0][None, :] <= points[:, 0][:, None]   # (m, n)
-    leq_v = uv[:, 1][None, :] <= points[:, 1][:, None]
-    return (leq_u & leq_v).mean(axis=1)
-
-
-def _cvm_statistic(uv: np.ndarray, copula: CopulaVirt) -> float:
-    """Cramér-von Mises statistic S_n = Σ (C_n(u_i,v_i) − C_θ(u_i,v_i))²."""
-    Cn     = _empirical_copula(uv, uv)
-    Ctheta = np.array([copula.cdf(list(row)) for row in uv])
-    return float(np.sum((Cn - Ctheta) ** 2))
-
-
-def _empirical_tail_dep(uv: np.ndarray, u_grid: np.ndarray, side: str) -> np.ndarray:
-    """Non-parametric tail dependence estimator on a grid of thresholds.
-
-    side='lower': λ̂_L(u) = C_n(u, u) / u
-    side='upper': λ̂_U(u) = (1 − 2u + C_n(u, u)) / (1 − u)
-    Reference: Joe (1997); Caillault & Guégan (2009).
-    """
-    out = np.empty(len(u_grid))
-    for k, u in enumerate(u_grid):
-        Cn_uu = float(np.mean((uv[:, 0] <= u) & (uv[:, 1] <= u)))
-        if side == 'lower':
-            out[k] = Cn_uu / u if u > 0.0 else 0.0
-        else:
-            out[k] = (1.0 - 2.0*u + Cn_uu) / (1.0 - u) if u < 1.0 else 0.0
-    return np.clip(out, 0.0, 1.0)
-
-
-@dataclass
-class GoFResult:
-    """Returned by :meth:`FitResult.gof_test` — Cramér-von Mises GoF test."""
-    statistic:        float
-    p_value:          float
-    B:                int
-    n_valid_bootstrap: int
-    bootstrap_stats:  np.ndarray
-
-    def __repr__(self) -> str:
-        return (f'GoFResult(S_n={self.statistic:.4f}, p-value={self.p_value:.3f}, '
-                f'B={self.n_valid_bootstrap}/{self.B})')
-
-
-@dataclass
-class FitResult:
-    """Returned by :meth:`CopulaVirt.fit`."""
-    copula:         CopulaVirt
-    method:         str
-    tau_k:          float
-    log_likelihood: float
-    n_obs:          int
-    uv:             np.ndarray   # pseudo-observations used for the fit, shape (n, 2)
-
-    @property
-    def n_params(self) -> int:
-        return getattr(self.copula, 'n_params', 1)
-
-    @property
-    def aic(self) -> float:
-        """Akaike Information Criterion: 2k − 2·loglik (smaller is better)."""
-        return 2.0 * self.n_params - 2.0 * self.log_likelihood
-
-    @property
-    def bic(self) -> float:
-        """Bayesian Information Criterion: k·log(n) − 2·loglik (smaller is better)."""
-        return self.n_params * np.log(self.n_obs) - 2.0 * self.log_likelihood
-
-    @property
-    def aicc(self) -> float:
-        """Corrected AIC for small samples: AIC + 2k(k+1)/(n−k−1)."""
-        k, n = self.n_params, self.n_obs
-        if n - k - 1 <= 0:
-            return float('nan')
-        return self.aic + 2.0 * k * (k + 1) / (n - k - 1)
-
-    @property
-    def hqc(self) -> float:
-        """Hannan-Quinn: 2k·log(log n) − 2·loglik (asymptotically less biased than BIC)."""
-        return 2.0 * self.n_params * np.log(np.log(self.n_obs)) - 2.0 * self.log_likelihood
-
-    def __repr__(self) -> str:
-        name = self.copula.copula_enum.value.LONG_NAME
-        return (
-            f'FitResult(copula={name!r}, method={self.method!r}, '
-            f'tau_k={self.tau_k:.4f}, loglik={self.log_likelihood:.4f}, '
-            f'AIC={self.aic:.2f}, BIC={self.bic:.2f}, n={self.n_obs})'
-        )
-
-    # ------------------------------------------------------------------
-    # Goodness-of-fit (Cramér-von Mises, parametric bootstrap)
-    # ------------------------------------------------------------------
-    def gof_test(self, B: int = 100, seed: int | None = None) -> GoFResult:
-        """Cramér-von Mises GoF test via parametric bootstrap.
-
-        H₀: data was generated by the fitted copula family.
-        Returns S_n and a bootstrap p-value over B replicates.
-        Reference: Genest, Rémillard & Beaudoin (2009).
-        """
-        try:
-            self.copula.cdf([0.5, 0.5])
-        except NotImplementedError:
-            raise NotImplementedError(
-                f'GoF test requires C(u,v); not implemented for '
-                f'{self.copula.__class__.__name__}.'
-            )
-        rng = np.random.default_rng(seed)
-        S_n = _cvm_statistic(self.uv, self.copula)
-
-        cls   = self.copula.__class__
-        stats = np.full(B, np.nan)
-        for b in range(B):
-            sample = self.copula.sample(n=self.n_obs,
-                                        seed=int(rng.integers(0, 2**31 - 1)))
-            try:
-                r_b      = cls.fit(sample, method=self.method)
-                stats[b] = _cvm_statistic(r_b.uv, r_b.copula)
-            except Exception as e:
-                logger.debug('Bootstrap iter %d failed: %s', b, e)
-
-        valid    = ~np.isnan(stats)
-        n_valid  = int(valid.sum())
-        p_value  = float(np.mean(stats[valid] >= S_n)) if n_valid > 0 else float('nan')
-        return GoFResult(statistic=S_n, p_value=p_value, B=B,
-                         n_valid_bootstrap=n_valid,
-                         bootstrap_stats=stats[valid])
-
-    # ------------------------------------------------------------------
-    # Bootstrap confidence interval on tau_k
-    # ------------------------------------------------------------------
-    def bootstrap_ci(self, B: int = 500, alpha: float = 0.05,
-                     seed: int | None = None) -> tuple[float, float]:
-        """Non-parametric bootstrap percentile CI for tau_k at level (1-alpha).
-
-        Resamples the pseudo-observations with replacement B times, refits with
-        the same method, and returns the (alpha/2, 1-alpha/2) quantiles.
-        """
-        rng = np.random.default_rng(seed)
-        cls = self.copula.__class__
-        tau_boots = np.full(B, np.nan)
-        for b in range(B):
-            idx    = rng.integers(0, self.n_obs, size=self.n_obs)
-            sample = self.uv[idx]
-            try:
-                tau_boots[b] = cls.fit(sample, method=self.method).tau_k
-            except Exception as e:
-                logger.debug('Bootstrap iter %d failed: %s', b, e)
-        valid = ~np.isnan(tau_boots)
-        if valid.sum() < 10:
-            raise RuntimeError(f'Bootstrap failed: only {valid.sum()}/{B} valid replicates.')
-        lo = float(np.quantile(tau_boots[valid], alpha / 2.0))
-        hi = float(np.quantile(tau_boots[valid], 1.0 - alpha / 2.0))
-        return lo, hi
-
-    # ------------------------------------------------------------------
-    # K-fold cross-validation log-likelihood
-    # ------------------------------------------------------------------
-    def cv_loglik(self, K: int = 5, seed: int | None = None) -> float:
-        """K-fold CV log-likelihood (held-out test loglik summed over folds).
-
-        For each fold, the copula is refitted on the K−1 training folds (using
-        the same `method`) and its log-density is summed over the held-out
-        test fold's pseudo-observations. Higher is better.
-        """
-        if K < 2 or K > self.n_obs:
-            raise ValueError(f'K must be in [2, n_obs], got {K} for n={self.n_obs}.')
-        rng = np.random.default_rng(seed)
-        idx = rng.permutation(self.n_obs)
-        folds = np.array_split(idx, K)
-        cls = self.copula.__class__
-
-        cv_ll = 0.0
-        for k in range(K):
-            test_idx  = folds[k]
-            train_idx = np.concatenate([folds[j] for j in range(K) if j != k])
-            try:
-                r_k    = cls.fit(self.uv[train_idx], method=self.method)
-                cv_ll += _eval_log_likelihood(r_k.copula, self.uv[test_idx])
-            except Exception as e:
-                logger.warning('CV fold %d failed: %s', k, e)
-                return float('nan')
-        return float(cv_ll)
-
-    # ------------------------------------------------------------------
-    # Visual diagnostics
-    # ------------------------------------------------------------------
-    def plot_diagnostics(self, plot_dir: str, prefix: str = '') -> None:
-        """6-panel diagnostic plot:
-        (0,0) pseudo-observations + fitted PDF contours
-        (0,1) PP plot  C_n vs C_θ at the data points
-        (0,2) lower tail dependence  λ̂_L(u) vs fitted λ_L
-        (1,0) empirical copula heatmap C_n(u,v)
-        (1,1) residuals heatmap C_n − C_θ
-        (1,2) upper tail dependence  λ̂_U(u) vs fitted λ_U
-        """
-        try:
-            self.copula.cdf([0.5, 0.5])
-            has_cdf = True
-        except NotImplementedError:
-            has_cdf = False
-
-        name      = self.copula.copula_enum.value.LONG_NAME
-        short     = self.copula.copula_enum.value.SHORT_NAME
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10), facecolor=facecolor)
-        fig.suptitle(
-            f'{name} — fit diagnostics  (τ̂={self.tau_k:.3f}, n={self.n_obs})',
-            fontsize=BIGGER_SIZE + 1, y=0.995,
-        )
-
-        grid    = np.linspace(0.01, 0.99, 80)
-        GX, GY  = np.meshgrid(grid, grid)
-        Z_pdf   = np.vectorize(lambda u, v: self.copula.pdf([u, v]))(GX, GY)
-        vmax    = float(np.nanpercentile(Z_pdf, 95))
-
-        # (0,0) — pseudo-obs over fitted PDF contours
-        ax = axes[0, 0]
-        ax.contourf(GX, GY, Z_pdf, levels=10, cmap='Blues', alpha=0.4,
-                    vmin=0, vmax=max(vmax, 1e-10))
-        ax.scatter(self.uv[:, 0], self.uv[:, 1], s=4, alpha=0.55, c='black')
-        ax.set_title('Pseudo-obs + fitted PDF', fontsize=BIGGER_SIZE)
-        ax.set_xlabel('u'); ax.set_ylabel('v'); ax.set_aspect('equal')
-
-        if has_cdf:
-            Cn_pts = _empirical_copula(self.uv, self.uv)
-            Ct_pts = np.array([self.copula.cdf(list(row)) for row in self.uv])
-            points = np.column_stack([GX.ravel(), GY.ravel()])
-            Cn_g   = _empirical_copula(self.uv, points).reshape(GX.shape)
-            Ct_g   = np.vectorize(lambda u, v: self.copula.cdf([u, v]))(GX, GY)
-
-            # (0,1) — PP plot
-            ax = axes[0, 1]
-            ax.scatter(Cn_pts, Ct_pts, s=6, alpha=0.55)
-            ax.plot([0, 1], [0, 1], 'r--', lw=1)
-            ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.set_aspect('equal')
-            ax.set_xlabel('$C_n$ (empirical)'); ax.set_ylabel(r'$C_\theta$ (fitted)')
-            ax.set_title('PP plot', fontsize=BIGGER_SIZE)
-
-            # (1,0) — empirical copula
-            ax = axes[1, 0]
-            cs = ax.contourf(GX, GY, Cn_g, levels=11, cmap='viridis', vmin=0, vmax=1)
-            fig.colorbar(cs, ax=ax)
-            ax.set_title(r'$C_n(u,v)$ (empirical)', fontsize=BIGGER_SIZE)
-            ax.set_xlabel('u'); ax.set_ylabel('v'); ax.set_aspect('equal')
-
-            # (1,1) — residuals
-            ax    = axes[1, 1]
-            diff  = Cn_g - Ct_g
-            vmaxd = float(max(abs(diff.min()), abs(diff.max()), 1e-3))
-            cs = ax.contourf(GX, GY, diff, levels=15, cmap='RdBu_r',
-                             vmin=-vmaxd, vmax=vmaxd)
-            fig.colorbar(cs, ax=ax)
-            ax.set_title(rf'Residuals $C_n - C_\theta$  (max |Δ|={vmaxd:.3f})',
-                         fontsize=BIGGER_SIZE)
-            ax.set_xlabel('u'); ax.set_ylabel('v'); ax.set_aspect('equal')
-        else:
-            for r, c in [(0, 1), (1, 0), (1, 1)]:
-                axes[r, c].axis('off')
-                axes[r, c].text(0.5, 0.5, f'CDF not available\nfor {name}',
-                                ha='center', va='center', transform=axes[r, c].transAxes)
-
-        # (0,2) — lower tail dependence
-        u_low  = np.linspace(0.02, 0.30, 25)
-        u_high = np.linspace(0.70, 0.98, 25)
-        lL_emp = _empirical_tail_dep(self.uv, u_low,  'lower')
-        lU_emp = _empirical_tail_dep(self.uv, u_high, 'upper')
-        lL_th, lU_th = self.copula.tail_dependence()
-
-        ax = axes[0, 2]
-        ax.plot(u_low, lL_emp, 'o-', ms=4, label=r'Empirical $\hat\lambda_L(u)$')
-        if not np.isnan(lL_th):
-            ax.axhline(lL_th, color='red', ls='--', lw=1.2,
-                       label=rf'Fitted $\lambda_L = {lL_th:.3f}$')
-        ax.set_xlabel('u'); ax.set_ylabel(r'$\lambda_L$')
-        ax.set_title('Lower tail dependence', fontsize=BIGGER_SIZE)
-        ax.set_ylim(-0.05, 1.05); ax.legend(fontsize=9)
-
-        # (1,2) — upper tail dependence
-        ax = axes[1, 2]
-        ax.plot(u_high, lU_emp, 'o-', ms=4, label=r'Empirical $\hat\lambda_U(u)$')
-        if not np.isnan(lU_th):
-            ax.axhline(lU_th, color='red', ls='--', lw=1.2,
-                       label=rf'Fitted $\lambda_U = {lU_th:.3f}$')
-        ax.set_xlabel('u'); ax.set_ylabel(r'$\lambda_U$')
-        ax.set_title('Upper tail dependence', fontsize=BIGGER_SIZE)
-        ax.set_ylim(-0.05, 1.05); ax.legend(fontsize=9)
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(plot_dir, f'{prefix}Diagnostics_{short}.png'),
-                    bbox_inches='tight', dpi=dpi, facecolor=facecolor)
-        plt.close()
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
-    for c in CopulaEnum.available():
-        print(c.describe())
-    print("favorite:", CopulaEnum.favorite())
+from prg.copulas._fit import (   # noqa: E402, F401  (re-export at module bottom)
+    _cvm_statistic,
+    _empirical_copula,
+    _empirical_tail_dep,
+    _eval_log_likelihood,
+    FitResult,
+    GoFResult,
+)

@@ -1,0 +1,31 @@
+# HMC-IN model — K=2 classes, Gaussian margins (one per class), no copula.
+#
+# Variant: HMC-IN
+#   • Hidden Markov Chain
+#   • Independent observations given the hidden state
+#   • ONE margin per class (the margin f_i depends only on the current class i)
+#   • Prior: row-stochastic transition matrix A (rows sum to 1)
+#
+# This is the classical Gaussian HMM.
+
+[model]
+name      = "HMC-IN Gaussien K=2"
+variant   = "HMC-IN"
+K         = 2
+N_default = 5000
+
+[prior]
+# A[i][j] = P(X_{n+1}=j | X_n=i)
+A = [[0.90, 0.10],
+     [0.10, 0.90]]
+
+# Two margin blocks (one per class; j field is absent/ignored).
+[[margins]]
+i      = 0
+dist   = "norm"
+params = {loc = -1.0, scale = 1.0}
+
+[[margins]]
+i      = 1
+dist   = "norm"
+params = {loc = 1.0, scale = 1.0}

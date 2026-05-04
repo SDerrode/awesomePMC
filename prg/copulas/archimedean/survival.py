@@ -11,7 +11,8 @@ Given a base copula C, its survival copula is:
 Concrete subclasses: SurvivalClayton, SurvivalGH, SurvivalJoe.
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -21,7 +22,7 @@ from prg.copulas._base                   import CopulaVirt
 from prg.copulas.archimedean.clayton     import CopulaClayton
 from prg.copulas.archimedean.gumbel      import CopulaGH
 from prg.copulas.archimedean.joe         import CopulaJoe
-from prg.tools.tools                     import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics                     import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,16 @@ class SurvivalCopula(CopulaVirt):
         v = minmaxEPS(uv[1])
         return self._base.pdf([1.0 - u, 1.0 - v])
 
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised: ĉ(u,v) = c(1−u, 1−v) — delegate to the base copula."""
+        uv = np.asarray(uv, dtype=float)
+        return self._base.pdf_array(1.0 - uv)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised: log ĉ(u,v) = log c(1−u, 1−v) — delegate to the base copula."""
+        uv = np.asarray(uv, dtype=float)
+        return self._base.logpdf_array(1.0 - uv)
+
     def cdf(self, uv):
         """Ĉ(u,v) = u + v − 1 + C(1−u, 1−v)."""
         u = minmaxEPS(uv[0])
@@ -67,11 +78,42 @@ class SurvivalCopula(CopulaVirt):
         result = float(u) + float(v) - 1.0 + self._base.cdf([1.0 - u, 1.0 - v])
         return float(np.clip(result, 0.0, 1.0))
 
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised: Ĉ(u,v) = u + v − 1 + C(1−u, 1−v)."""
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        base_uv = np.column_stack((1.0 - u, 1.0 - v))
+        return np.clip(u + v - 1.0 + self._base.cdf_array(base_uv), 0.0, 1.0)
+
     def conditional_cdf(self, v: float, u: float) -> float:
         """ĥ(v|u) = 1 − h_C(1−v | 1−u)."""
         u = minmaxEPS(u)
         v = minmaxEPS(v)
         return float(np.clip(1.0 - self._base.conditional_cdf(1.0 - v, 1.0 - u), 0.0, 1.0))
+
+    def inv_h(self, w: float, u: float) -> float:
+        """Inverse h-function via the survival relation.
+
+        Solving ĥ(v|u) = w means ``1 − h_C(1−v | 1−u) = w``, i.e.
+        ``h_C(1−v | 1−u) = 1−w``, so::
+
+            v = 1 − inv_h_base(1 − w, 1 − u)
+
+        Inherits the base copula's closed-form fast path when available
+        (Gaussian / Clayton / Frank).
+        """
+        u = minmaxEPS(u)
+        w = minmaxEPS(w)
+        v = 1.0 - self._base.inv_h(1.0 - w, 1.0 - u)
+        return minmaxEPS(v)
+
+    def inv_h_array(self, w: np.ndarray, u: np.ndarray) -> np.ndarray:
+        """Vectorised version: v = 1 − inv_h_base_array(1 − w, 1 − u)."""
+        w = np.clip(np.asarray(w, dtype=float), EPS, ONE_MINUS_EPS)
+        u = np.clip(np.asarray(u, dtype=float), EPS, ONE_MINUS_EPS)
+        return np.clip(1.0 - self._base.inv_h_array(1.0 - w, 1.0 - u),
+                       EPS, ONE_MINUS_EPS)
 
     def tail_dependence(self) -> tuple[float, float]:
         """Swap λ_L and λ_U of the base copula."""

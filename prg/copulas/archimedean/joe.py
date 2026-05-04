@@ -7,7 +7,8 @@ CDF: C(u,v) = 1 − [(1−u)^θ + (1−v)^θ − (1−u)^θ(1−v)^θ]^{1/θ}
 λ_L = 0, λ_U = 2 − 2^{1/θ}
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
@@ -15,7 +16,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import EPS, ONE_MINUS_EPS, minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,50 @@ class CopulaJoe(CopulaVirt):
             )
             return float(EPS)
 
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (Joe has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        ub = 1.0 - u
+        vb = 1.0 - v
+        th = self.theta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            a = ub ** th
+            b = vb ** th
+            W = a + b - a * b
+            result = (
+                th
+                * (ub ** (th - 1.0))
+                * (vb ** (th - 1.0))
+                * (W ** (1.0 / th - 2.0))
+                * (th - 1.0 + W)
+            )
+        return np.where(np.isfinite(result) & (result > 0.0), result, EPS)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF — bypasses ``log(max(pdf, EPS))``.
+
+        With ū = 1 − u, v̄ = 1 − v, a = ū^θ, b = v̄^θ, W = a + b − a·b:
+            log c(u, v) = log θ + (θ − 1)(log ū + log v̄)
+                        + (1/θ − 2) log W
+                        + log(θ − 1 + W)
+        """
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        ub = 1.0 - u
+        vb = 1.0 - v
+        th = self.theta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            a = ub ** th
+            b = vb ** th
+            W = np.maximum(a + b - a * b, EPS)
+            return (np.log(th)
+                    + (th - 1.0) * (np.log(ub) + np.log(vb))
+                    + (1.0 / th - 2.0) * np.log(W)
+                    + np.log(np.maximum(th - 1.0 + W, EPS)))
+
     def cdf(self, uv):
         """C(u,v) = 1 − W^{1/θ}."""
         u = minmaxEPS(uv[0])
@@ -127,6 +172,21 @@ class CopulaJoe(CopulaVirt):
                 exc, self.theta, u, v,
             )
             return float(EPS)
+
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (Joe has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        th = self.theta
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            ub = 1.0 - u
+            vb = 1.0 - v
+            a  = ub ** th
+            b  = vb ** th
+            W  = np.maximum(a + b - a * b, EPS)
+            result = 1.0 - W ** (1.0 / th)
+        return np.clip(np.where(np.isfinite(result), result, EPS), 0.0, 1.0)
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = W^{1/θ-1} · ū^{θ-1} · (1−v̄^θ)."""

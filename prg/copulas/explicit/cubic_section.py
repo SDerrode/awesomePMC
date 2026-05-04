@@ -7,14 +7,15 @@ Analytical majorant (verified, piecewise):
   u_left ∈ (0.5, 1] : M = 1 + 2θ(−3·u² + 6·u − 2)
 """
 if __name__ == '__main__':
-    import sys, pathlib
+    import sys
+    import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import math
 import numpy as np
 
 from prg.copulas._base import CopulaVirt
-from prg.tools.tools   import minmaxEPS
+from prg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 
 class CopulaCubSec(CopulaVirt):
@@ -37,10 +38,44 @@ class CopulaCubSec(CopulaVirt):
         )
         return result
 
+    def _pdf_kernel(self, u1: np.ndarray, u2: np.ndarray) -> np.ndarray:
+        th = self.theta
+        return 1.0 + 2.0 * th * (
+              (1.0 - u1) * (1.0 - u2) * (-8.0*u2*u1 + 2.0*u1 + 2.0*u2 + 1.0)
+            + u1         * (1.0 - u2) * (+4.0*u2*u1 -      u1 - 2.0*u2 - 1.0)
+            + (1.0 - u1) * u2         * (+4.0*u2*u1 - 2.0*u1 -      u2 - 1.0)
+            + u1         * u2         * (-2.0*u2*u1 +      u1 +      u2 + 1.0)
+        )
+
+    def pdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form PDF (CubSec has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u1 = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        u2 = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        return np.maximum(self._pdf_kernel(u1, u2), EPS)
+
+    def logpdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Native log-PDF: log of the cubic-section pdf kernel."""
+        uv = np.asarray(uv, dtype=float)
+        u1 = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        u2 = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        return np.log(np.maximum(self._pdf_kernel(u1, u2), EPS))
+
     def cdf(self, uv):
         u1 = minmaxEPS(uv[0])
         u2 = minmaxEPS(uv[1])
         return u1 * u2 * (1.0 + 2.0*self.theta * (1.0 - u1) * (1.0 - u2) * (1.0 + u1 + u2 - 2.0*u1*u2))
+
+    def cdf_array(self, uv: np.ndarray) -> np.ndarray:
+        """Vectorised closed-form CDF (CubSec has no statsmodels backend)."""
+        uv = np.asarray(uv, dtype=float)
+        u1 = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
+        u2 = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
+        result = u1 * u2 * (
+            1.0 + 2.0 * self.theta * (1.0 - u1) * (1.0 - u2)
+            * (1.0 + u1 + u2 - 2.0 * u1 * u2)
+        )
+        return np.clip(result, 0.0, 1.0)
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = v · [1 + 2θ(1−v)(1+v−3u²−6uv+6u²v)]."""
@@ -74,7 +109,7 @@ if __name__ == '__main__':
     print(f'h(0.7 | 0.3)   = {cop.conditional_cdf(0.7, 0.3):.6f}')
     print(f'majorant(0.2)  = {cop.majorant(0.2):.6f}  [piecewise analytical]')
     print(f'majorant(0.8)  = {cop.majorant(0.8):.6f}')
-    print(f'tail dep : λ_L = λ_U = 0  (τ_max = 33/200 = 0.165)')
+    print('tail dep : λ_L = λ_U = 0  (τ_max = 33/200 = 0.165)')
 
     plot_dir = Path('./data/Plots/Copulas')
     plot_dir.mkdir(parents=True, exist_ok=True)
