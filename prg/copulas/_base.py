@@ -41,7 +41,11 @@ class CopulaEnum(CopulaDataMixin, Enum):
     CLAYTON  = 7,  "Clayton", "Clayton",              "CopulaClayton",  True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.clayton"
     A12      = 8,  "A12",     "Archimedean12",        "CopulaA12",      True,  ["tau_k"], [1.0 / 3.0, 1.0],             "prg.copulas.archimedean.a12"
     A14      = 9,  "A14",     "Archimedean14",        "CopulaA14",      True,  ["tau_k"], [1.0 / 3.0, 1.0],             "prg.copulas.archimedean.a14"
-    FRANK    = 10, "Frank",   "Frank",                "CopulaFrank",    False, ["tau_k"], [EPS_MINUS_ONE, ONE_MINUS_EPS], "prg.copulas.archimedean.frank"
+    FRANK           = 10, "Frank",    "Frank",                    "CopulaFrank",    True,  ["tau_k"], [EPS_MINUS_ONE, ONE_MINUS_EPS],  "prg.copulas.archimedean.frank"
+    JOE             = 11, "Joe",      "Joe",                      "CopulaJoe",      True,  ["tau_k"], [0.0 + EPS, 1.0],              "prg.copulas.archimedean.joe"
+    SURVIVAL_CLAYTON = 12, "SClayton", "Survival Clayton",        "SurvivalClayton", True, ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
+    SURVIVAL_GH      = 13, "SGH",      "Survival Gumbel-Hougaard", "SurvivalGH",    True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
+    SURVIVAL_JOE     = 14, "SJoe",     "Survival Joe",            "SurvivalJoe",    True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
 
     def describe(self):
         return self.name, self.value
