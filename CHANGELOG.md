@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.5] - 2026-05-04
+
+### Changed
+
+- **`CopulaStudent`** (`prg/copulas/elliptical/student.py`) — `df` (degrees of freedom ν) promoted from a hardcoded constant (4) to a free parameter.
+  - `n_params = 2`; `PARAMETERS_SET_NAME = ["tau_k", "df"]` in `CopulaEnum`.
+  - `CopulaStudent(tau_k=τ)` still works — `df` defaults to 4.0 if omitted (backward-compatible).
+  - `df > 2` enforced in `_update_params` (raises `CopulaParameterError` otherwise).
+  - `df` persisted back to `self.params['df']` so `plot_multi_tau`, bootstrap CI, and GoF bootstraps preserve it across round-trips.
+  - **2-parameter MLE** — `CopulaStudent.fit` overrides the base class and jointly optimises (ρ, ν) via L-BFGS-B with bounds `ρ ∈ (−1, 1)`, `ν ∈ (2, ∞)`. `method='tau'` is accepted for API compatibility and warns before falling back.
+  - Numerical guard added to `pdf` (errstate + isfinite/positive check → fallback `EPS`).
+  - Tail dependence λ = 2·t_{ν+1}(−√((ν+1)(1−ρ)/(1+ρ))) now uses the fitted ν; correctly → 0 as ν → ∞ (recovers Gaussian).
+
+---
+
 ## [0.3.4] - 2026-05-04
 
 ### Added
@@ -123,7 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial project scaffold: `pyproject.toml`, `README.md`, `CHANGELOG.md`, `.gitignore`, `prg/__init__.py`
 
-[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.4...HEAD
+[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.5...HEAD
+[0.3.5]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.4...v0.3.5
 [0.3.4]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.3...v0.3.4
 [0.3.3]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.2...v0.3.3
 [0.3.2]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.1...v0.3.2

@@ -38,7 +38,7 @@ class CopulaDataMixin:
 class CopulaEnum(CopulaDataMixin, Enum):
     PRODUCT  = 1,  "Prod",    "Product",              "CopulaProduct",  True,  ["tau_k"], [0.0, 0.0],                    "prg.copulas.explicit.product"
     GAUSSIAN = 2,  "Gauss",   "Gaussian",             "CopulaGaussian", True,  ["tau_k"], [-1.0, 1.0],                   "prg.copulas.elliptical.gaussian"
-    STUDENT  = 3,  "Student", "Student",              "CopulaStudent",  True,  ["tau_k"], [-1.0, 1.0],                   "prg.copulas.elliptical.student"
+    STUDENT  = 3,  "Student", "Student",              "CopulaStudent",  True,  ["tau_k", "df"], [-1.0, 1.0],             "prg.copulas.elliptical.student"
     GH       = 4,  "GH",      "Gumbel-Hougaard",      "CopulaGH",       True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.gumbel"
     FGM      = 5,  "FGM",     "Farlie-Gumbel-Morgenstern", "CopulaFGM", True,  ["tau_k"], [-2.0 / 9.0, 2.0 / 9.0],     "prg.copulas.explicit.fgm"
     CUBSEC   = 6,  "CubSec",  "Cubic Section",        "CopulaCubSec",   True,  ["tau_k"], [0.0, 33.0 / 200.0],          "prg.copulas.explicit.cubic_section"
