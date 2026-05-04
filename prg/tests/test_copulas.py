@@ -88,8 +88,8 @@ def test_student_cdf_raises_not_implemented():
 # ---------------------------------------------------------------------------
 
 def test_available_count():
-    # 10 originals (FRANK now enabled) + JOE + 3 Survival = 14
-    assert len(CopulaEnum.available()) == 14
+    # 10 originals (FRANK now enabled) + JOE + 3 Survival + BB1 = 15
+    assert len(CopulaEnum.available()) == 15
 
 
 def test_cubsec_long_name_english():

@@ -45,7 +45,8 @@ class CopulaEnum(CopulaDataMixin, Enum):
     JOE             = 11, "Joe",      "Joe",                      "CopulaJoe",      True,  ["tau_k"], [0.0 + EPS, 1.0],              "prg.copulas.archimedean.joe"
     SURVIVAL_CLAYTON = 12, "SClayton", "Survival Clayton",        "SurvivalClayton", True, ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
     SURVIVAL_GH      = 13, "SGH",      "Survival Gumbel-Hougaard", "SurvivalGH",    True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
-    SURVIVAL_JOE     = 14, "SJoe",     "Survival Joe",            "SurvivalJoe",    True,  ["tau_k"], [0.0 + EPS, 1.0],             "prg.copulas.archimedean.survival"
+    SURVIVAL_JOE     = 14, "SJoe",     "Survival Joe",            "SurvivalJoe",    True,  ["tau_k"],          [0.0 + EPS, 1.0],  "prg.copulas.archimedean.survival"
+    BB1              = 15, "BB1",      "BB1 (Joe-Clayton)",       "CopulaBB1",      True,  ["tau_k", "delta"], [0.0 + EPS, 1.0],  "prg.copulas.archimedean.bb1"
 
     def describe(self):
         return self.name, self.value
@@ -672,7 +673,7 @@ class CopulaVirt:
         for idx, tau in enumerate(tau_values):
             row, col = divmod(idx, ncols)
             ax = axes[row][col]
-            cop = self.__class__(tau_k=float(tau))
+            cop = self.__class__(**{**self.params, 'tau_k': float(tau)})
             Z = np.vectorize(lambda a, b: cop.pdf([a, b]))(cop._x2, cop._y2)
             vmax = np.nanpercentile(Z, 97)
             tks = np.linspace(0, max(vmax, 1e-10), 9)
