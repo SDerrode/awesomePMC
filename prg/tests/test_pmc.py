@@ -250,6 +250,37 @@ def test_simulate_seed_reproducible():
     np.testing.assert_allclose(Y1, Y2)
 
 
+def test_simulate_tolerates_pi_drift_within_validator_atol():
+    """``simulate`` renormalises ``π`` so float drift never crashes ``rng.choice``.
+
+    Regression test for a GUI-reported crash:
+    ``ValueError: Probabilities do not sum to 1``. The PMCModel validator
+    accepts up to ``atol=1e-6`` but ``np.random.Generator.choice`` is
+    strict to ~``sqrt(eps)≈1.5e-8``. A prior round-tripped through the
+    prior tab's 6-decimal display can drift inside that gap.
+    """
+    mdl = PMCModel(MODELS_DIR / "pmc_gauss_k2.toml")
+    # Inject a sub-validator drift directly into the cached π. This
+    # mirrors what would happen if a fitted prior's row sums drifted
+    # by ~1e-7 (well below the validator's 1e-6 ceiling but well above
+    # rng.choice's tolerance).
+    drifted = mdl.stationary_pi.copy()
+    drifted[0] += 1e-7
+    mdl._pi = drifted
+    assert abs(drifted.sum() - 1.0) > 1e-8, "drift not large enough"
+
+    # Same trick for the transition matrix rows — must also be safe.
+    drifted_A = mdl.transition_A.copy()
+    drifted_A[0, 0] += 1e-7
+    mdl._A = drifted_A
+
+    # No crash, even with the drifted internals.
+    X, Y = simulate(mdl, N=50, seed=0)
+    assert X.shape == (50,)
+    assert Y.shape == (50,)
+    assert np.all((X >= 0) & (X < mdl.K))
+
+
 # ===========================================================================
 # 5. forward/backward — log-likelihood is finite, gamma is row-stochastic
 # ===========================================================================

@@ -108,6 +108,19 @@ def simulate(
     pi  = model.stationary_pi
     A   = model.transition_A
 
+    # Defensive renormalisation. ``np.random.Generator.choice`` rejects any
+    # probability vector whose sum drifts more than ~``sqrt(eps) ≈ 1.5e-8``
+    # from 1, but :class:`PMCModel` accepts inputs up to ``atol=1e-6``
+    # — and per-row drift can fall in that gap, especially when the prior
+    # tab round-trips a fitted prior through 6-decimal display strings.
+    # We rescale once here so the model's invariants stay readable while
+    # the chain sampler always sees clean probabilities.
+    pi_sum = pi.sum()
+    if pi_sum > 0:
+        pi = pi / pi_sum
+    row_sums = A.sum(axis=1, keepdims=True)
+    A = np.divide(A, row_sums, out=np.zeros_like(A), where=row_sums > 0)
+
     # ── 1. Generate latent chain X_0, X_1, ..., X_N ──────────────────────────
     # X_0 is a virtual "warm-up" state; X_1:N are returned.
     states = np.empty(N + 1, dtype=int)
