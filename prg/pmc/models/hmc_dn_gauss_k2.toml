@@ -12,7 +12,7 @@
 name      = "HMC-DN Gaussien K=2"
 variant   = "HMC-DN"
 K         = 2
-N_default = 5000
+N_default = 1000
 
 [prior]
 A = [[0.90, 0.10],

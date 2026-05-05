@@ -1413,7 +1413,7 @@ class PMCMainWindow(QMainWindow):
         for k in range(K):
             mask = X == k
             ax1.scatter(nn[mask], Y[mask], s=4, alpha=0.5, color=colors[k],
-                        label=f"X={k}")
+                        label=rf"$X_n={k}$")
         ax1.set_xlabel(r"$n$")
         ax1.set_ylabel(r"$Y_n$")
         ax1.set_title("Simulated sequence")
@@ -1424,7 +1424,7 @@ class PMCMainWindow(QMainWindow):
             vals = Y[X == k]
             if len(vals):
                 ax2.hist(vals, bins=40, alpha=0.5, color=colors[k],
-                         label=f"X={k}", density=True)
+                         label=rf"$X_n={k}$", density=True)
         ax2.set_xlabel(r"$Y_n$")
         ax2.set_title("Marginal histograms")
         ax2.legend()
@@ -1580,7 +1580,7 @@ class PMCMainWindow(QMainWindow):
                 if not np.any(np.isfinite(series)):
                     continue
                 ax.plot(nn, series, "-",
-                        label=f"({i},{j}) {trace.family_history[-1][i][j]}")
+                        label=rf"$({i},{j})$ {trace.family_history[-1][i][j]}")
                 # ★ markers where family changed
                 fam_series = [trace.family_history[t][i][j] for t in range(T)]
                 for t in range(1, T):

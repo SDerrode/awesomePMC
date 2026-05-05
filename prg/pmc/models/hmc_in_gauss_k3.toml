@@ -7,7 +7,7 @@
 name      = "HMC-IN Gaussien K=3"
 variant   = "HMC-IN"
 K         = 3
-N_default = 5000
+N_default = 1000
 
 [prior]
 # Row-stochastic A: each class is sticky (0.9 self-transition), with

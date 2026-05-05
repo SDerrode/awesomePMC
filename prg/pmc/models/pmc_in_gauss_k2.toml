@@ -10,7 +10,7 @@
 name      = "PMC-IN Gaussien K=2"
 variant   = "PMC-IN"
 K         = 2
-N_default = 5000
+N_default = 1000
 
 [prior]
 # p[i][j] = P(X_n=i, X_{n+1}=j) — symmetric and sum to 1.
