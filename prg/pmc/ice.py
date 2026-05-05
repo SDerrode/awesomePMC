@@ -815,6 +815,207 @@ def _fit_gaussian_margin_weighted(y: np.ndarray, weights: np.ndarray) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Generalized ICE — automatic margin family selection (SP-2016 GICE)
+# ---------------------------------------------------------------------------
+#
+# When a [[margins]] block declares a ``candidates`` list, the M-step fits
+# each candidate by weighted MLE and picks the winner via a configurable
+# decision rule. This is the GICE extension of Derrode & Pieczynski (2016),
+# §3, without the Pearson moment-matching shortcut — we always use a
+# numerical L-BFGS-B fit.
+#
+# Decision rules (SP-2016 §3, ex. 3.1):
+#   * "mle"        — max weighted log-likelihood (PLM equivalent for margins)
+#   * "kolmogorov" — min sup |F_k(y) − F_n(y)| (paper's Example 3.1)
+#   * "aic"        — −AIC = 2 logL − 2k
+#   * "bic"        — −BIC = 2 logL − k log n
+
+MARGIN_SELECTION_RULES = ("mle", "kolmogorov", "aic", "bic")
+DEFAULT_MARGIN_SELECTION_RULE = "mle"
+
+# Reasonable initial guesses for scipy.stats families that don't appear in
+# the candidate's incoming `params`. Used by ``_select_margin_family`` so the
+# user only has to declare the candidate dist names — the M-step picks
+# data-aware starting points by itself.
+_INIT_PARAM_HEURISTICS = {
+    "norm":      lambda mu, sd: {"loc": mu, "scale": max(sd, 1e-3)},
+    "gamma":     lambda mu, sd: {"a": max((mu / sd) ** 2, 0.5),
+                                 "loc": mu - max((mu / sd) ** 2, 0.5) * sd,
+                                 "scale": max(sd, 1e-3)},
+    "invgamma":  lambda mu, sd: {"a": max(2.5, (mu / sd) ** 2 + 2),
+                                 "loc": mu, "scale": max(sd, 1e-3)},
+    "betaprime": lambda mu, sd: {"a": 2.0, "b": 5.0,
+                                 "loc": mu, "scale": max(sd, 1e-3)},
+    "lognorm":   lambda mu, sd: {"s": 0.5, "loc": min(mu - 3 * sd, mu),
+                                 "scale": max(sd, 1e-3)},
+    "expon":     lambda mu, sd: {"loc": mu - sd, "scale": max(sd, 1e-3)},
+    "weibull_min": lambda mu, sd: {"c": 1.5, "loc": mu - sd,
+                                    "scale": max(sd, 1e-3)},
+    "beta":      lambda mu, sd: {"a": 2.0, "b": 5.0,
+                                 "loc": mu - sd, "scale": max(sd, 1e-3)},
+}
+
+
+def _data_aware_init_params(dist_name: str, y: np.ndarray, w: np.ndarray) -> dict:
+    """Return an initial parameter dict for ``dist_name`` from weighted moments.
+
+    Used as the L-BFGS-B starting point when the user gave only a candidate
+    name without explicit ``init_params``. Falls back to scipy's first-pass
+    MLE (``dist.fit(y)``) for families not in the heuristics table.
+    """
+    mu = float(np.dot(w, y))
+    sd = float(np.sqrt(max(np.dot(w, (y - mu) ** 2), 1e-9)))
+    if dist_name in _INIT_PARAM_HEURISTICS:
+        return _INIT_PARAM_HEURISTICS[dist_name](mu, sd)
+    # Generic fallback: scipy's unweighted fit for a starting point.
+    import scipy.stats as _ss
+    try:
+        dist_cls = getattr(_ss, dist_name)
+        fit_args = dist_cls.fit(y)
+        # scipy fit() returns shape params... + (loc, scale)
+        names = (list(getattr(dist_cls, "shapes", "") or "").split(",")
+                 if dist_cls.shapes else [])
+        names = [n.strip() for n in names if n.strip()]
+        names += ["loc", "scale"]
+        return {n: float(v) for n, v in zip(names, fit_args)}
+    except Exception:
+        return {"loc": mu, "scale": max(sd, 1e-3)}
+
+
+def _weighted_log_likelihood_margin(
+    dist_name: str, params: dict, y: np.ndarray, w: np.ndarray,
+) -> float:
+    """Weighted log-likelihood of a univariate scipy.stats family on ``y``."""
+    import scipy.stats as _ss
+    try:
+        dist_cls = getattr(_ss, dist_name)
+        log_pdfs = dist_cls.logpdf(y, **params)
+        log_pdfs = np.where(np.isfinite(log_pdfs), log_pdfs, -1e8)
+        return float(np.dot(w, log_pdfs))
+    except Exception:
+        return -np.inf
+
+
+def _kolmogorov_distance(
+    dist_name: str, params: dict, y: np.ndarray, w: np.ndarray,
+) -> float:
+    """Weighted Kolmogorov–Smirnov distance to the empirical CDF.
+
+    SP-2016 Example 3.1: ``D₁(y) = sup_y |F_k(y) − F_n(y)|`` evaluated at
+    the data points ``y_n``. Using the *weighted* empirical CDF
+    ``F_n(y) = Σ_{n: y_n ≤ y} w_n / Σ_n w_n`` makes the distance
+    consistent with the ξ-weighted M-step.
+    """
+    import scipy.stats as _ss
+    try:
+        dist_cls = getattr(_ss, dist_name)
+        cdf_th = dist_cls.cdf(y, **params)
+    except Exception:
+        return np.inf
+    if not np.all(np.isfinite(cdf_th)):
+        return np.inf
+    # Weighted empirical CDF (right-continuous step function evaluated at y).
+    w_norm = w / (w.sum() + MIN_POSITIVE)
+    order  = np.argsort(y)
+    cdf_emp_sorted = np.cumsum(w_norm[order])
+    # Map each y[n] back to its CDF value (use the *right* limit of the step).
+    cdf_emp = np.empty_like(cdf_emp_sorted)
+    cdf_emp[order] = cdf_emp_sorted
+    return float(np.max(np.abs(cdf_th - cdf_emp)))
+
+
+def _select_margin_family(
+    blk:    dict,
+    y:      np.ndarray,
+    weights: np.ndarray,
+    rule:   str = DEFAULT_MARGIN_SELECTION_RULE,
+) -> dict:
+    """GICE M-step for one [[margins]] block: family + parameter selection.
+
+    Reads ``blk["candidates"]`` (defaults to ``[blk["dist"]]`` for back-compat)
+    and:
+
+    1. For each candidate, runs a weighted MLE (numerical L-BFGS-B) starting
+       from a data-aware moment-based heuristic (or from
+       ``blk["init_params"]`` if the user supplied one).
+    2. Applies the decision rule to pick the winner family.
+    3. Returns ``{"dist": ..., "params": ...}`` ready for ``blk.update(...)``.
+
+    Falls back to :func:`_fit_margin_weighted` (single-family numerical MLE)
+    if no ``candidates`` field is present, preserving v0.5 behaviour.
+    """
+    cands_raw = blk.get("candidates", None)
+    if not cands_raw:
+        # No candidate set → keep v0.5 behaviour.
+        return _fit_margin_weighted(blk, y, weights)
+
+    if rule not in MARGIN_SELECTION_RULES:
+        raise ValueError(
+            f"Unknown margin_selection_rule {rule!r}. "
+            f"Valid: {sorted(MARGIN_SELECTION_RULES)}"
+        )
+
+    w_norm = weights / (weights.sum() + MIN_POSITIVE)
+    n      = float(np.sum(weights > 0)) or float(len(y))   # effective n
+
+    fits: list[dict] = []
+    for cand in cands_raw:
+        # Use the user-specified init for the *current* dist if available;
+        # otherwise derive a data-aware init from the weighted moments.
+        if cand == blk.get("dist") and blk.get("params"):
+            init = dict(blk["params"])
+        else:
+            init = _data_aware_init_params(cand, y, w_norm)
+        result = _fit_margin_weighted_numerical(cand, init, y, w_norm)
+        if not result.get("params"):
+            logger.debug("GICE: candidate %r failed weighted MLE; skipping.", cand)
+            continue
+        params  = result["params"]
+        log_lik = _weighted_log_likelihood_margin(cand, params, y, w_norm)
+        n_params = len(params)
+        fits.append({
+            "dist":     cand,
+            "params":   params,
+            "log_lik":  log_lik,
+            "n_params": n_params,
+        })
+
+    if not fits:
+        logger.warning(
+            "GICE: every candidate failed for block (i=%s, j=%s); "
+            "keeping previous family.",
+            blk.get("i"), blk.get("j"),
+        )
+        return {}
+
+    # Higher = better (for any rule). Convention is consistent with the
+    # copula-selection dispatcher.
+    if rule == "mle":
+        scores = [f["log_lik"] for f in fits]
+    elif rule == "aic":
+        scores = [2.0 * f["log_lik"] - 2.0 * f["n_params"] for f in fits]
+    elif rule == "bic":
+        scores = [2.0 * f["log_lik"] - f["n_params"] * np.log(max(n, 1.0))
+                  for f in fits]
+    elif rule == "kolmogorov":
+        scores = [-_kolmogorov_distance(f["dist"], f["params"], y, w_norm)
+                  for f in fits]
+    else:                                                       # pragma: no cover
+        raise AssertionError(f"unreachable rule {rule!r}")
+
+    best_idx = int(np.argmax(scores))
+    best     = fits[best_idx]
+    logger.debug(
+        "GICE margin (i=%s,j=%s) rule=%s: candidates=%s scores=%s → %s",
+        blk.get("i"), blk.get("j"), rule,
+        [f["dist"] for f in fits],
+        [round(s, 3) for s in scores],
+        best["dist"],
+    )
+    return {"dist": best["dist"], "params": best["params"]}
+
+
+# ---------------------------------------------------------------------------
 # ICE configuration parser
 # ---------------------------------------------------------------------------
 
@@ -846,17 +1047,29 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
                                                   (``"mle"`` / ``"aic"`` /
                                                   ``"bic"`` / ``"huard"`` /
                                                   ``"cvm"``).
+    * ``margin_selection_rule``(str, default "mle") — when a margin block
+                                                  declares a ``candidates``
+                                                  list (GICE — Derrode &
+                                                  Pieczynski, SP 2016 §3),
+                                                  the M-step picks the
+                                                  winner family by this
+                                                  rule. One of
+                                                  :data:`MARGIN_SELECTION_RULES`
+                                                  (``"mle"`` /
+                                                  ``"kolmogorov"`` /
+                                                  ``"aic"`` / ``"bic"``).
     """
     defaults: dict = {
-        "fit_margins":         False,
-        "max_iter":            50,
-        "tol":                 1e-4,
-        "candidates":          _DEFAULT_CANDIDATES,
-        "patience":            3,
-        "n_starts":            1,
-        "multistart_seed":     0,
-        "multistart_jitter":   0.10,
-        "selection_criterion": DEFAULT_SELECTION_CRITERION,
+        "fit_margins":            False,
+        "max_iter":               50,
+        "tol":                    1e-4,
+        "candidates":             _DEFAULT_CANDIDATES,
+        "patience":               3,
+        "n_starts":               1,
+        "multistart_seed":        0,
+        "multistart_jitter":      0.10,
+        "selection_criterion":    DEFAULT_SELECTION_CRITERION,
+        "margin_selection_rule":  DEFAULT_MARGIN_SELECTION_RULE,
     }
     toml_ice = model.ice_config()
     cfg = {**defaults, **toml_ice}
@@ -1068,6 +1281,14 @@ def _ice_single_run(
             f"Unknown selection_criterion {selection_criterion!r}. "
             f"Valid: {sorted(_SCORE_FN)}"
         )
+    margin_selection_rule = str(cfg.get(
+        "margin_selection_rule", DEFAULT_MARGIN_SELECTION_RULE,
+    ))
+    if margin_selection_rule not in MARGIN_SELECTION_RULES:
+        raise ValueError(
+            f"Unknown margin_selection_rule {margin_selection_rule!r}. "
+            f"Valid: {sorted(MARGIN_SELECTION_RULES)}"
+        )
     log_prefix = f"ICE[{run_tag}]" if run_tag else "ICE"
 
     var = model.variant
@@ -1203,7 +1424,12 @@ def _ice_single_run(
             for blk in margins_raw:
                 i_idx = int(blk["i"])
                 w_n   = gamma[:, i_idx]            # P(X_n=i | Y)
-                blk.update(_fit_margin_weighted(blk, Y, w_n))
+                # GICE: if the block declares a ``candidates`` list, also
+                # select the family at this M-step (SP-2016 §3); otherwise
+                # the helper falls through to the v0.5 single-family fit.
+                blk.update(_select_margin_family(
+                    blk, Y, w_n, rule=margin_selection_rule,
+                ))
 
         # 3. Update copulas (only for variants that use copulas)
         if var.uses_copula:

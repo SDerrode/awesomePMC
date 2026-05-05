@@ -68,8 +68,18 @@ class _MarginDialog(QDialog):
         )
         self._params_edit.setPlaceholderText("loc=0, scale=1")
 
+        # GICE candidate set (Derrode-Pieczynski SP 2016 §3) — comma-
+        # separated scipy.stats family names. When non-empty, ICE will
+        # auto-select the family from this list at every M-step.
+        cands = blk.get("candidates", [])
+        self._candidates_edit = QLineEdit(", ".join(cands))
+        self._candidates_edit.setPlaceholderText(
+            "norm, gamma, invgamma, betaprime  (leave blank to disable GICE)"
+        )
+
         lay.addRow("Distribution:",        self._dist)
         lay.addRow("Parameters (k=v, …):", self._params_edit)
+        lay.addRow("GICE candidates:",     self._candidates_edit)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -140,7 +150,15 @@ class _MarginDialog(QDialog):
         params = getattr(self, "_parsed_params", None)
         if params is None:
             params, _ = self._parse_params()
-        return {"dist": self._dist.text().strip(), "params": params}
+        out: dict = {"dist": self._dist.text().strip(), "params": params}
+        # GICE candidate list — only present in the output when the user
+        # actually filled it in. Empty means "no GICE for this margin".
+        cand_text = self._candidates_edit.text().strip()
+        if cand_text:
+            cands = [c.strip() for c in cand_text.split(",") if c.strip()]
+            if cands:
+                out["candidates"] = cands
+        return out
 
 
 class _CopulaDialog(QDialog):

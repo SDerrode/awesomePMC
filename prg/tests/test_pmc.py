@@ -75,12 +75,21 @@ def test_model_prior_consistent(toml_path: Path):
 
 @pytest.mark.parametrize("toml_path", ALL_MODELS, ids=lambda p: p.name)
 def test_model_weight_positive(toml_path: Path):
-    """weight() returns positive finite values for arbitrary observations."""
+    """``weight()`` returns positive finite values for in-support observations.
+
+    Earlier versions of this test drew ``(y0, y1)`` from ``N(0, 1)`` for every
+    model, but that breaks for fixtures whose marginal distributions live far
+    from zero (e.g. ``betaprime(loc=2)`` in the SP-2016 GICE fixture, whose
+    PDF/CDF return 0 / log(0) for any y < 2). Instead, we sample
+    representative observations from the model itself via ``simulate``.
+    """
+    from prg.pmc.simulate import simulate
     mdl = PMCModel(toml_path)
+    _X, Y = simulate(mdl, N=50, seed=0)
     rng = np.random.default_rng(0)
     for _ in range(20):
         i, j = rng.integers(0, mdl.K, size=2)
-        y0, y1 = rng.normal(size=2)
+        y0, y1 = rng.choice(Y, size=2, replace=False)
         w = mdl.weight(int(i), int(j), float(y0), float(y1))
         assert w >= 0
         assert math.isfinite(w)

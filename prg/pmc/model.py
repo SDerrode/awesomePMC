@@ -529,11 +529,22 @@ class PMCModel:
                     f"[[margins]] block #{n_blk} (i={i}) missing the 'dist' key."
                 )
             state_margins[i] = _MarginDist(block["dist"], block.get("params", {}))
-            raw_blocks.append({
+            kept = {
                 "i": i,
                 "dist": block["dist"],
                 "params": dict(block.get("params", {})),
-            })
+            }
+            # GICE — preserve the optional ``candidates`` list so the M-step
+            # can select among them at each iteration (SP-2016 §3).
+            if "candidates" in block:
+                cands = list(block["candidates"])
+                if not cands:
+                    raise ValueError(
+                        f"[[margins]] block #{n_blk} (i={i}): 'candidates' "
+                        f"list cannot be empty."
+                    )
+                kept["candidates"] = cands
+            raw_blocks.append(kept)
         missing = sorted(set(range(K)) - seen)
         if missing:
             raise ValueError(f"K-format [[margins]]: missing entries for i={missing}.")

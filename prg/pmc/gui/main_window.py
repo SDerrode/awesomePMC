@@ -115,11 +115,13 @@ _ICE_VIEW_PP           = "ICE — PP/QQ plot of pseudo-obs" # H
 _ICE_VIEW_TAIL         = "ICE — Tail dependence (λL, λU)" # I
 _ICE_VIEW_GAMMA        = "ICE — γ before vs after"        # J
 _ICE_VIEW_PLAYBACK     = "ICE — Animated playback"        # K
+_ICE_VIEW_MARGIN_FAMILY = "ICE — Margin family ribbon"    # L (GICE / SP-2016)
 
 # Display order in the combobox (None entries denote separators visually).
 _ALL_VIEWS = [
     _VIEW_SIMULATION, _VIEW_CLASSIFICATION, _VIEW_GOF_HEATMAP,
     _ICE_VIEW_DASHBOARD, _ICE_VIEW_LOGLIK, _ICE_VIEW_TAU, _ICE_VIEW_FAMILY,
+    _ICE_VIEW_MARGIN_FAMILY,
     _ICE_VIEW_PSEUDOS, _ICE_VIEW_MULTISTART, _ICE_VIEW_PRIOR,
     _ICE_VIEW_MARGINS, _ICE_VIEW_PP, _ICE_VIEW_TAIL, _ICE_VIEW_GAMMA,
     _ICE_VIEW_PLAYBACK,
@@ -131,7 +133,7 @@ _ICE_VIEWS = {
     _ICE_VIEW_LOGLIK, _ICE_VIEW_TAU, _ICE_VIEW_FAMILY, _ICE_VIEW_PSEUDOS,
     _ICE_VIEW_MULTISTART, _ICE_VIEW_PRIOR, _ICE_VIEW_MARGINS,
     _ICE_VIEW_DASHBOARD, _ICE_VIEW_PP, _ICE_VIEW_TAIL, _ICE_VIEW_GAMMA,
-    _ICE_VIEW_PLAYBACK,
+    _ICE_VIEW_PLAYBACK, _ICE_VIEW_MARGIN_FAMILY,
 }
 
 # Views that can scrub through iterations via a slider. The "Animated playback"
@@ -1599,6 +1601,68 @@ class PMCMainWindow(QMainWindow):
         self._draw_family_ribbon(ax, trace)
         self._canvas.draw()
 
+    # ----- view L: GICE margin family ribbon -------------------------------
+
+    def _plot_ice_margin_family(self, trace: IceTrace):
+        """Per-state ribbon of the margin family selected at each ICE iter.
+
+        This is the SP-2016 GICE counterpart of view~B (which tracks
+        copula families). One row per state ``i``; each row is a horizontal
+        ribbon coloured by the ``dist`` field of ``trace.margin_history[t][block_idx]``
+        across iterations. Useful when the user enables ``candidates`` per
+        margin block to visualise family identification convergence.
+        """
+        fig = self._begin_figure()
+        ax  = fig.add_subplot(1, 1, 1)
+
+        history = trace.margin_history
+        if not history:
+            ax.text(0.5, 0.5, "no margin history",
+                    transform=ax.transAxes, ha="center", va="center")
+            ax.set_axis_off()
+            self._canvas.draw()
+            return
+
+        T  = len(history)
+        n_blocks = len(history[0])
+        # Collect every distinct family that appeared across the trace.
+        seen = sorted({
+            history[t][k]["dist"] for t in range(T) for k in range(n_blocks)
+        })
+        cmap = plt.get_cmap("tab10")
+        fam_color = {f: cmap(k % 10) for k, f in enumerate(seen)}
+
+        # Try to label rows with the state index ``i``; fall back to
+        # block index when blocks are not ``i``-keyed.
+        labels = []
+        for k in range(n_blocks):
+            blk0 = history[0][k]
+            if "i" in blk0:
+                labels.append(f"i={blk0['i']}")
+            else:
+                labels.append(f"#{k}")
+
+        for r in range(n_blocks):
+            for t in range(T):
+                fam = history[t][r]["dist"]
+                ax.broken_barh([(t - 0.5, 1.0)], (r - 0.4, 0.8),
+                               facecolors=fam_color[fam],
+                               edgecolor="white", linewidth=0.3)
+        ax.set_yticks(range(n_blocks))
+        ax.set_yticklabels(labels)
+        ax.set_xlabel("ICE iteration")
+        ax.set_xlim(-0.5, T - 0.5)
+        ax.set_ylim(-0.5, n_blocks - 0.5)
+        ax.set_title("Margin family ribbon (GICE — SP-2016 §3)")
+        handles = [
+            plt.matplotlib.patches.Patch(color=fam_color[f], label=f)
+            for f in seen
+        ]
+        if handles:
+            ax.legend(handles=handles, fontsize=7, loc="upper right",
+                      ncol=min(len(handles), 4))
+        self._canvas.draw()
+
     # ----- view C: pseudo-observations + fitted PDF contours ---------------
 
     def _plot_ice_pseudos(self, trace: IceTrace, model: PMCModel, Y: np.ndarray):
@@ -1919,6 +1983,8 @@ class PMCMainWindow(QMainWindow):
         _ICE_VIEW_LOGLIK:     lambda self: self._plot_loglik(self._ice_trace.log_liks),
         _ICE_VIEW_TAU:        lambda self: self._plot_ice_tau(self._ice_trace),
         _ICE_VIEW_FAMILY:     lambda self: self._plot_ice_family(self._ice_trace),
+        _ICE_VIEW_MARGIN_FAMILY:
+            lambda self: self._plot_ice_margin_family(self._ice_trace),
         _ICE_VIEW_PSEUDOS:    lambda self: self._plot_ice_pseudos(
             self._ice_trace, self._model, self._ice_Y,
         ),

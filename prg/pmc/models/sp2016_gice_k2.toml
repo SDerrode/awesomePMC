@@ -1,0 +1,77 @@
+# SP-2016 §5.1 fixture — HMM-DN with non-Gaussian margins, GICE-ready.
+#
+# Reference: Derrode S., Pieczynski W., "Unsupervised classification using
+# hidden Markov chain with unknown noise copulas and margins", Signal
+# Processing 128 (2016) 1-15. Section 5.1 setup.
+#
+# Variant: PMC (HMM-DN is a particular case of SR-PMC; we use the latter
+# variant since the package's M-step is identical for both).
+#
+# Margins (Pearson Type-III ↔ Gamma, Type-VI ↔ Beta-Prime):
+#   • f_0 ~ Gamma(a=2, loc=0, scale=1)        — skewness ≈ 1.41 (Type-III equivalent)
+#   • f_1 ~ BetaPrime(a=2, b=5, loc=2, scale=1)  — heavy right-tail (Type-VI eq.)
+#
+# Each margin block declares a candidates list that the GICE M-step
+# selects from (when fit_margins=true and a candidates list is present).
+#
+# Copulas (SP-2016 §5.1, page 13-14):
+#   • c_{00} = Gumbel-Hougaard, τ = 0.10
+#   • c_{01} = c_{10} = Gauss,  τ = 0.30
+#   • c_{11} = Clayton,         τ = 0.70
+#
+# Joint prior: p(1,1)=p(2,2)=0.45, p(1,2)=p(2,1)=0.05 — same as CSDA-2013.
+
+[model]
+name      = "SP-2016 GICE Pearson-mix K=2"
+variant   = "PMC"
+K         = 2
+N_default = 3000
+
+[prior]
+p = [[0.45, 0.05],
+     [0.05, 0.45]]
+
+# ── Margins (K-format, with GICE candidate sets) ─────────────────────────────
+[[margins]]
+i          = 0
+dist       = "gamma"
+params     = {a = 2.0, loc = 0.0, scale = 1.0}
+candidates = ["norm", "gamma", "invgamma", "betaprime"]
+
+[[margins]]
+i          = 1
+dist       = "betaprime"
+params     = {a = 2.0, b = 5.0, loc = 2.0, scale = 1.0}
+candidates = ["norm", "gamma", "invgamma", "betaprime"]
+
+# ── Copulas ──────────────────────────────────────────────────────────────────
+[[copulas]]
+i    = 0
+j    = 0
+name = "GH"
+tau  = 0.10
+
+[[copulas]]
+i    = 0
+j    = 1
+name = "Gauss"
+tau  = 0.30
+
+[[copulas]]
+i    = 1
+j    = 0
+name = "Gauss"
+tau  = 0.30
+
+[[copulas]]
+i    = 1
+j    = 1
+name = "Clayton"
+tau  = 0.70
+
+[ice]
+fit_margins           = true
+margin_selection_rule = "kolmogorov"   # SP-2016 Example 3.1
+selection_criterion   = "huard"         # CSDA-2013 + SP-2016 default
+max_iter              = 50
+candidates            = ["Gauss", "GH", "Clayton", "Frank"]
