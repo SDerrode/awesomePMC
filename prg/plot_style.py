@@ -59,5 +59,48 @@ def apply_style(
     })
 
 
+def apply_gui_compact_style() -> None:
+    """Compact, math-friendly rcParams for the PyQt6 GUI canvas.
+
+    Targeted at multi-panel figures (ICE dashboard, K×K small multiples,
+    pseudo-observation grids) where the per-axes labels would clobber
+    each other under the default sizes. Run *after* :func:`apply_style`
+    so the GUI overrides win.
+
+    Differences vs. :func:`apply_style`:
+
+    * Math labels rendered with ``mathtext.fontset = "cm"`` so ``$\\tau$``,
+      ``$Y_n$``, ``$\\hat{X}$`` etc. look LaTeX-like — no LaTeX install
+      required (matplotlib ships the Computer-Modern fonts).
+    * Smaller per-axes titles (10 pt), labels (9 pt), and ticks (8 pt).
+    * Slightly tighter ``axes.titlepad`` / ``axes.labelpad`` for a
+      denser layout.
+    * Constrained-layout enabled by default so suptitles never collide
+      with subplot titles.
+    """
+    _mpl.rcParams.update({
+        # LaTeX-flavoured math via matplotlib's bundled Computer Modern.
+        "mathtext.fontset":          "cm",
+        # Compact typography for multi-panel figures.
+        "axes.titlesize":            10,
+        "axes.titlepad":             4.0,
+        "axes.labelsize":            9,
+        "axes.labelpad":             2.0,
+        "xtick.labelsize":           8,
+        "ytick.labelsize":           8,
+        "legend.fontsize":           8,
+        "legend.title_fontsize":     8,
+        "figure.titlesize":          11,
+        "figure.titleweight":        "regular",
+        # Constrained layout handles suptitles better than tight_layout
+        # for grids with many subplots (e.g. the ICE dashboard).
+        "figure.constrained_layout.use":     True,
+        "figure.constrained_layout.h_pad":   0.04,
+        "figure.constrained_layout.w_pad":   0.04,
+        "figure.constrained_layout.hspace":  0.04,
+        "figure.constrained_layout.wspace":  0.04,
+    })
+
+
 # Apply on import.
 apply_style()

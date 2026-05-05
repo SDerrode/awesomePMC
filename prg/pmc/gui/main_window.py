@@ -82,6 +82,12 @@ from PyQt6.QtWidgets import (                                # noqa: E402
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg  # noqa: E402
 from matplotlib.figure import Figure                              # noqa: E402
 
+from prg.plot_style      import apply_gui_compact_style           # noqa: E402
+
+# Activate compact, math-friendly rcParams (smaller titles/ticks, LaTeX
+# mathtext, constrained_layout) for every Figure created in this module.
+apply_gui_compact_style()
+
 from prg                 import __version__ as _PKG_VERSION    # noqa: E402
 from prg.copulas._fit    import _empirical_copula              # noqa: E402
 from prg.numerics        import EPS, ONE_MINUS_EPS             # noqa: E402
@@ -157,10 +163,16 @@ _RECENT_MAX = 5
 
 class _Canvas(FigureCanvasQTAgg):
     def __init__(self, parent=None):
-        self.fig = Figure(figsize=(7, 5), tight_layout=True)
+        # Bumped from (7, 5) so multi-panel figures (ICE dashboard,
+        # K×K small multiples) have room to breathe. constrained_layout
+        # is enabled at the rcParam level by ``apply_gui_compact_style``.
+        self.fig = Figure(figsize=(9.5, 6.5))
         super().__init__(self.fig)
         self.setParent(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Floor on the canvas size so users can't shrink the splitter to
+        # the point where titles overlap.
+        self.setMinimumSize(640, 460)
 
     def clear(self):
         self.fig.clear()
@@ -703,8 +715,8 @@ class PMCMainWindow(QMainWindow):
                              ha="center", va="center", fontsize=8,
                              color="white" if P[i, j] > 0.5 * P.max() else "black")
             fig.colorbar(im, ax=ax4, fraction=0.04, pad=0.04)
-            ax4.set_title(f"Joint prior p (iter {t})")
-        fig.suptitle(f"ICE iteration {t} / {trace.n_iters - 1}", y=0.995)
+            ax4.set_title(rf"Joint prior $p_{{ij}}$  (iter {t})")
+        fig.suptitle(f"ICE iteration {t} / {trace.n_iters - 1}")
         self._canvas.draw()
         # Playback bypasses the central _finalize_plot in _render_view.
         self._finalize_plot()
@@ -1378,8 +1390,10 @@ class PMCMainWindow(QMainWindow):
             mask = X == k
             ax1.scatter(nn[mask], Y[mask], s=4, alpha=0.5, color=colors[k],
                         label=f"X={k}")
-        ax1.set_xlabel("n"); ax1.set_ylabel("Y"); ax1.set_title("Simulated sequence")
-        ax1.legend(markerscale=3, fontsize=8)
+        ax1.set_xlabel(r"$n$")
+        ax1.set_ylabel(r"$Y_n$")
+        ax1.set_title("Simulated sequence")
+        ax1.legend(markerscale=3)
 
         # Histogram per class
         for k in range(K):
@@ -1387,17 +1401,19 @@ class PMCMainWindow(QMainWindow):
             if len(vals):
                 ax2.hist(vals, bins=40, alpha=0.5, color=colors[k],
                          label=f"X={k}", density=True)
-        ax2.set_xlabel("Y"); ax2.set_title("Marginal histograms")
-        ax2.legend(fontsize=8)
+        ax2.set_xlabel(r"$Y_n$")
+        ax2.set_title("Marginal histograms")
+        ax2.legend()
 
         # Successive pairs (Y_n, Y_{n+1})
         for k in range(K):
             mask = (X[:-1] == k)
             ax3.scatter(Y[:-1][mask], Y[1:][mask], s=4, alpha=0.4,
-                        color=colors[k], label=f"X_n={k}")
-        ax3.set_xlabel("Y_n"); ax3.set_ylabel("Y_{n+1}")
-        ax3.set_title("Successive-pair scatter (Y_n, Y_{n+1})")
-        ax3.legend(markerscale=3, fontsize=8)
+                        color=colors[k], label=rf"$X_n={k}$")
+        ax3.set_xlabel(r"$Y_n$")
+        ax3.set_ylabel(r"$Y_{n+1}$")
+        ax3.set_title(r"Successive-pair scatter $(Y_n,\, Y_{n+1})$")
+        ax3.legend(markerscale=3)
 
         self._canvas.draw()
 
@@ -1415,34 +1431,38 @@ class PMCMainWindow(QMainWindow):
         for k in range(K):
             mask = X_hat == k
             ax1.scatter(nn[mask], Y[mask], s=4, alpha=0.5, color=colors[k],
-                        label=f"X̂={k}")
-        ax1.set_xlabel("n"); ax1.set_ylabel("Y")
+                        label=rf"$\hat{{X}}={k}$")
+        ax1.set_xlabel(r"$n$")
+        ax1.set_ylabel(r"$Y_n$")
         ax1.set_title("MPM classification")
-        ax1.legend(markerscale=3, fontsize=8)
+        ax1.legend(markerscale=3)
 
         # Posterior marginals γ
         for k in range(K):
             ax2.plot(nn, gamma[:, k], lw=0.7, alpha=0.8, color=colors[k],
-                     label=f"γ(X={k}|Y)")
-        ax2.set_xlabel("n"); ax2.set_ylabel("P(X_n=k | Y)")
+                     label=rf"$\gamma(X{{=}}{k}\mid Y)$")
+        ax2.set_xlabel(r"$n$")
+        ax2.set_ylabel(r"$P(X_n = k \mid Y)$")
         ax2.set_title("Posterior marginals")
         ax2.set_ylim(-0.05, 1.05)
-        ax2.legend(fontsize=8)
+        ax2.legend()
 
         # Errors vs reference (if available)
         if X_ref is not None:
             errors = (X_hat != X_ref).astype(float)
             ax3.fill_between(nn, errors, alpha=0.3, color="red", label="errors")
             ax3.plot(nn, errors, lw=0.5, color="red")
-            ax3.set_xlabel("n"); ax3.set_ylabel("error")
+            ax3.set_xlabel(r"$n$")
+            ax3.set_ylabel("error")
             ax3.set_title(f"Classification errors  (rate={errors.mean():.4f})")
             ax3.set_ylim(-0.1, 1.1)
-            ax3.legend(fontsize=8)
+            ax3.legend()
         else:
             # Show histogram of max posterior
             max_gamma = gamma.max(axis=1)
             ax3.hist(max_gamma, bins=50, color="steelblue", edgecolor="white")
-            ax3.set_xlabel("max γ_n"); ax3.set_ylabel("count")
+            ax3.set_xlabel(r"$\max_{k}\,\gamma_n(k)$")
+            ax3.set_ylabel("count")
             ax3.set_title("Confidence histogram (max posterior)")
 
         self._canvas.draw()
@@ -1451,7 +1471,8 @@ class PMCMainWindow(QMainWindow):
         fig = self._begin_figure()
         ax = fig.add_subplot(1, 1, 1)
         ax.plot(lls, "o-", color="steelblue", lw=2, markersize=6)
-        ax.set_xlabel("ICE iteration"); ax.set_ylabel("Log-likelihood")
+        ax.set_xlabel("ICE iteration")
+        ax.set_ylabel(r"Log-likelihood $\log p(Y\mid\theta)$")
         ax.set_title("ICE convergence")
         ax.grid(True, alpha=0.3)
         self._canvas.draw()
@@ -1502,12 +1523,12 @@ class PMCMainWindow(QMainWindow):
 
         ax.set_xticks(range(K))
         ax.set_yticks(range(K))
-        ax.set_xticklabels([f"j={k}" for k in range(K)])
-        ax.set_yticklabels([f"i={k}" for k in range(K)])
-        ax.set_title("Goodness-of-fit p-values  (CvM, parametric bootstrap)")
+        ax.set_xticklabels([rf"$j={k}$" for k in range(K)])
+        ax.set_yticklabels([rf"$i={k}$" for k in range(K)])
+        ax.set_title("Goodness-of-fit $p$-values  (CvM, parametric bootstrap)")
 
         cbar = fig.colorbar(im, ax=ax, fraction=0.04, pad=0.04)
-        cbar.set_label("p-value")
+        cbar.set_label(r"$p$-value")
         # Mark the 0.05 reject/accept threshold on the colour bar.
         cbar.ax.axhline(0.05, color="black", linewidth=1.0)
 
@@ -1545,8 +1566,8 @@ class PMCMainWindow(QMainWindow):
         if vline is not None:
             ax.axvline(vline, color="red", linestyle="--", alpha=0.5)
         ax.set_xlabel("ICE iteration")
-        ax.set_ylabel("τ_K")
-        ax.set_title("τ trajectories per pair  (★ = family change)")
+        ax.set_ylabel(r"Kendall $\tau_K$")
+        ax.set_title(r"$\tau_K$ trajectories per pair  (★ = family change)")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=7, ncol=2)
 
@@ -1596,11 +1617,11 @@ class PMCMainWindow(QMainWindow):
                                facecolors=fam_color.get(fam, "lightgrey"),
                                edgecolor="white", linewidth=0.3)
         ax.set_yticks(range(len(row_idx)))
-        ax.set_yticklabels([f"({i},{j})" for i, j in row_idx])
+        ax.set_yticklabels([rf"$({i},{j})$" for i, j in row_idx])
         ax.set_xlabel("ICE iteration")
         ax.set_xlim(-0.5, T - 0.5)
         ax.set_ylim(-0.5, len(row_idx) - 0.5)
-        ax.set_title("Family selection ribbon")
+        ax.set_title("Copula family selection ribbon")
         # Build a legend from the families actually present.
         handles = [
             plt.matplotlib.patches.Patch(color=fam_color[f], label=f)
@@ -1666,7 +1687,7 @@ class PMCMainWindow(QMainWindow):
         for k in range(n_blocks):
             blk0 = history[0][k]
             if "i" in blk0:
-                labels.append(f"i={blk0['i']}")
+                labels.append(rf"$i={blk0['i']}$")
             else:
                 labels.append(f"#{k}")
 
@@ -1723,15 +1744,15 @@ class PMCMainWindow(QMainWindow):
                 ax.set_xlim(0, 1); ax.set_ylim(0, 1)
                 ax.set_aspect("equal")
                 ax.set_title(
-                    f"({i},{j})  {cop.copula_enum.value.SHORT_NAME}"
-                    f"  τ̂={cop.params['tau_k']:.3f}",
+                    rf"$({i},{j})$  {cop.copula_enum.value.SHORT_NAME}"
+                    rf"  $\hat{{\tau}}={cop.params['tau_k']:.3f}$",
                     fontsize=9,
                 )
                 if i == K - 1:
-                    ax.set_xlabel("u")
+                    ax.set_xlabel(r"$u$")
                 if j == 0:
-                    ax.set_ylabel("v")
-        fig.suptitle("Pseudo-observations + fitted copula log-PDF contours")
+                    ax.set_ylabel(r"$v$")
+        fig.suptitle("Pseudo-observations + fitted copula $\\log$-PDF contours")
         self._canvas.draw()
 
     # ----- view D: multistart comparison -----------------------------------
@@ -1747,11 +1768,11 @@ class PMCMainWindow(QMainWindow):
                 label=f"WINNER  ({trace.run_tag or 'unperturbed'})  "
                       f"final={trace.log_liks[-1]:.2f}")
         ax.set_xlabel("ICE iteration")
-        ax.set_ylabel("Log-likelihood")
+        ax.set_ylabel(r"Log-likelihood $\log p(Y\mid\theta)$")
         ax.set_title(f"Multistart comparison "
                      f"({1 + len(trace.multistart_runs)} runs)")
         ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=8, loc="lower right")
+        ax.legend(loc="lower right")
         self._canvas.draw()
 
     # ----- view E: joint prior p[i,j] evolution ----------------------------
@@ -1775,8 +1796,8 @@ class PMCMainWindow(QMainWindow):
                 if j < i:
                     continue
                 ax1.plot(nn, trace.p_history[:, i, j], "-",
-                         label=f"p[{i},{j}]")
-        ax1.set_ylabel("p[i,j]")
+                         label=rf"$p_{{{i}{j}}}$")
+        ax1.set_ylabel(r"$p_{ij}$")
         ax1.set_title("Joint-prior evolution  (upper triangle under SR-PMC)")
         ax1.grid(True, alpha=0.3)
         ax1.legend(fontsize=7, ncol=K)
@@ -1788,7 +1809,7 @@ class PMCMainWindow(QMainWindow):
             )
             ax2.semilogy(nn[1:], diffs, "o-", color="firebrick")
         ax2.set_xlabel("ICE iteration")
-        ax2.set_ylabel("‖p^(t) − p^(t−1)‖_F")
+        ax2.set_ylabel(r"$\Vert p^{(t)} - p^{(t-1)} \Vert_{F}$")
         ax2.set_title("Convergence of the joint prior")
         ax2.grid(True, alpha=0.3, which="both")
         self._canvas.draw()
@@ -1820,8 +1841,8 @@ class PMCMainWindow(QMainWindow):
                     float(trace.margin_history[t][k]["params"].get(pname, np.nan))
                     for t in range(T)
                 ]
-                ax.plot(series, "-o", markersize=3, label=pname)
-            ax.set_title(f"({i},{j}) {dist}", fontsize=9)
+                ax.plot(series, "-o", markersize=3, label=rf"${pname}$")
+            ax.set_title(rf"$({i},{j})$  {dist}", fontsize=9)
             ax.legend(fontsize=7)
             ax.grid(True, alpha=0.3)
         fig.suptitle("Margin-parameter evolution")
@@ -1831,7 +1852,10 @@ class PMCMainWindow(QMainWindow):
 
     def _plot_ice_dashboard(self, trace: IceTrace):
         fig = self._begin_figure()
-        # 3×2 grid: LL, τ, family, ‖Δp‖, AIC/BIC, status
+        # 3×2 grid: LL, τ, family, ‖Δp‖, AIC/BIC, status.
+        # ``constrained_layout`` (rcParam) handles the cross-row spacing,
+        # but multi-axes legends would still steal too much space — keep
+        # legend.fontsize small via per-call overrides where needed.
         ax_ll  = fig.add_subplot(3, 2, 1)
         ax_tau = fig.add_subplot(3, 2, 2)
         ax_fam = fig.add_subplot(3, 2, 3)
@@ -1840,19 +1864,41 @@ class PMCMainWindow(QMainWindow):
         ax_st  = fig.add_subplot(3, 2, 6); ax_st.set_axis_off()
 
         lls = trace.log_liks
-        ax_ll.plot(lls, "o-", color="steelblue")
-        ax_ll.set_title("Log-likelihood"); ax_ll.grid(True, alpha=0.3)
+        ax_ll.plot(lls, "o-", color="steelblue", markersize=3)
+        ax_ll.set_title("Log-likelihood")
+        ax_ll.set_xlabel("iter")
+        ax_ll.set_ylabel(r"$\log p(Y\mid\theta)$")
+        ax_ll.grid(True, alpha=0.3)
+        ax_ll.tick_params(labelsize=7)
 
         self._draw_tau_trajectories(ax_tau, trace)
+        # Tighten the τ panel — within the dashboard, full per-pair labels
+        # are noise. Drop the legend; the family ribbon below carries the
+        # same information visually.
+        leg = ax_tau.get_legend()
+        if leg is not None:
+            leg.remove()
+        ax_tau.set_title(r"$\tau_K$ trajectories")
+        ax_tau.set_xlabel("iter")
+        ax_tau.tick_params(labelsize=7)
+
         self._draw_family_ribbon(ax_fam, trace)
+        ax_fam.set_xlabel("iter")
+        ax_fam.tick_params(labelsize=7)
+        # Compact the ribbon legend so it doesn't crowd the next row.
+        leg = ax_fam.get_legend()
+        if leg is not None:
+            leg.remove()
 
         if trace.p_history is not None and trace.p_history.shape[0] >= 2:
             diffs = np.linalg.norm(
                 trace.p_history[1:] - trace.p_history[:-1], axis=(1, 2),
             )
-            ax_dp.semilogy(diffs, "o-", color="firebrick")
-            ax_dp.set_title("‖Δp‖_F (joint-prior change)")
+            ax_dp.semilogy(diffs, "o-", color="firebrick", markersize=3)
+            ax_dp.set_title(r"$\Vert\Delta p\Vert_{F}$  (joint-prior change)")
+            ax_dp.set_xlabel("iter")
             ax_dp.grid(True, alpha=0.3, which="both")
+            ax_dp.tick_params(labelsize=7)
 
         # Approximate AIC/BIC: requires a parameter count.
         # We use a coarse upper bound: K² × (#copula params + #margin params).
@@ -1868,17 +1914,20 @@ class PMCMainWindow(QMainWindow):
                 )
             aic = 2 * n_params - 2 * np.array(lls)
             bic = n_params * np.log(max(n, 1)) - 2 * np.array(lls)
-            ax_ic.plot(aic, "o-", label="AIC", color="darkorange")
-            ax_ic.plot(bic, "s-", label="BIC", color="purple")
-            ax_ic.set_title(f"AIC / BIC  (k={n_params})")
-            ax_ic.legend(fontsize=8)
+            ax_ic.plot(aic, "o-", label="AIC", color="darkorange", markersize=3)
+            ax_ic.plot(bic, "s-", label="BIC", color="purple",     markersize=3)
+            ax_ic.set_title(rf"AIC / BIC  ($k={n_params}$)")
+            ax_ic.set_xlabel("iter")
+            ax_ic.legend(fontsize=7)
             ax_ic.grid(True, alpha=0.3)
+            ax_ic.tick_params(labelsize=7)
         else:
             ax_ic.text(0.5, 0.5, "AIC/BIC unavailable\n(no observation sequence)",
-                       transform=ax_ic.transAxes, ha="center", va="center")
+                       transform=ax_ic.transAxes, ha="center", va="center",
+                       fontsize=8)
             ax_ic.set_axis_off()
 
-        # Summary box
+        # Summary box — uses LaTeX ΔLL via mathtext.
         n_iters = trace.n_iters
         ll_init = lls[0] if lls else float("nan")
         ll_fin  = lls[-1] if lls else float("nan")
@@ -1891,10 +1940,10 @@ class PMCMainWindow(QMainWindow):
             f"Candidates: {', '.join(trace.candidates) or '—'}"
         )
         ax_st.text(0.05, 0.95, msg, transform=ax_st.transAxes,
-                   ha="left", va="top", family="monospace", fontsize=10)
+                   ha="left", va="top", family="monospace", fontsize=8)
         ax_st.set_title("Summary", loc="left")
 
-        fig.suptitle("ICE Dashboard", fontsize=12, y=0.995)
+        fig.suptitle("ICE Dashboard")
         self._canvas.draw()
 
     # ----- view H: PP/QQ plot of fitted copulas ----------------------------
@@ -1919,7 +1968,7 @@ class PMCMainWindow(QMainWindow):
                     ax.plot([0, 1], [0, 1], "r--", lw=1)
                     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.set_aspect("equal")
                     ax.set_title(
-                        f"({i},{j}) {cop.copula_enum.value.SHORT_NAME}",
+                        rf"$({i},{j})$  {cop.copula_enum.value.SHORT_NAME}",
                         fontsize=9,
                     )
                 except NotImplementedError:
@@ -1927,10 +1976,10 @@ class PMCMainWindow(QMainWindow):
                             ha="center", va="center")
                     ax.set_axis_off()
                 if i == K - 1:
-                    ax.set_xlabel("C_n  (empirical)")
+                    ax.set_xlabel(r"$C_n$  (empirical)")
                 if j == 0:
-                    ax.set_ylabel("C_θ  (fitted)")
-        fig.suptitle("PP plots — empirical vs. fitted copula CDF")
+                    ax.set_ylabel(r"$C_\theta$  (fitted)")
+        fig.suptitle(r"PP plots — empirical vs. fitted copula CDF")
         self._canvas.draw()
 
     # ----- view I: tail dependence per pair --------------------------------
@@ -1951,20 +2000,20 @@ class PMCMainWindow(QMainWindow):
         ax1 = fig.add_subplot(1, 2, 1)
         ax2 = fig.add_subplot(1, 2, 2)
         for ax, mat, label in (
-            (ax1, lam_L, "λ_L (lower tail)"),
-            (ax2, lam_U, "λ_U (upper tail)"),
+            (ax1, lam_L, r"$\lambda_L$ (lower tail)"),
+            (ax2, lam_U, r"$\lambda_U$ (upper tail)"),
         ):
             im = ax.imshow(mat, cmap="magma", vmin=0.0, vmax=1.0)
             for i in range(K):
                 for j in range(K):
                     if np.isfinite(mat[i, j]):
                         ax.text(j, i, f"{mat[i, j]:.2f}",
-                                ha="center", va="center", fontsize=10,
+                                ha="center", va="center", fontsize=9,
                                 color="white" if mat[i, j] < 0.6 else "black")
             ax.set_title(label)
             ax.set_xticks(range(K)); ax.set_yticks(range(K))
-            ax.set_xticklabels([f"j={k}" for k in range(K)])
-            ax.set_yticklabels([f"i={k}" for k in range(K)])
+            ax.set_xticklabels([rf"$j={k}$" for k in range(K)])
+            ax.set_yticklabels([rf"$i={k}$" for k in range(K)])
             fig.colorbar(im, ax=ax, fraction=0.04, pad=0.04)
         fig.suptitle("Tail dependence per pair (final ICE model)")
         self._canvas.draw()
@@ -1979,20 +2028,28 @@ class PMCMainWindow(QMainWindow):
         ax1 = fig.add_subplot(2, 1, 1)
         _, gamma_i, ll_i = classify(init_mdl, Y)
         for k in range(K):
-            ax1.plot(nn, gamma_i[:, k], lw=0.7, alpha=0.8, label=f"γ(X={k}|Y)")
-        ax1.set_title(f"BEFORE ICE  (LL={ll_i:.2f})")
-        ax1.set_ylabel("P(X_n=k | Y)"); ax1.set_ylim(-0.05, 1.05)
-        ax1.legend(fontsize=8); ax1.grid(True, alpha=0.3)
+            ax1.plot(nn, gamma_i[:, k], lw=0.7, alpha=0.8,
+                     label=rf"$\gamma(X{{=}}{k}\mid Y)$")
+        ax1.set_title(rf"BEFORE ICE  ($\log L = {ll_i:.2f}$)")
+        ax1.set_ylabel(r"$P(X_n = k \mid Y)$")
+        ax1.set_ylim(-0.05, 1.05)
+        ax1.legend(); ax1.grid(True, alpha=0.3)
 
         ax2 = fig.add_subplot(2, 1, 2)
         _, gamma_f, ll_f = classify(fitted_mdl, Y)
         for k in range(K):
-            ax2.plot(nn, gamma_f[:, k], lw=0.7, alpha=0.8, label=f"γ(X={k}|Y)")
-        ax2.set_title(f"AFTER ICE  (LL={ll_f:.2f}, ΔLL={ll_f - ll_i:+.2f})")
-        ax2.set_xlabel("n"); ax2.set_ylabel("P(X_n=k | Y)"); ax2.set_ylim(-0.05, 1.05)
-        ax2.legend(fontsize=8); ax2.grid(True, alpha=0.3)
+            ax2.plot(nn, gamma_f[:, k], lw=0.7, alpha=0.8,
+                     label=rf"$\gamma(X{{=}}{k}\mid Y)$")
+        ax2.set_title(
+            rf"AFTER ICE  ($\log L = {ll_f:.2f}$, "
+            rf"$\Delta\log L = {ll_f - ll_i:+.2f}$)"
+        )
+        ax2.set_xlabel(r"$n$")
+        ax2.set_ylabel(r"$P(X_n = k \mid Y)$")
+        ax2.set_ylim(-0.05, 1.05)
+        ax2.legend(); ax2.grid(True, alpha=0.3)
 
-        fig.suptitle("Posterior marginals γ — before vs. after ICE")
+        fig.suptitle(r"Posterior marginals $\gamma$ — before vs. after ICE")
         self._canvas.draw()
 
     # ==================================================================

@@ -1084,3 +1084,70 @@ def test_explicit_load_commits_model_path(qapp):
     w = PMCMainWindow()
     w._load_model(toml)  # explicit, as_template defaults to False
     assert w._model_path == pathlib.Path(toml)
+
+
+# ---------------------------------------------------------------------------
+# Compact-style rcParams + LaTeX mathtext labels
+# ---------------------------------------------------------------------------
+
+def test_apply_gui_compact_style_sets_expected_rcparams(qapp):
+    """The compact GUI style sets math-friendly, low-clutter rcParams."""
+    import matplotlib as _mpl
+
+    from prg.plot_style import apply_gui_compact_style
+
+    apply_gui_compact_style()
+    # LaTeX-flavoured math via Computer Modern (no LaTeX install needed).
+    assert _mpl.rcParams["mathtext.fontset"] == "cm"
+    # Per-axes typography is smaller than the package-wide 12pt default.
+    assert _mpl.rcParams["axes.titlesize"] <= 11
+    assert _mpl.rcParams["axes.labelsize"] <= 10
+    assert _mpl.rcParams["xtick.labelsize"] <= 9
+    assert _mpl.rcParams["ytick.labelsize"] <= 9
+    # Constrained-layout takes over so multi-panel figures (dashboard,
+    # K×K small multiples) lay out their suptitles cleanly.
+    assert _mpl.rcParams["figure.constrained_layout.use"] is True
+
+
+def test_pmc_canvas_default_figsize_accommodates_multipanel(qapp):
+    """The canvas figure is sized for >=3×2 dashboards out of the box."""
+    from prg.pmc.gui.main_window import _Canvas
+
+    c = _Canvas()
+    w, h = c.fig.get_size_inches()
+    assert w >= 9.0, f"canvas width {w:.1f}\" too small for multi-panel figures"
+    assert h >= 6.0, f"canvas height {h:.1f}\" too small for multi-panel figures"
+    # Minimum widget size keeps titles readable when the user shrinks
+    # the splitter.
+    assert c.minimumWidth()  >= 600
+    assert c.minimumHeight() >= 400
+
+
+def test_ice_dashboard_renders_without_raising(qapp):
+    """Smoke: the 3×2 dashboard view paints without a mathtext parse error.
+
+    Catches regressions in the LaTeX-ified labels: a stray ``$`` would
+    raise at draw time rather than at ``set_title`` time.
+    """
+    import pathlib
+
+    from prg.pmc.gui.main_window import PMCMainWindow, _ICE_VIEW_DASHBOARD
+    from prg.pmc.ice      import IceResult, ice
+    from prg.pmc.model    import PMCModel
+    from prg.pmc.simulate import simulate
+
+    toml = pathlib.Path("prg/pmc/models/pmc_gauss_k2.toml")
+    if not toml.exists():
+        pytest.skip(f"test fixture {toml} not present")
+
+    w   = PMCMainWindow()
+    mdl = PMCModel(toml)
+    w._load_model(toml)
+    _, Y = simulate(mdl, N=120, seed=0)
+    fitted, trace = ice(mdl, Y, ice_cfg={"max_iter": 3})
+    w._on_est_done(IceResult(initial_model=mdl, fitted_model=fitted,
+                              Y=Y, trace=trace))
+    w._switch_view(_ICE_VIEW_DASHBOARD)
+    # Force a real draw — that is what flushes mathtext parse errors.
+    w._canvas.draw()
+    assert w._has_plot
