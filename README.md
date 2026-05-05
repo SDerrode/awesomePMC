@@ -439,7 +439,8 @@ copulasformm/
 │   └── tools/
 │       └── tools.py                EPS constants, minmaxEPS helper
 ├── docs/
-│   └── CSDA_2013.pdf               Reference paper (Piecini & Derrode)
+│   ├── CSDA_2013.pdf               Reference paper A16 (Derrode & Pieczynski)
+│   └── SP_2016.pdf                 Reference paper A23 (Derrode & Pieczynski)
 ├── CHANGELOG.md
 ├── LICENSE
 ├── pyproject.toml
@@ -450,11 +451,48 @@ copulasformm/
 
 ## References
 
-- Derrode S., Piecini G. — *Unsupervised classification of radar signals using pairwise Markov chains with copulas*, Computational Statistics & Data Analysis (CSDA), 2013.
+The `prg.pmc` sub-package implements the unsupervised classification
+methods of two papers by **S. Derrode and W. Pieczynski**. The CSDA
+paper (A16) underpins the PMC model family and ICE-based copula
+selection; the Signal Process. paper (A23) adds GICE — automatic
+margin family selection — on top of ICE. PDFs of both are shipped in
+`docs/`. See [`prg/pmc/README.md`](prg/pmc/README.md) for a feature ↔ paper map.
+
+- **A16** — Derrode S., Pieczynski W. *Unsupervised data classification using pairwise Markov chains with automatic copulas selection*. Computational Statistics & Data Analysis 63 (2013), pp. 81–98. [doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)
+- **A23** — Derrode S., Pieczynski W. *Unsupervised classification using hidden Markov chain with unknown noise copulas and margins*. Signal Processing 128 (2016), pp. 8–17. [doi:10.1016/j.sigpro.2016.03.008](https://doi.org/10.1016/j.sigpro.2016.03.008)
+
+BibTeX:
+
+```bibtex
+@ARTICLE{A16,
+  author    = {S. Derrode and W. Pieczynski},
+  title     = {Unsupervised data classification using pairwise {M}arkov chains with automatic copulas selection},
+  journal   = {Comput. Stat. Data Anal.},
+  volume    = {63},
+  pages     = {81--98},
+  year      = {2013},
+  doi       = {10.1016/j.csda.2013.01.027},
+}
+
+@ARTICLE{A23,
+  author    = {S. Derrode and W. Pieczynski},
+  title     = {Unsupervised classification using hidden {M}arkov chain with unknown noise copulas and margins},
+  journal   = {Signal Process.},
+  volume    = {128},
+  pages     = {8--17},
+  year      = {2016},
+  doi       = {10.1016/j.sigpro.2016.03.008},
+}
+```
 
 The PMC model (SR-PMC variant) is defined by the equations:
 
-- **Eq. 13**: p(X_{n+1} = j | X_n = i, Y_n = y) ∝ p(i, j) · f_i(y)
-- **Eq. 14**: p(Y_{n+1} | X_n=i, X_{n+1}=j, Y_n=y) = f_j(y_{n+1}) · c_{ij}(F_i(y_n), F_j(y_{n+1}))
+- **A16, Eq. 13**: p(X_{n+1} = j | X_n = i, Y_n = y) ∝ p(i, j) · f_i(y)
+- **A16, Eq. 14**: p(Y_{n+1} | X_n=i, X_{n+1}=j, Y_n=y) = f_j(y_{n+1}) · c_{ij}(F_i(y_n), F_j(y_{n+1}))
 
-The "reversed-index" notation $f_{ji}$ from CSDA 2013 is the right-margin of the bivariate joint $f_{i,j}$; the **stationarity and reversibility** (SR) constraint on the pair process $(X_n, Y_n)$ collapses it to the per-state density $f_j$. There are therefore exactly K marginal densities in the model, one per state — see *PMC Models — variants and TOML schema* above.
+The "reversed-index" notation $f_{ji}$ from A16 is the right-margin of
+the bivariate joint $f_{i,j}$; the **stationarity and reversibility**
+(SR) constraint on the pair process $(X_n, Y_n)$ collapses it to the
+per-state density $f_j$. There are therefore exactly K marginal
+densities in the model, one per state — see *PMC Models — variants and
+TOML schema* above.

@@ -1,9 +1,19 @@
 # CSDA 2013 reproduction
 
-Reproduces the experiments of Derrode & Pieczynski (CSDA, 2013),
-*"Unsupervised data classification using pairwise Markov chains with automatic
-copulas selection"*, sections 3.2, 3.3, 4.3, using the `copulasformm` package.
-The radar-image segmentation of section 5 is intentionally **not** reproduced.
+Reproduces the experiments of Derrode & Pieczynski (**A16** —
+[doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)),
+*"Unsupervised data classification using pairwise Markov chains with
+automatic copulas selection"* (Comput. Stat. Data Anal. 63, 2013),
+sections 3.2, 3.3, 4.3, using the `copulasformm` package. The
+radar-image segmentation of section 5 is intentionally **not**
+reproduced.
+
+The companion paper **A23** (Signal Process. 128, 2016 — GICE for
+margin family selection) is exercised through the unit-test suite
+(`prg/tests/test_gice_margins.py`) on the bundled fixture
+`prg/pmc/models/sp2016_gice_k2.toml`. See
+[`prg/pmc/README.md`](../prg/pmc/README.md) for the feature ↔ paper
+map and BibTeX entries for both references.
 
 ## Layout
 
