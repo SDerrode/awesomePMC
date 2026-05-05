@@ -42,11 +42,13 @@ import csv
 import logging
 import math
 import os
+import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 import numpy as np
 
@@ -182,6 +184,100 @@ def _clip_tau_to_range(tau: float, copula_code: str) -> float:
 # scalar τ values). Model construction is ~1 ms — negligible vs. the
 # ~300 ms classification work or the ~2 s ICE run, so we keep the
 # implementation simple and avoid per-process model caching.
+
+
+# ---------------------------------------------------------------------------
+# Progress / ETA helper (stdlib-only; no tqdm dep)
+# ---------------------------------------------------------------------------
+
+T = TypeVar("T")
+
+
+def _fmt_dur(secs: float) -> str:
+    """Compact duration string: ``42s`` / ``3m07s`` / ``1h12m``."""
+    secs = max(0, int(secs))
+    if secs < 60:
+        return f"{secs}s"
+    m, s = divmod(secs, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
+
+
+def _is_tty(stream) -> bool:
+    try:
+        return stream.isatty()
+    except (AttributeError, OSError):                     # pragma: no cover
+        return False
+
+
+def _progress(
+    iterable: Iterable[T],
+    *,
+    total:        int,
+    desc:         str = "",
+    stream        = None,
+    min_interval: float = 0.2,
+) -> Iterator[T]:
+    """Wrap ``iterable`` with a self-overwriting progress bar + ETA.
+
+    Yields each item from the source unchanged, printing the running
+    ``N/total`` count, percentage, elapsed and ETA on every step but
+    rate-limiting the *display* refreshes to ``min_interval`` seconds
+    so the cost is negligible regardless of inner-loop speed.
+
+    On a non-TTY stream (e.g. piped to a log file) we skip the ``\\r``
+    rewrite and emit one summary line per ~10 % so the file stays
+    readable.
+
+    Designed as a drop-in for ``executor.map(...)`` returns: total is
+    given explicitly because the iterator has no ``__len__``.
+    """
+    if stream is None:
+        stream = sys.stderr
+    is_tty   = _is_tty(stream)
+    width    = 24
+    t0       = time.perf_counter()
+    last_t   = -1.0
+    log_step = max(1, total // 10)              # for non-TTY emission
+    log_min_dt = 3.0                            # non-TTY min seconds between lines
+
+    for k, item in enumerate(iterable, 1):
+        yield item
+        now      = time.perf_counter()
+        is_last  = (k == total)
+        if not is_last:
+            if is_tty:
+                # TTY: throttle by wall time only — \r overwriting is cheap.
+                if (now - last_t) < min_interval:
+                    continue
+            else:
+                # Non-TTY (piped to a log file): emit at most once per ~10 %
+                # of total AND at most once every ``log_min_dt`` seconds, so
+                # the log stays both informative and uncluttered.
+                if (k % log_step) != 0:
+                    continue
+                if (now - last_t) < log_min_dt:
+                    continue
+        last_t = now
+        elapsed = now - t0
+        rate    = k / max(elapsed, 1e-9)
+        eta     = (total - k) / max(rate, 1e-9)
+        filled  = int(round(width * k / total))
+        bar     = "█" * filled + "·" * (width - filled)
+        line    = (f"{desc}  [{bar}]  {k:>4}/{total}  ({100*k/total:5.1f}%)"
+                   f"  elapsed={_fmt_dur(elapsed)}"
+                   f"  ETA={'   —  ' if is_last else _fmt_dur(eta)}")
+        if is_tty:
+            # \r + clear-to-end-of-line so a shorter line never leaves
+            # stale characters from the previous one.
+            stream.write("\r\033[K" + line)
+            if is_last:
+                stream.write("\n")
+        else:
+            stream.write(line + "\n")
+        stream.flush()
 
 
 def _default_jobs() -> int:
@@ -329,14 +425,16 @@ def _run_pmc_supervised_row(
     ]
     err = np.empty((cfg.reps, n_est), dtype=float)
     if executor is None:
-        for r, args in enumerate(args_list):
-            err[r, :] = _exp_pmc_rep_worker(args)
+        source: Iterable[np.ndarray] = (
+            _exp_pmc_rep_worker(a) for a in args_list
+        )
     else:
         # Preserve order (chunksize tuned for ~30-300 reps; small enough
         # for load-balancing, large enough to amortise pickle overhead).
-        for r, vec in enumerate(executor.map(_exp_pmc_rep_worker, args_list,
-                                             chunksize=4)):
-            err[r, :] = vec
+        source = executor.map(_exp_pmc_rep_worker, args_list, chunksize=4)
+    desc = f"  exp1 / {cfg.label} / row {sim_code:>3s}"
+    for r, vec in enumerate(_progress(source, total=cfg.reps, desc=desc)):
+        err[r, :] = vec
     return 100.0 * err.mean(axis=0), 100.0 * err.std(axis=0)
 
 
@@ -418,12 +516,14 @@ def _run_pmm_supervised_row(
     ]
     err = np.empty((cfg.reps, n_est), dtype=float)
     if executor is None:
-        for r, args in enumerate(args_list):
-            err[r, :] = _exp_pmm_rep_worker(args)
+        source: Iterable[np.ndarray] = (
+            _exp_pmm_rep_worker(a) for a in args_list
+        )
     else:
-        for r, vec in enumerate(executor.map(_exp_pmm_rep_worker, args_list,
-                                             chunksize=4)):
-            err[r, :] = vec
+        source = executor.map(_exp_pmm_rep_worker, args_list, chunksize=4)
+    desc = f"  exp2 / {cfg.label} / row {sim_code:>3s}"
+    for r, vec in enumerate(_progress(source, total=cfg.reps, desc=desc)):
+        err[r, :] = vec
     return 100.0 * err.mean(axis=0), 100.0 * err.std(axis=0)
 
 
@@ -631,17 +731,19 @@ def run_exp3(
             for r in range(cfg.runs)
         ]
 
-        t0 = time.time()
         if executor is None:
-            run_results = [_exp3_run_worker(a) for a in run_args]
+            source: Iterable[dict] = (_exp3_run_worker(a) for a in run_args)
         else:
             # ICE runs are seconds-long, so chunksize=1 is fine for
             # load-balancing without significant pickle overhead.
-            run_results = list(executor.map(_exp3_run_worker, run_args,
-                                            chunksize=1))
+            source = executor.map(_exp3_run_worker, run_args, chunksize=1)
+        desc = f"  exp3 / {cfg.label}"
 
-        # Tally hits, mean τ, and error rates from the per-run results.
-        for r, res in enumerate(run_results):
+        t0 = time.time()
+        # Tally hits, mean τ, and error rates as runs come back. Streaming
+        # rather than collecting first lets the progress bar and the tally
+        # advance in lockstep with worker completions.
+        for r, res in enumerate(_progress(source, total=cfg.runs, desc=desc)):
             for (i, j), (selected, tau_k) in res["selected"].items():
                 if selected == truth_short[(i, j)]:
                     hit_count[(i, j)] += 1
