@@ -29,11 +29,12 @@ import numpy as np
 
 from PyQt6.QtCore    import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QCheckBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from prg.copulas._base   import CopulaEnum
 from prg.pmc.gui.dialogs import _CopulaDialog, _MarginDialog
 from prg.pmc.model       import PMCModel, Variant
 
@@ -432,6 +433,10 @@ class _IceTab(QWidget):
 
     changed = pyqtSignal()
 
+    # Default candidate set for new tabs (a sensible mix that's eligible
+    # at any τ value).
+    _DEFAULT_CANDIDATES_CHECKED = ("Gauss", "Clayton", "GH", "Frank", "Joe")
+
     def __init__(self):
         super().__init__()
         lay = QFormLayout(self)
@@ -456,7 +461,49 @@ class _IceTab(QWidget):
 
         # ── Margin/copula candidates ─────────────────────────────────
         self._chk_margins = QCheckBox()
-        self._lst_cands   = QLineEdit("Gauss,Clayton,GH,Frank,Joe")
+        # Multi-select grid: one QCheckBox per available copula family.
+        # Clearer + less error-prone than the previous comma-separated
+        # text field, and the user immediately sees the full menu.
+        self._cand_box   = QGroupBox("Candidate copulas")
+        self._cand_box.setToolTip(
+            "Tick the families ICE may select among at every M-step. "
+            "Family-aware τ ranges are enforced at fit time, so you can "
+            "leave all families ticked even if τ is far from their range."
+        )
+        cand_layout = QGridLayout(self._cand_box)
+        cand_layout.setContentsMargins(6, 6, 6, 6)
+        cand_layout.setHorizontalSpacing(10)
+        cand_layout.setVerticalSpacing(2)
+        self._cand_checks: dict[str, QCheckBox] = {}
+        all_short = [c.value.SHORT_NAME for c in CopulaEnum.available()]
+        n_cols = 4
+        for k, short in enumerate(all_short):
+            cb = QCheckBox(short)
+            cb.setChecked(short in self._DEFAULT_CANDIDATES_CHECKED)
+            cb.toggled.connect(self.changed)
+            cand_layout.addWidget(cb, k // n_cols, k % n_cols)
+            self._cand_checks[short] = cb
+        # "All"/"None" quick-pick buttons.
+        btn_row = QHBoxLayout()
+        btn_all  = QPushButton("All")
+        btn_none = QPushButton("None")
+        btn_def  = QPushButton("Defaults")
+        btn_all.setToolTip("Tick every copula family.")
+        btn_none.setToolTip("Untick every family (don't fit copulas at all).")
+        btn_def.setToolTip("Reset to the default 5-family set.")
+        btn_all.clicked.connect(lambda:  self._set_candidates(all_short))
+        btn_none.clicked.connect(lambda: self._set_candidates([]))
+        btn_def.clicked.connect(lambda:  self._set_candidates(
+            list(self._DEFAULT_CANDIDATES_CHECKED)
+        ))
+        btn_row.addWidget(btn_all)
+        btn_row.addWidget(btn_none)
+        btn_row.addWidget(btn_def)
+        btn_row.addStretch(1)
+        # Place the buttons on a new row at the bottom of the grid.
+        cand_layout.addLayout(btn_row,
+                              (len(all_short) + n_cols - 1) // n_cols, 0,
+                              1, n_cols)
 
         # ── Multistart ────────────────────────────────────────────────
         self._spn_n_starts = QSpinBox()
@@ -471,8 +518,20 @@ class _IceTab(QWidget):
 
         self._spn_ms_seed = QSpinBox()
         self._spn_ms_seed.setRange(0, 2_147_483_647)
-        self._spn_ms_seed.setValue(0)
+        self._spn_ms_seed.setValue(42)               # default seed
         self._spn_ms_seed.setToolTip("RNG seed controlling the multistart perturbations.")
+        # 🎲 button to draw a random seed.
+        self._btn_seed_random = QPushButton("🎲")
+        self._btn_seed_random.setMaximumWidth(34)
+        self._btn_seed_random.setToolTip(
+            "Draw a fresh random seed (uniform in [0, 2³¹−1])."
+        )
+        self._btn_seed_random.clicked.connect(self._on_random_seed_clicked)
+        seed_box = QWidget()
+        seed_lay = QHBoxLayout(seed_box)
+        seed_lay.setContentsMargins(0, 0, 0, 0)
+        seed_lay.addWidget(self._spn_ms_seed, stretch=1)
+        seed_lay.addWidget(self._btn_seed_random, stretch=0)
 
         self._spn_ms_jitter = QDoubleSpinBox()
         self._spn_ms_jitter.setRange(0.01, 0.50)
@@ -485,15 +544,15 @@ class _IceTab(QWidget):
         )
 
         # ── Layout ────────────────────────────────────────────────────
-        lay.addRow("Max iterations:",                 self._spn_maxiter)
-        lay.addRow("Convergence tol:",                self._spn_tol)
-        lay.addRow("Patience (regressions):",         self._spn_patience)
-        lay.addRow("Fit margins:",                    self._chk_margins)
-        lay.addRow("Candidates (SHORT_NAMEs, comma-sep):", self._lst_cands)
+        lay.addRow("Max iterations:",         self._spn_maxiter)
+        lay.addRow("Convergence tol:",        self._spn_tol)
+        lay.addRow("Patience (regressions):", self._spn_patience)
+        lay.addRow("Fit margins:",            self._chk_margins)
+        lay.addRow(self._cand_box)
         lay.addRow(QLabel("<b>Multistart</b>"))
-        lay.addRow("n_starts:",                       self._spn_n_starts)
-        lay.addRow("Seed:",                           self._spn_ms_seed)
-        lay.addRow("Jitter:",                         self._spn_ms_jitter)
+        lay.addRow("n_starts:",               self._spn_n_starts)
+        lay.addRow("Seed:",                   seed_box)
+        lay.addRow("Jitter:",                 self._spn_ms_jitter)
 
         # Disable multistart widgets initially (n_starts=1).
         self._on_n_starts_changed(1)
@@ -505,7 +564,6 @@ class _IceTab(QWidget):
         ):
             w.valueChanged.connect(self.changed)
         self._chk_margins.toggled.connect(self.changed)
-        self._lst_cands.textChanged.connect(self.changed)
 
     # ------------------------------------------------------------------
     # Internal callbacks
@@ -514,25 +572,33 @@ class _IceTab(QWidget):
     def _on_n_starts_changed(self, value: int):
         active = value > 1
         self._spn_ms_seed.setEnabled(active)
+        self._btn_seed_random.setEnabled(active)
         self._spn_ms_jitter.setEnabled(active)
+
+    def _on_random_seed_clicked(self):
+        """Draw a fresh random seed and write it into the spin box."""
+        import secrets
+        seed = secrets.randbelow(self._spn_ms_seed.maximum() + 1)
+        self._spn_ms_seed.setValue(int(seed))
+
+    def _set_candidates(self, names):
+        """Tick exactly ``names`` (and untick everything else)."""
+        names_set = set(names)
+        for short, cb in self._cand_checks.items():
+            cb.setChecked(short in names_set)
+
+    def _selected_candidates(self) -> list[str]:
+        """Return the SHORT_NAMEs currently ticked, in CopulaEnum order."""
+        return [s for s, cb in self._cand_checks.items() if cb.isChecked()]
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def load(self, cfg: dict, show_copula_cfg: bool = True):
-        # Hide the candidates field for variants that do not use copulas
-        # (HMC-IN). The label-only form-row pair is hidden together.
-        self._lst_cands.setVisible(show_copula_cfg)
-        # Find the QLabel sibling (FormLayout pairs label↔widget).
-        form = self.layout()
-        for k in range(form.rowCount()):
-            field = form.itemAt(k, form.ItemRole.FieldRole)
-            if field is not None and field.widget() is self._lst_cands:
-                lbl = form.itemAt(k, form.ItemRole.LabelRole)
-                if lbl is not None and lbl.widget() is not None:
-                    lbl.widget().setVisible(show_copula_cfg)
-                break
+        # Hide the candidate-copulas group for variants that do not use
+        # copulas (HMC-IN). The whole QGroupBox row hides together.
+        self._cand_box.setVisible(show_copula_cfg)
 
         # Block the changed signal while we programmatically populate widgets.
         self.blockSignals(True)
@@ -541,11 +607,12 @@ class _IceTab(QWidget):
             self._spn_maxiter.setValue(int(cfg.get("max_iter", 50)))
             self._spn_tol.setValue(float(cfg.get("tol", 1e-4)))
             self._spn_patience.setValue(int(cfg.get("patience", 3)))
-            cands = cfg.get("candidates", ["Gauss", "Clayton", "GH"])
-            self._lst_cands.setText(",".join(cands))
+            self._set_candidates(cfg.get(
+                "candidates", list(self._DEFAULT_CANDIDATES_CHECKED),
+            ))
 
             self._spn_n_starts.setValue(int(cfg.get("n_starts", 1)))
-            self._spn_ms_seed.setValue(int(cfg.get("multistart_seed", 0)))
+            self._spn_ms_seed.setValue(int(cfg.get("multistart_seed", 42)))
             self._spn_ms_jitter.setValue(float(cfg.get("multistart_jitter", 0.10)))
             self._on_n_starts_changed(self._spn_n_starts.value())
         finally:
@@ -557,7 +624,7 @@ class _IceTab(QWidget):
             "max_iter":          self._spn_maxiter.value(),
             "tol":               self._spn_tol.value(),
             "patience":          self._spn_patience.value(),
-            "candidates":        [s.strip() for s in self._lst_cands.text().split(",") if s.strip()],
+            "candidates":        self._selected_candidates(),
             "n_starts":          self._spn_n_starts.value(),
             "multistart_seed":   self._spn_ms_seed.value(),
             "multistart_jitter": self._spn_ms_jitter.value(),

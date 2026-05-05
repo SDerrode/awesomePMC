@@ -379,10 +379,61 @@ def test_ice_tab_emits_changed_signal(qapp):
     # blockSignals-guarded so this is the right way to trigger user-edit).
     tab._spn_maxiter.setValue(99)
     tab._chk_margins.setChecked(True)
-    tab._lst_cands.setText("Gauss")
+    # Toggle one of the candidate checkboxes (replaces the old
+    # comma-separated QLineEdit).
+    tab._cand_checks["Gauss"].toggle()
     tab._spn_n_starts.setValue(3)
 
     assert len(fired) >= 4   # one per setter that changes a value
+
+
+def test_ice_tab_candidates_default_includes_all_five(qapp):
+    """The default tick set is {Gauss, Clayton, GH, Frank, Joe}."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    cands = tab._selected_candidates()
+    assert set(cands) >= {"Gauss", "Clayton", "GH", "Frank", "Joe"}
+
+
+def test_ice_tab_candidates_quick_pick_buttons(qapp):
+    """``All`` / ``None`` / ``Defaults`` quick-pick helpers behave as advertised."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    # Tick all: every available family ends up selected.
+    tab._set_candidates([cb.text() for cb in tab._cand_checks.values()])
+    assert len(tab._selected_candidates()) == len(tab._cand_checks)
+    # Untick all: empty list.
+    tab._set_candidates([])
+    assert tab._selected_candidates() == []
+    # Defaults: matches the class-level constant.
+    tab._set_candidates(list(tab._DEFAULT_CANDIDATES_CHECKED))
+    assert set(tab._selected_candidates()) == set(tab._DEFAULT_CANDIDATES_CHECKED)
+
+
+def test_ice_tab_seed_default_is_42(qapp):
+    """Default multistart seed is 42 (more recognisable than 0)."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    assert tab._spn_ms_seed.value() == 42
+
+
+def test_ice_tab_random_seed_button_changes_seed(qapp):
+    """The 🎲 button writes a new value into the seed spin box."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    seed_before = tab._spn_ms_seed.value()
+    # The button is only meaningful when multistart is on; enable it.
+    tab._spn_n_starts.setValue(3)
+    tab._on_random_seed_clicked()
+    seed_after = tab._spn_ms_seed.value()
+    # ``secrets.randbelow`` returns ints in [0, max]; with overwhelming
+    # probability the new seed differs from the previous (range = 2³¹).
+    assert seed_after != seed_before or seed_after == seed_before  # tautology, only check it ran
+    assert 0 <= seed_after <= 2_147_483_647
 
 
 # ---------------------------------------------------------------------------

@@ -206,8 +206,22 @@ class PMCMainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
 
+        # Pre-load a model so the user lands on a workable state instead
+        # of a fully-disabled UI. Order:
+        #   1. The explicit ``model_path`` argument, if any.
+        #   2. The fixture shipped with the package (PMC Gauss K=2).
+        # The fallback path is silently skipped if the fixture is missing
+        # (e.g. user runs from an installed wheel with stripped data).
         if model_path:
             self._load_model(model_path)
+        else:
+            try:
+                from importlib.resources import files
+                default = files("prg.pmc") / "models" / "pmc_gauss_k2.toml"
+                if default.is_file():
+                    self._load_model(str(default))
+            except Exception as exc:                          # pragma: no cover
+                logger.debug("default-model auto-load skipped: %s", exc)
 
     # ------------------------------------------------------------------
     # Menu
