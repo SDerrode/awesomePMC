@@ -2089,18 +2089,52 @@ class PMCMainWindow(QMainWindow):
         K           = init_mdl.K
         uses_copula = init_mdl.variant.uses_copula and fitted_mdl.variant.uses_copula
 
-        # GridSpec: margins-table | (optional) copulas-table | priors row.
-        # Heights tuned so the prior heatmaps stay square-ish.
-        n_rows  = 3 if uses_copula else 2
-        heights = ([1.0, 1.0, 1.4] if uses_copula else [1.2, 1.6])
-        gs      = fig.add_gridspec(n_rows, 1, height_ratios=heights)
+        # GridSpec layout. Each section gets a thin "header" sub-row above
+        # the body so the section title can never overlap the table headers
+        # (the bug visible in the previous iteration was caused by
+        # ``ax.set_title`` falling inside a ``set_axis_off`` axes whose
+        # table extended to the very top edge). A dedicated bottom-row
+        # holds the colour-legend footer, so it never collides with the
+        # joint-prior heatmap tick labels.
+        #
+        # Row heights are tuned per K so the tables don't claim a tall
+        # slot they only half-fill (the issue HMC variants showed before
+        # — margin table sat at the top of an oversized slot, leaving
+        # blank space between it and the heatmaps).
+        max_m_params = max(
+            (len(blk.get("params", {}))
+             for blk in init_mdl.margin_blocks() + fitted_mdl.margin_blocks()),
+            default=2,
+        )
+        # Heuristic: data-rows × per-line cost + header/footer overhead.
+        # Tables now use ``loc="upper center"`` so empty body space below
+        # the last row appears as a visible gap; tune the slot heights
+        # to match the actual content as closely as possible.
+        margin_h = 0.25 + 0.16 * K * max(2, max_m_params)
+        copula_h = 0.30 + 0.16 * (K * K)
+        heatmap_h = 1.6
+        footer_h  = 0.10
 
-        ax_m = fig.add_subplot(gs[0]); ax_m.set_axis_off()
+        n_rows  = (4 if uses_copula else 3)
+        heights = ([margin_h, copula_h, heatmap_h, footer_h] if uses_copula
+                   else [margin_h, heatmap_h, footer_h])
+        gs      = fig.add_gridspec(n_rows, 1, height_ratios=heights, hspace=0.10)
+
+        # Helper that returns (header_axis, body_axis) for one section.
+        def _section(slot, header_height: float = 0.12):
+            sub = slot.subgridspec(2, 1, height_ratios=[header_height, 1.0])
+            ax_h = fig.add_subplot(sub[0]); ax_h.set_axis_off()
+            ax_b = fig.add_subplot(sub[1]); ax_b.set_axis_off()
+            return ax_h, ax_b
+
+        ax_m_h, ax_m = _section(gs[0])
         if uses_copula:
-            ax_c     = fig.add_subplot(gs[1]); ax_c.set_axis_off()
-            priors_g = gs[2].subgridspec(1, 3, wspace=0.30)
+            ax_c_h, ax_c = _section(gs[1])
+            priors_g     = gs[2].subgridspec(1, 3, wspace=0.30)
+            ax_footer    = fig.add_subplot(gs[3]); ax_footer.set_axis_off()
         else:
-            priors_g = gs[1].subgridspec(1, 3, wspace=0.30)
+            priors_g     = gs[1].subgridspec(1, 3, wspace=0.30)
+            ax_footer    = fig.add_subplot(gs[2]); ax_footer.set_axis_off()
 
         # ---- margin table ------------------------------------------------
         m_init   = init_mdl.margin_blocks()
@@ -2111,8 +2145,10 @@ class PMCMainWindow(QMainWindow):
             i = blk_t.get("i", "?")
             fam_t   = blk_t.get("dist", "?")
             fam_f   = blk_f.get("dist", "?")
-            par_t   = _fmt_params(blk_t.get("params", {}))
-            par_f   = _fmt_params(blk_f.get("params", {}))
+            # Multi-line params: each "key=value" on its own line. Lets
+            # the cell stay narrow while remaining fully legible.
+            par_t   = _fmt_params(blk_t.get("params", {}), multiline=True)
+            par_f   = _fmt_params(blk_f.get("params", {}), multiline=True)
             row     = [str(i), fam_t, par_t, fam_f, par_f]
             colours = ["white"] * len(row)
             if fam_t != fam_f:
@@ -2127,14 +2163,20 @@ class PMCMainWindow(QMainWindow):
             colLabels = ["i", "true family", "true params",
                          "fitted family", "fitted params"],
             cellColours = m_cell_colors if m_cell_colors else None,
-            loc       = "center",
+            colWidths = [0.05, 0.20, 0.275, 0.20, 0.275],
+            loc       = "upper center",   # anchor at top of body axes
             cellLoc   = "left",
         )
         m_tbl.auto_set_font_size(False)
         m_tbl.set_fontsize(8)
-        m_tbl.scale(1.0, 1.4)
-        ax_m.set_title("Margins — true vs fitted",
-                       loc="left", fontsize=10, pad=2)
+        # Multi-line params need taller rows. Reuse the gridspec
+        # heuristic so a 4-param ``betaprime`` fixture isn't cramped.
+        m_tbl.scale(1.0, max(1.4, 0.85 * max_m_params))
+        ax_m_h.text(
+            0.0, 0.5, "Margins — true vs fitted",
+            transform=ax_m_h.transAxes, fontsize=11, fontweight="bold",
+            va="center", ha="left",
+        )
 
         # ---- copula table (only for copula-using variants) ---------------
         if uses_copula:
@@ -2183,16 +2225,17 @@ class PMCMainWindow(QMainWindow):
                              "fitted family", r"fitted $\tau$",
                              r"$\Delta\tau$"],
                 cellColours = c_cell_colors if c_cell_colors else None,
-                loc       = "center",
+                colWidths = [0.10, 0.22, 0.13, 0.22, 0.13, 0.13],
+                loc       = "upper center",
                 cellLoc   = "center",
             )
             c_tbl.auto_set_font_size(False)
             c_tbl.set_fontsize(8)
-            c_tbl.scale(1.0, 1.4)
-            ax_c.set_title(
-                r"Copulas — true vs fitted   "
-                r"(yellow: family change · pink: $|\Delta\tau| > 0.10$)",
-                loc="left", fontsize=10, pad=2,
+            c_tbl.scale(1.0, 1.3)
+            ax_c_h.text(
+                0.0, 0.5, "Copulas — true vs fitted",
+                transform=ax_c_h.transAxes, fontsize=11, fontweight="bold",
+                va="center", ha="left",
             )
 
         # ---- joint prior heatmaps ----------------------------------------
@@ -2206,6 +2249,9 @@ class PMCMainWindow(QMainWindow):
 
         # Common colour scale for the two raw priors so they're visually
         # comparable; symmetric scale for the difference panel.
+        # ``aspect="auto"`` lets the heatmap fill its grid slot (otherwise
+        # ``aspect="equal"`` keeps cells square and leaves a vertical
+        # gap above the row whenever the upper sections are short).
         vmax_p = max(p_t.max(), p_f.max(), 1e-9)
         for ax, mat, ttl, cmap, vmin, vmax in (
             (ax_pt, p_t, "true",   "viridis", 0.0,  vmax_p),
@@ -2215,7 +2261,7 @@ class PMCMainWindow(QMainWindow):
                                             np.max(np.abs(p_d)) + 1e-12),
         ):
             im = ax.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax,
-                           aspect="equal")
+                           aspect="auto")
             for i in range(K):
                 for j in range(K):
                     val = mat[i, j]
@@ -2237,6 +2283,19 @@ class PMCMainWindow(QMainWindow):
             r"Parameter comparison: true (init) vs ICE-fitted   "
             rf"$K={K}$, variant: {init_mdl.variant.value}"
         )
+        # Colour-legend footer in its own gridspec row so it can't
+        # overlap heatmap tick labels under constrained_layout. Unicode
+        # "▮" renders as a vertical-bar swatch on every Qt-shipping
+        # font — no mathtext gymnastics required.
+        if uses_copula:
+            footer = ("Cell tint:  ▮ yellow = family change   "
+                      "·   ▮ pink = |Δτ| > 0.10")
+        else:
+            footer = "Cell tint:  ▮ yellow = family change"
+        ax_footer.text(0.5, 0.5, footer,
+                       transform=ax_footer.transAxes,
+                       ha="center", va="center",
+                       fontsize=8, color="#444444")
         self._canvas.draw()
 
     # ----- view J: γ before vs. after ICE ----------------------------------
@@ -2408,11 +2467,17 @@ def _fmt_value(v: float) -> str:
     return s.replace("-", "−")
 
 
-def _fmt_params(params: dict) -> str:
-    """``{'loc': -3.05, 'scale': 0.98}`` → ``'loc=−3.05, scale=0.98'``."""
+def _fmt_params(params: dict, *, multiline: bool = False) -> str:
+    """``{'loc': -3.05, 'scale': 0.98}`` → ``'loc=−3.05, scale=0.98'``.
+
+    ``multiline=True`` joins with ``\\n`` so that long param lists fit
+    in narrow table cells without truncation. The cell row grows
+    vertically instead of overflowing horizontally.
+    """
     if not params:
         return "—"
-    return ", ".join(f"{k}={_fmt_value(float(v))}" for k, v in params.items())
+    sep = "\n" if multiline else ", "
+    return sep.join(f"{k}={_fmt_value(float(v))}" for k, v in params.items())
 
 
 def _fmt_tau(tau: float) -> str:
