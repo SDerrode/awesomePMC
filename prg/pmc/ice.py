@@ -855,6 +855,15 @@ _INIT_PARAM_HEURISTICS = {
                                  "loc": mu - sd, "scale": max(sd, 1e-3)},
 }
 
+# Public re-exports for the GUI and downstream tooling. ``GICE_KNOWN_FAMILIES``
+# is the canonical list of scipy.stats family names that ship with a
+# data-aware init heuristic (other families still work — we fall back to
+# ``scipy.stats.<dist>.fit`` — but these are the ones we recommend in the
+# Edit-Margin dialog). ``SP2016_DEFAULT_CANDIDATES`` is the four-family set
+# used in Derrode-Pieczynski SP 2016 §3 / Example 3.1.
+GICE_KNOWN_FAMILIES        = tuple(_INIT_PARAM_HEURISTICS.keys())
+SP2016_DEFAULT_CANDIDATES  = ("norm", "gamma", "invgamma", "betaprime")
+
 
 def _data_aware_init_params(dist_name: str, y: np.ndarray, w: np.ndarray) -> dict:
     """Return an initial parameter dict for ``dist_name`` from weighted moments.

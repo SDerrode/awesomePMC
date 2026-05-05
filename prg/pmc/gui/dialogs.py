@@ -15,6 +15,11 @@ Audit fixes (2026-05):
 * ``_MarginDialog`` accepts both ``"k=v k=v"`` and ``"k=v, k=v"`` separators
   (previously the comma form silently lost values), and validates that each
   value parses as a float (otherwise the dialog refuses to ``Accept``).
+* ``_MarginDialog`` exposes the GICE candidate set as a checkbox grid
+  (one box per family in ``ice.GICE_KNOWN_FAMILIES``) plus three quick-pick
+  buttons (SP-2016 §3 / All / None) and an "Other" line for scipy.stats
+  families outside the known set. Replaces the previous comma-separated
+  ``QLineEdit`` whose typo-tolerance was poor.
 """
 
 from __future__ import annotations
@@ -22,12 +27,17 @@ from __future__ import annotations
 import re
 
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from prg.copulas._base import CopulaEnum
-from prg.pmc.ice       import EXTRA_PARAM_BOUNDS as _EXTRA_PARAM_DEFAULTS
+from prg.pmc.ice       import (
+    EXTRA_PARAM_BOUNDS as _EXTRA_PARAM_DEFAULTS,
+    GICE_KNOWN_FAMILIES,
+    SP2016_DEFAULT_CANDIDATES,
+)
 
 
 _COPULA_NAMES = [e.value.SHORT_NAME for e in CopulaEnum if e.value.AVAILABLE]
@@ -68,18 +78,71 @@ class _MarginDialog(QDialog):
         )
         self._params_edit.setPlaceholderText("loc=0, scale=1")
 
-        # GICE candidate set (Derrode-Pieczynski SP 2016 §3) — comma-
-        # separated scipy.stats family names. When non-empty, ICE will
-        # auto-select the family from this list at every M-step.
-        cands = blk.get("candidates", [])
-        self._candidates_edit = QLineEdit(", ".join(cands))
-        self._candidates_edit.setPlaceholderText(
-            "norm, gamma, invgamma, betaprime  (leave blank to disable GICE)"
-        )
-
         lay.addRow("Distribution:",        self._dist)
         lay.addRow("Parameters (k=v, …):", self._params_edit)
-        lay.addRow("GICE candidates:",     self._candidates_edit)
+
+        # ----- GICE candidate set (SP 2016 §3) ---------------------------
+        # Replaces the old comma-separated QLineEdit. The 8 families in
+        # ``GICE_KNOWN_FAMILIES`` ship with data-aware init heuristics in
+        # ``ice._INIT_PARAM_HEURISTICS``; the "Other" line lets power users
+        # add any extra scipy.stats name (it will fall back to scipy's
+        # default ``fit`` for an init point).
+        cands_in = list(blk.get("candidates", []))
+        self._cand_checks: dict[str, QCheckBox] = {}
+        cand_box = QGroupBox(
+            "GICE candidates (auto-select family at every ICE M-step)"
+        )
+        cand_v   = QVBoxLayout(cand_box)
+
+        # Hint label so users know what the empty state means.
+        cand_v.addWidget(QLabel(
+            "Tick the scipy.stats families ICE may try. "
+            "Leave everything unchecked to disable GICE for this margin."
+        ))
+
+        # 8 known families in a 4-column grid.
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        for k, name in enumerate(GICE_KNOWN_FAMILIES):
+            cb = QCheckBox(name)
+            cb.setChecked(name in cands_in)
+            self._cand_checks[name] = cb
+            grid.addWidget(cb, k // 4, k % 4)
+        cand_v.addLayout(grid)
+
+        # Quick-pick buttons.
+        btn_row = QHBoxLayout()
+        b_sp    = QPushButton("SP-2016 §3")
+        b_sp.setToolTip(
+            "Tick {norm, gamma, invgamma, betaprime} — the four families "
+            "used in Derrode-Pieczynski SP 2016, Example 3.1."
+        )
+        b_all   = QPushButton("All")
+        b_none  = QPushButton("None")
+        b_sp.clicked.connect(
+            lambda: self._set_candidates(SP2016_DEFAULT_CANDIDATES)
+        )
+        b_all.clicked.connect(
+            lambda: self._set_candidates(GICE_KNOWN_FAMILIES)
+        )
+        b_none.clicked.connect(lambda: self._set_candidates(()))
+        for b in (b_sp, b_all, b_none):
+            btn_row.addWidget(b)
+        btn_row.addStretch(1)
+        cand_v.addLayout(btn_row)
+
+        # "Other" line for scipy.stats families outside the known set.
+        # Anything entered here is appended to the checked names at
+        # ``get_block`` time. Stored verbatim (no canonicalisation).
+        known = set(GICE_KNOWN_FAMILIES)
+        extras = [c for c in cands_in if c not in known]
+        self._cand_extras = QLineEdit(", ".join(extras))
+        self._cand_extras.setPlaceholderText(
+            "Other scipy.stats families (comma-separated, e.g. pareto, t, chi2)"
+        )
+        cand_v.addWidget(self._cand_extras)
+
+        lay.addRow(cand_box)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -137,6 +200,43 @@ class _MarginDialog(QDialog):
         self.accept()
 
     # ------------------------------------------------------------------
+    # GICE-candidates helpers
+    # ------------------------------------------------------------------
+
+    def _set_candidates(self, names) -> None:
+        """Tick exactly the families in ``names``; clear everything else.
+
+        Names not present as a checkbox are appended to the "Other" line
+        (verbatim) so quick-picks remain idempotent if the caller passes
+        an unknown family. ``names`` may be any iterable of strings.
+        """
+        wanted = list(names)
+        wanted_set = set(wanted)
+        for short, cb in self._cand_checks.items():
+            cb.setChecked(short in wanted_set)
+        # Anything not represented as a checkbox goes to the extras line.
+        known   = set(self._cand_checks)
+        extras  = [w for w in wanted if w not in known]
+        self._cand_extras.setText(", ".join(extras))
+
+    def _selected_candidates(self) -> list[str]:
+        """Merge ticked checkboxes with the Other-line entries (in order)."""
+        ticked = [s for s, cb in self._cand_checks.items() if cb.isChecked()]
+        extra_text = self._cand_extras.text().strip()
+        extras = (
+            [c.strip() for c in extra_text.split(",") if c.strip()]
+            if extra_text else []
+        )
+        # Preserve order, drop dupes (first wins).
+        seen: set[str] = set()
+        out: list[str] = []
+        for c in ticked + extras:
+            if c not in seen:
+                out.append(c)
+                seen.add(c)
+        return out
+
+    # ------------------------------------------------------------------
     # Public API used by the host tab
     # ------------------------------------------------------------------
 
@@ -151,13 +251,12 @@ class _MarginDialog(QDialog):
         if params is None:
             params, _ = self._parse_params()
         out: dict = {"dist": self._dist.text().strip(), "params": params}
-        # GICE candidate list — only present in the output when the user
-        # actually filled it in. Empty means "no GICE for this margin".
-        cand_text = self._candidates_edit.text().strip()
-        if cand_text:
-            cands = [c.strip() for c in cand_text.split(",") if c.strip()]
-            if cands:
-                out["candidates"] = cands
+        # GICE candidate list — only present in the output when at least
+        # one box is ticked or the "Other" line is non-empty. An empty
+        # list means "no GICE for this margin".
+        cands = self._selected_candidates()
+        if cands:
+            out["candidates"] = cands
         return out
 
 

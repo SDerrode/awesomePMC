@@ -72,6 +72,98 @@ def test_margin_dialog_handles_multiple_params(qapp):
 
 
 # ---------------------------------------------------------------------------
+# _MarginDialog — GICE candidates checkbox UI
+# ---------------------------------------------------------------------------
+
+def test_margin_dialog_candidates_checkboxes_round_trip(qapp):
+    """Checkboxes ticked from input ``candidates`` round-trip via get_block."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+
+    blk_in = {"i": 0, "j": 0, "dist": "norm", "params": {"loc": 0, "scale": 1},
+              "candidates": ["norm", "gamma", "betaprime"]}
+    dlg = _MarginDialog(blk_in)
+    # Exactly the ticked boxes match the input.
+    ticked = [s for s, cb in dlg._cand_checks.items() if cb.isChecked()]
+    assert sorted(ticked) == ["betaprime", "gamma", "norm"]
+    # Round-trip preserves order from GICE_KNOWN_FAMILIES (norm, gamma,
+    # ..., betaprime).
+    out = dlg.get_block()
+    assert out["candidates"] == ["norm", "gamma", "betaprime"]
+
+
+def test_margin_dialog_no_candidates_omits_field(qapp):
+    """No ticked boxes and empty Other line → ``candidates`` key omitted."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+
+    dlg = _MarginDialog({"i": 0, "j": 0, "dist": "norm", "params": {}})
+    # Default state: nothing ticked.
+    assert all(not cb.isChecked() for cb in dlg._cand_checks.values())
+    out = dlg.get_block()
+    assert "candidates" not in out
+
+
+def test_margin_dialog_sp2016_quick_pick(qapp):
+    """The SP-2016 §3 helper ticks exactly {norm, gamma, invgamma, betaprime}."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+    from prg.pmc.ice          import SP2016_DEFAULT_CANDIDATES
+
+    dlg = _MarginDialog({"i": 0, "j": 0, "dist": "norm", "params": {}})
+    dlg._set_candidates(SP2016_DEFAULT_CANDIDATES)
+    out = dlg.get_block()
+    assert out["candidates"] == list(SP2016_DEFAULT_CANDIDATES)
+
+
+def test_margin_dialog_all_then_none_quick_picks(qapp):
+    """All / None helpers cover every known family and clear back to empty."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+    from prg.pmc.ice          import GICE_KNOWN_FAMILIES
+
+    dlg = _MarginDialog({"i": 0, "j": 0, "dist": "norm", "params": {}})
+
+    dlg._set_candidates(GICE_KNOWN_FAMILIES)
+    out = dlg.get_block()
+    assert out["candidates"] == list(GICE_KNOWN_FAMILIES)
+
+    dlg._set_candidates(())
+    out = dlg.get_block()
+    assert "candidates" not in out
+
+
+def test_margin_dialog_other_line_unknown_family_kept(qapp):
+    """Unknown scipy.stats names typed into the Other line round-trip too."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+
+    blk_in = {"i": 0, "j": 0, "dist": "norm", "params": {},
+              "candidates": ["norm", "pareto"]}  # pareto not in GICE_KNOWN_FAMILIES
+    dlg = _MarginDialog(blk_in)
+    # "norm" lands as a checkbox; "pareto" lands in the Other line.
+    assert dlg._cand_checks["norm"].isChecked()
+    assert "pareto" in dlg._cand_extras.text()
+    out = dlg.get_block()
+    assert out["candidates"] == ["norm", "pareto"]
+
+
+def test_margin_dialog_other_line_dedupes_against_checkboxes(qapp):
+    """Typing a checked family in the Other line does not produce a duplicate."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+
+    dlg = _MarginDialog({"i": 0, "j": 0, "dist": "norm", "params": {}})
+    dlg._cand_checks["norm"].setChecked(True)
+    dlg._cand_extras.setText("norm, pareto")
+    out = dlg.get_block()
+    assert out["candidates"] == ["norm", "pareto"]
+
+
+def test_margin_dialog_lists_all_known_families(qapp):
+    """Every entry in GICE_KNOWN_FAMILIES has a corresponding checkbox."""
+    from prg.pmc.gui.dialogs import _MarginDialog
+    from prg.pmc.ice          import GICE_KNOWN_FAMILIES
+
+    dlg = _MarginDialog({"i": 0, "j": 0, "dist": "norm", "params": {}})
+    assert set(dlg._cand_checks.keys()) == set(GICE_KNOWN_FAMILIES)
+
+
+# ---------------------------------------------------------------------------
 # _CopulaDialog
 # ---------------------------------------------------------------------------
 
