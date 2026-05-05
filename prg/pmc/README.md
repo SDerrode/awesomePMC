@@ -77,12 +77,14 @@ from prg.pmc import (
 )
 ```
 
-The interactive front-ends are exposed as console scripts:
+The interactive front-ends are exposed via the ``pmc`` console script:
 
 ```bash
-pmc-gui                                  # PyQt6 explorer
-pmc cli classify --model <toml> ...      # batch CLI (see prg/pmc/cli.py)
+pmc gui [MODEL.toml]            # PyQt6 explorer
+pmc classify --model <toml> ... # batch CLI  (see prg/pmc/cli.py)
 ```
+
+(``pmc gui`` is equivalent to ``python -m prg.pmc gui …``.)
 
 A representative workflow is documented in the top-level
 [`README.md`](../../README.md).

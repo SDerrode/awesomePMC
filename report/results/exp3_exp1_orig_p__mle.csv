@@ -1,10 +1,10 @@
 i,j,true_name,true_tau,hits/runs,mean_tau
-0,0,Gauss,0.700,1/5,0.670
-0,1,GH,0.400,1/5,0.322
-1,0,GH,0.400,1/5,0.347
-1,1,Clayton,0.700,5/5,0.674
+0,0,Gauss,0.700,2/10,0.679
+0,1,GH,0.400,2/10,0.289
+1,0,GH,0.400,4/10,0.307
+1,1,Clayton,0.700,10/10,0.680
 
-sup_err_mean (%),20.48
-sup_err_std (%),2.53
-unsup_err_mean (%),29.28
-unsup_err_std (%),5.91
+sup_err_mean (%),20.37
+sup_err_std (%),2.08
+unsup_err_mean (%),27.72
+unsup_err_std (%),4.73

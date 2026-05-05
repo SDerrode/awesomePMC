@@ -13,6 +13,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-05-05
+
+This release adds **GICE** — automatic margin family selection from
+Derrode-Pieczynski (Signal Process. 2016) — on top of the existing
+ICE machinery, polishes the PyQt6 GUI substantially, and parallelises
+the CSDA-2013 reproduction script. No public-API breaking changes.
+
+### Added
+
+- **GICE — automatic margin family selection (paper A23 / SP 2016, §3).**
+  Margin blocks now accept an optional ``candidates`` list (a set of
+  ``scipy.stats`` family names). When non-empty, the ICE M-step fits
+  each candidate and picks the winner via a configurable rule:
+  ``mle`` (default), ``kolmogorov`` (SP 2016, Example 3.1),
+  ``aic`` or ``bic``. Eight families ship with data-aware
+  initialisation heuristics: ``norm, gamma, invgamma, betaprime,
+  lognorm, expon, weibull_min, beta``. Other ``scipy.stats`` names
+  still work; the M-step falls back to ``scipy.stats.<dist>.fit`` for
+  the init point. Public constants ``ice.GICE_KNOWN_FAMILIES`` and
+  ``ice.SP2016_DEFAULT_CANDIDATES`` exposed.
+- **New shipped fixture** ``models/sp2016_gice_k2.toml`` reproducing
+  the SP-2016 §5.1 setup (Gamma + BetaPrime margins).
+- **GUI: new ICE view "Parameters: true vs fitted"** (view *M*) — at
+  a glance comparison of seed and ICE-fitted parameters: per-state
+  margins (true vs fitted family + params), per-pair copulas
+  (family + ``τ`` + ``Δτ``, with colour flags for family changes
+  and ``|Δτ| > 0.10``), and three K×K joint-prior heatmaps
+  (true / fitted / ``fitted − true``).
+- **GUI: inline Export button** next to the View combobox, mirroring
+  ``File → Export plot…``.
+- **GUI: figure-level legend** for the dashboard's family-ribbon
+  panel — the ribbon colours now have a decoder, no longer hidden
+  inside a stripped-out per-axes legend.
+- **GUI: auto-load** the bundled fixture
+  ``prg/pmc/models/pmc_gauss_k2.toml`` when the GUI is launched
+  without a path argument, so the user lands on a workable state
+  instead of a fully-disabled UI.
+- **GUI: GICE candidate sets edited as checkboxes**, both at the
+  ICE-config level (``_IceTab``) and per-margin (``_MarginDialog``).
+  Replaces the previous comma-separated text boxes; quick-pick
+  buttons (All / None / SP-2016 §3 / Defaults) cover the common
+  selections.
+- **GUI: 🎲 random-seed button** for the multistart seed widget,
+  drawing from ``secrets.randbelow(2³¹)``. Default seed changed
+  ``0 → 42``.
+- **GUI: LaTeX-mathtext labels** across every plot (axes, titles,
+  legends use ``$Y_n$``, ``$P(X_n = k \mid Y)$``,
+  ``$\Vert p^{(t)} - p^{(t-1)} \Vert_F$``, ``$\hat{\tau}$``, etc.)
+  rendered with the bundled Computer-Modern font set. Compact font
+  sizes: titles 10 pt, axes 9 pt, ticks 8 pt; constrained_layout on
+  by default so 3×2 dashboards no longer overlap.
+- **GUI: canvas figsize** bumped from (7, 5) to (9.5, 6.5) with
+  ``minimumSize=(640, 460)`` — multi-panel figures get room to
+  breathe.
+- **GUI: Save action** now correctly avoids overwriting the bundled
+  fixture when the GUI was auto-loaded; the first ``Ctrl+S`` falls
+  through to ``Save As…`` so the user picks a destination.
+- **Report: parallel mode (default).** ``reproduce_csda2013.py``
+  now dispatches reps and ICE runs across a
+  ``ProcessPoolExecutor`` with ``--jobs N`` (default
+  ``cpu_count() // 2``). On a 10-core laptop ``--full`` drops from
+  ~3 h to ~30-50 min. Results are bit-identical to the sequential
+  path for the same seeds (verified end-to-end with a CSV diff).
+- **Report: progress bar + ETA** for every experiment row / ICE
+  config. Stdlib-only (no tqdm dependency); TTY rewrites in place,
+  non-TTY emits one line per ~10 % rate-limited to ≤ 1 / 3 s.
+- **Documentation: dedicated ``prg/pmc/README.md``** that opens
+  with both source-paper citations (A16 / A23), a feature ↔ paper
+  table, and BibTeX entries.
+- **Documentation: GitHub Actions workflow** ``.github/workflows/ci.yml``
+  mirroring ``.gitlab-ci.yml`` (lint + matrix tests on Python
+  3.11 / 3.12 / 3.13, headless Qt via ``QT_QPA_PLATFORM=offscreen``).
+
+### Changed
+
+- ICE selection criteria expanded from MLE-only to
+  ``{mle, aic, bic, huard, cvm}`` for copulas (A16 Eq. 20 implemented
+  as ``huard``) and ``{mle, kolmogorov, aic, bic}`` for margins
+  (A23 §3).
+- Default ``N_default`` lowered from 5000 → 1000 in every shipped
+  fixture except ``sp2016_gice_k2.toml`` (which keeps the paper's
+  3000), so the auto-loaded default lands on a fast turnaround.
+- Top-level README's "References" section rewritten with full
+  citations for **both** A16 (CSDA 2013) and **A23** (SP 2016),
+  including BibTeX. Fixed pre-existing author typo
+  "Piecini" → "Pieczynski"; added ``docs/SP_2016.pdf`` to the
+  documented directory tree.
+- ``[project.urls]`` in ``pyproject.toml`` gains a
+  ``Mirror = https://github.com/SDerrode/copulasformm`` entry.
+
+### Fixed
+
+- ``simulate`` no longer crashes with
+  ``ValueError: Probabilities do not sum to 1`` when the model's
+  cached ``π`` / ``A`` rows have drifted within the validator's
+  ``atol=1e-6`` tolerance but past ``rng.choice``'s tighter
+  ``√eps ≈ 1.5e-8`` bound. Defensive renormalisation in
+  ``simulate.py``.
+- Margin & copula ``QTableWidget`` headers now display state indices
+  in italic math (``$i=0$`` / ``$j=0$``) instead of plain ASCII.
+- Multi-panel figure layouts (ICE dashboard, K×K small multiples)
+  no longer stack their suptitle onto the first row's tick labels.
+- Param-comparison view: section titles can no longer overlap the
+  table headers (each section now lives in its own ``subgridspec``
+  with a dedicated header row).
+- ``_draw_tau_trajectories`` no longer emits a ``No artists with
+  labels found`` UserWarning on HMC variants whose τ-history is all
+  NaN.
+
+### Source-paper attribution
+
+Two papers by S. Derrode and W. Pieczynski:
+
+- **A16** — *Unsupervised data classification using pairwise Markov
+  chains with automatic copulas selection*, Comput. Stat. Data Anal.
+  63 (2013), 81-98.
+  [doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)
+- **A23** — *Unsupervised classification using hidden Markov chain
+  with unknown noise copulas and margins*, Signal Process. 128
+  (2016), 8-17.
+  [doi:10.1016/j.sigpro.2016.03.008](https://doi.org/10.1016/j.sigpro.2016.03.008)
+
+See [`prg/pmc/README.md`](prg/pmc/README.md) for the feature ↔
+paper map.
+
+---
+
 ## [0.5.0] - 2026-05-04
 
 This is a substantial release covering three audit cycles, a new ICE

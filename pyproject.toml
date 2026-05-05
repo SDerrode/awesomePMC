@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "copulasformm"
-version = "0.5.0"
+version = "0.6.0"
 description = "Copula-based Markov models for flexible non-Gaussian transition kernels"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -56,6 +56,7 @@ pmc = "prg.pmc.cli:main"
 [project.urls]
 Homepage   = "https://gitlab.ec-lyon.fr/sderrode/copulasformm"
 Repository = "https://gitlab.ec-lyon.fr/sderrode/copulasformm"
+Mirror     = "https://github.com/SDerrode/copulasformm"
 
 [tool.pytest.ini_options]
 testpaths = ["prg/tests"]
