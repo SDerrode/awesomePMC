@@ -219,7 +219,7 @@ class PMCMainWindow(QMainWindow):
                 from importlib.resources import files
                 default = files("prg.pmc") / "models" / "pmc_gauss_k2.toml"
                 if default.is_file():
-                    self._load_model(str(default))
+                    self._load_model(str(default), as_template=True)
             except Exception as exc:                          # pragma: no cover
                 logger.debug("default-model auto-load skipped: %s", exc)
 
@@ -735,11 +735,17 @@ class PMCMainWindow(QMainWindow):
     # Model load / sync
     # ------------------------------------------------------------------
 
-    def _load_model(self, path: str | Path):
+    def _load_model(self, path: str | Path, *, as_template: bool = False):
         # B6: only commit ``_model_path`` once the model has been
         # successfully built. Previously we set the path *before* calling
         # PMCModel(), so a parse error left the GUI in an inconsistent
         # state (path set, model None).
+        #
+        # ``as_template=True`` is used by the no-arg auto-load path: the
+        # widgets are populated from the shipped fixture, but
+        # ``_model_path`` stays ``None`` so a subsequent Ctrl+S falls
+        # through to Save-As — otherwise the user would silently overwrite
+        # the in-package fixture.
         try:
             new_path  = Path(path)
             new_model = PMCModel(new_path)
@@ -748,13 +754,21 @@ class PMCMainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Error", str(exc))
             return
 
-        self._model_path = new_path
-        self._model      = new_model
+        self._model = new_model
+        if as_template:
+            self._model_path = None
+        else:
+            self._model_path = new_path
+            self._push_recent(new_path)
         self._sync_widgets_from_model()
         self._set_buttons_enabled(True)
         self._mark_clean()
-        self._push_recent(new_path)
-        self._status.showMessage(f"Loaded: {self._model_path}")
+        if as_template:
+            self._status.showMessage(
+                f"Loaded default fixture (unsaved): {new_path.name}"
+            )
+        else:
+            self._status.showMessage(f"Loaded: {self._model_path}")
         self._log_append(f"Loaded model: {self._model}")
 
     def _sync_widgets_from_model(self):

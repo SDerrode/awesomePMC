@@ -929,3 +929,66 @@ def test_prior_tab_emits_symmetrized_signal(qapp):
     asym, _ = captured[0]
     # max |0.4 - 0.1| = 0.3
     assert abs(asym - 0.3) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# PMCMainWindow — auto-loaded default fixture must not become Save target
+# ---------------------------------------------------------------------------
+
+def test_default_model_loaded_as_template(qapp):
+    """Launching with no path auto-loads the fixture but leaves _model_path None.
+
+    Otherwise Ctrl+S would silently overwrite the in-package fixture in
+    ``prg/pmc/models/pmc_gauss_k2.toml``.
+    """
+    from prg.pmc.gui.main_window import PMCMainWindow
+
+    w = PMCMainWindow()
+    # The fixture exists in the source tree, so the auto-load must succeed.
+    assert w._model is not None, "default fixture failed to load"
+    assert w._model.name  # something sensible came in
+    assert w._model_path is None, (
+        "auto-loaded default must not commit _model_path — Ctrl+S would "
+        "overwrite the shipped fixture"
+    )
+
+
+def test_save_after_template_routes_through_save_as(qapp, tmp_path, monkeypatch):
+    """With no committed path, Ctrl+S falls through to Save-As.
+
+    Regression: previously the auto-load committed the fixture's path so
+    Ctrl+S would write straight to it without prompting. Now ``_on_save``
+    routes through ``_on_save_as`` whenever ``_model_path is None``.
+    """
+    from prg.pmc.gui.main_window import PMCMainWindow
+
+    w = PMCMainWindow()
+    # Sanity from the previous test: auto-load left _model_path None.
+    assert w._model_path is None
+
+    # Stub Save-As to commit a tmp path without showing a dialog.
+    target = tmp_path / "user_model.toml"
+    def fake_save_as():
+        w._model_path = target
+        # Re-enter _on_save now that a path is set.
+        w._on_save()
+    monkeypatch.setattr(w, "_on_save_as", fake_save_as)
+
+    w._on_save()
+    assert target.is_file(), "Save did not write to the user-picked path"
+    assert w._model_path == target
+
+
+def test_explicit_load_commits_model_path(qapp):
+    """Loading via the menu (``as_template=False``) commits ``_model_path``."""
+    import pathlib
+
+    from prg.pmc.gui.main_window import PMCMainWindow
+
+    toml = pathlib.Path("prg/pmc/models/pmc_gauss_k2.toml")
+    if not toml.exists():
+        pytest.skip(f"test fixture {toml} not present")
+
+    w = PMCMainWindow()
+    w._load_model(toml)  # explicit, as_template defaults to False
+    assert w._model_path == pathlib.Path(toml)
