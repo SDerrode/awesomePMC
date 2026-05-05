@@ -1213,6 +1213,92 @@ def test_export_button_enabled_after_plot(qapp):
     assert w._act_export_plot.isEnabled()
 
 
+def test_ice_param_compare_view_pmc(qapp):
+    """Param-compare view renders for a PMC variant (margins + copulas + priors)."""
+    import pathlib
+
+    from prg.pmc.gui.main_window import (
+        PMCMainWindow, _ICE_VIEW_PARAM_COMPARE, _ALL_VIEWS,
+    )
+    from prg.pmc.ice      import IceResult, ice
+    from prg.pmc.model    import PMCModel
+    from prg.pmc.simulate import simulate
+
+    toml = pathlib.Path("prg/pmc/models/pmc_gauss_k2.toml")
+    if not toml.exists():
+        pytest.skip(f"test fixture {toml} not present")
+
+    w   = PMCMainWindow()
+    mdl = PMCModel(toml)
+    w._load_model(toml)
+    _, Y = simulate(mdl, N=200, seed=0)
+    fitted, trace = ice(mdl, Y, ice_cfg={"max_iter": 3})
+    w._on_est_done(IceResult(initial_model=mdl, fitted_model=fitted,
+                              Y=Y, trace=trace))
+
+    # The view is exposed in the selector and switching to it must succeed.
+    assert _ICE_VIEW_PARAM_COMPARE in _ALL_VIEWS
+    w._switch_view(_ICE_VIEW_PARAM_COMPARE)
+    w._canvas.draw()
+    assert w._has_plot
+    # PMC variant uses copulas → table + 3 priors + 3 colorbars
+    # gives at least 5 axes (margins + 3 priors). The exact count
+    # depends on matplotlib's table-axis bookkeeping; just sanity-check
+    # the lower bound and that a suptitle is set.
+    assert len(w._canvas.fig.axes) >= 5
+    assert w._canvas.fig._suptitle is not None
+    assert "true (init) vs ICE-fitted" in w._canvas.fig._suptitle.get_text()
+
+
+def test_ice_param_compare_view_hmc(qapp, tmp_path):
+    """Param-compare view skips the copula panel for HMC variants."""
+    import pathlib
+
+    from prg.pmc.gui.main_window import PMCMainWindow, _ICE_VIEW_PARAM_COMPARE
+    from prg.pmc.ice      import IceResult, ice
+    from prg.pmc.model    import PMCModel
+    from prg.pmc.simulate import simulate
+
+    toml = pathlib.Path("prg/pmc/models/hmc_in_gauss_k2.toml")
+    if not toml.exists():
+        pytest.skip(f"test fixture {toml} not present")
+
+    w   = PMCMainWindow()
+    mdl = PMCModel(toml)
+    w._load_model(toml)
+    _, Y = simulate(mdl, N=200, seed=0)
+    fitted, trace = ice(mdl, Y, ice_cfg={"max_iter": 3})
+    w._on_est_done(IceResult(initial_model=mdl, fitted_model=fitted,
+                              Y=Y, trace=trace))
+    w._switch_view(_ICE_VIEW_PARAM_COMPARE)
+    w._canvas.draw()
+    assert w._has_plot
+    # HMC variants have no copula table → fewer axes than the PMC case.
+    # No suptitle requirement beyond "renders without raising".
+    assert w._canvas.fig._suptitle is not None
+
+
+def test_fmt_helpers_compact_and_correct(qapp):
+    """The little formatting helpers used by the comparison table behave."""
+    from prg.pmc.gui.main_window import (
+        _fmt_value, _fmt_params, _fmt_tau, _fmt_signed,
+    )
+
+    # Unicode minus, decimal precision.
+    assert _fmt_value(-3.05)  == "−3.05"
+    assert _fmt_value(0.98)   == "0.98"
+    # NaN sentinel.
+    assert _fmt_value(float("nan"))  == "—"
+    assert _fmt_tau(float("nan"))    == "—"
+    assert _fmt_signed(float("nan")) == "—"
+    # Param dict.
+    assert _fmt_params({"loc": -3.0, "scale": 0.5}) == "loc=−3, scale=0.5"
+    assert _fmt_params({}) == "—"
+    # Signed delta with explicit + / − sign.
+    assert _fmt_signed( 0.034) == "+0.034"
+    assert _fmt_signed(-0.012) == "−0.012"
+
+
 def test_export_button_writes_png(qapp, tmp_path, monkeypatch):
     """Clicking Export… saves the current canvas to the user-picked path."""
     import pathlib

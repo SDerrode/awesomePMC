@@ -63,6 +63,7 @@ worker → GUI hand-off, and centralised plot-lifecycle helpers
 
 import csv
 import logging
+import math
 from pathlib import Path
 
 # Qt setup *before* any pyplot import.
@@ -122,11 +123,13 @@ _ICE_VIEW_TAIL         = "ICE — Tail dependence (λL, λU)" # I
 _ICE_VIEW_GAMMA        = "ICE — γ before vs after"        # J
 _ICE_VIEW_PLAYBACK     = "ICE — Animated playback"        # K
 _ICE_VIEW_MARGIN_FAMILY = "ICE — Margin family ribbon"    # L (GICE / SP-2016)
+_ICE_VIEW_PARAM_COMPARE = "ICE — Parameters: true vs fitted"  # M
 
 # Display order in the combobox (None entries denote separators visually).
 _ALL_VIEWS = [
     _VIEW_SIMULATION, _VIEW_CLASSIFICATION, _VIEW_GOF_HEATMAP,
-    _ICE_VIEW_DASHBOARD, _ICE_VIEW_LOGLIK, _ICE_VIEW_TAU, _ICE_VIEW_FAMILY,
+    _ICE_VIEW_DASHBOARD, _ICE_VIEW_PARAM_COMPARE,
+    _ICE_VIEW_LOGLIK, _ICE_VIEW_TAU, _ICE_VIEW_FAMILY,
     _ICE_VIEW_MARGIN_FAMILY,
     _ICE_VIEW_PSEUDOS, _ICE_VIEW_MULTISTART, _ICE_VIEW_PRIOR,
     _ICE_VIEW_MARGINS, _ICE_VIEW_PP, _ICE_VIEW_TAIL, _ICE_VIEW_GAMMA,
@@ -139,7 +142,7 @@ _ICE_VIEWS = {
     _ICE_VIEW_LOGLIK, _ICE_VIEW_TAU, _ICE_VIEW_FAMILY, _ICE_VIEW_PSEUDOS,
     _ICE_VIEW_MULTISTART, _ICE_VIEW_PRIOR, _ICE_VIEW_MARGINS,
     _ICE_VIEW_DASHBOARD, _ICE_VIEW_PP, _ICE_VIEW_TAIL, _ICE_VIEW_GAMMA,
-    _ICE_VIEW_PLAYBACK, _ICE_VIEW_MARGIN_FAMILY,
+    _ICE_VIEW_PLAYBACK, _ICE_VIEW_MARGIN_FAMILY, _ICE_VIEW_PARAM_COMPARE,
 }
 
 # Views that can scrub through iterations via a slider. The "Animated playback"
@@ -525,6 +528,12 @@ class PMCMainWindow(QMainWindow):
             return (self._ice_trace is not None
                     and self._init_model is not None
                     and self._ice_Y is not None)
+        if name == _ICE_VIEW_PARAM_COMPARE:
+            # Needs both the seed model (true / pre-ICE) and the fitted
+            # one. Variant-agnostic — works for HMC variants too (no
+            # copula table is rendered there).
+            return (self._init_model is not None
+                    and self._model is not None)
         if name in (_ICE_VIEW_PSEUDOS, _ICE_VIEW_PP):
             return (self._ice_trace is not None
                     and self._ice_Y is not None
@@ -1584,7 +1593,11 @@ class PMCMainWindow(QMainWindow):
         ax.set_ylabel(r"Kendall $\tau_K$")
         ax.set_title(r"$\tau_K$ trajectories per pair  (★ = family change)")
         ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=7, ncol=2)
+        # Skip the legend if every τ-series was non-finite (HMC variant
+        # carrying a stub tau_history): matplotlib otherwise prints a
+        # ``No artists with labels found`` UserWarning.
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=7, ncol=2)
 
     def _draw_family_ribbon(self, ax, trace: IceTrace, t_max: int | None = None):
         """Draw the family-selection ribbon on ``ax``.
@@ -2052,6 +2065,180 @@ class PMCMainWindow(QMainWindow):
         fig.suptitle("Tail dependence per pair (final ICE model)")
         self._canvas.draw()
 
+    # ----- view M: parameter comparison — true (init) vs. fitted ----------
+
+    def _plot_ice_param_compare(self, init_mdl: PMCModel, fitted_mdl: PMCModel):
+        """At-a-glance side-by-side of the seed model and the ICE-fitted one.
+
+        Three stacked panels:
+
+        * **Margins** — one row per state ``i``: true family + params vs.
+          fitted family + params. Family changes (GICE) are flagged.
+        * **Copulas** (only when ``variant.uses_copula``) — one row per
+          ``(i, j)`` pair: true family + Kendall ``τ`` vs. fitted, with
+          a ``Δτ`` column.
+        * **Joint prior** — three K×K imshow panels: ``true p``,
+          ``fitted p`` and ``fitted − true``.
+
+        Designed for the typical workflow "simulate from a known model,
+        run ICE, eyeball the recovery". Self-contained: a single Export
+        click yields a publication-grade figure.
+        """
+        fig = self._begin_figure()
+
+        K           = init_mdl.K
+        uses_copula = init_mdl.variant.uses_copula and fitted_mdl.variant.uses_copula
+
+        # GridSpec: margins-table | (optional) copulas-table | priors row.
+        # Heights tuned so the prior heatmaps stay square-ish.
+        n_rows  = 3 if uses_copula else 2
+        heights = ([1.0, 1.0, 1.4] if uses_copula else [1.2, 1.6])
+        gs      = fig.add_gridspec(n_rows, 1, height_ratios=heights)
+
+        ax_m = fig.add_subplot(gs[0]); ax_m.set_axis_off()
+        if uses_copula:
+            ax_c     = fig.add_subplot(gs[1]); ax_c.set_axis_off()
+            priors_g = gs[2].subgridspec(1, 3, wspace=0.30)
+        else:
+            priors_g = gs[1].subgridspec(1, 3, wspace=0.30)
+
+        # ---- margin table ------------------------------------------------
+        m_init   = init_mdl.margin_blocks()
+        m_fitted = fitted_mdl.margin_blocks()
+        m_rows: list[list[str]] = []
+        m_cell_colors: list[list] = []
+        for blk_t, blk_f in zip(m_init, m_fitted):
+            i = blk_t.get("i", "?")
+            fam_t   = blk_t.get("dist", "?")
+            fam_f   = blk_f.get("dist", "?")
+            par_t   = _fmt_params(blk_t.get("params", {}))
+            par_f   = _fmt_params(blk_f.get("params", {}))
+            row     = [str(i), fam_t, par_t, fam_f, par_f]
+            colours = ["white"] * len(row)
+            if fam_t != fam_f:
+                # Highlight family changes (GICE often picks a different family).
+                colours[3] = "#FFE9A8"  # warm yellow for "fitted family"
+                colours[1] = "#FFF6D8"
+            m_rows.append(row)
+            m_cell_colors.append(colours)
+
+        m_tbl = ax_m.table(
+            cellText  = m_rows,
+            colLabels = ["i", "true family", "true params",
+                         "fitted family", "fitted params"],
+            cellColours = m_cell_colors if m_cell_colors else None,
+            loc       = "center",
+            cellLoc   = "left",
+        )
+        m_tbl.auto_set_font_size(False)
+        m_tbl.set_fontsize(8)
+        m_tbl.scale(1.0, 1.4)
+        ax_m.set_title("Margins — true vs fitted",
+                       loc="left", fontsize=10, pad=2)
+
+        # ---- copula table (only for copula-using variants) ---------------
+        if uses_copula:
+            c_init   = init_mdl.copula_blocks()
+            c_fitted = fitted_mdl.copula_blocks()
+
+            # Index both lists by (i, j) so a re-ordered fitted block list
+            # still aligns with the seed.
+            def _key(blk: dict) -> tuple[int, int]:
+                return (int(blk.get("i", -1)), int(blk.get("j", -1)))
+            c_init_by   = {_key(b): b for b in c_init}
+            c_fitted_by = {_key(b): b for b in c_fitted}
+            keys = sorted(set(c_init_by) | set(c_fitted_by))
+
+            c_rows: list[list[str]] = []
+            c_cell_colors: list[list] = []
+            for k in keys:
+                bt = c_init_by  .get(k, {})
+                bf = c_fitted_by.get(k, {})
+                fam_t = bt.get("name", "—")
+                fam_f = bf.get("name", "—")
+                tau_t = float(bt.get("tau", float("nan")))
+                tau_f = float(bf.get("tau", float("nan")))
+                dtau  = tau_f - tau_t if (math.isfinite(tau_t)
+                                          and math.isfinite(tau_f)) else float("nan")
+                row = [
+                    f"({k[0]},{k[1]})",
+                    fam_t, _fmt_tau(tau_t),
+                    fam_f, _fmt_tau(tau_f),
+                    _fmt_signed(dtau),
+                ]
+                colours = ["white"] * len(row)
+                if fam_t != fam_f:
+                    colours[3] = "#FFE9A8"
+                    colours[1] = "#FFF6D8"
+                if math.isfinite(dtau) and abs(dtau) > 0.10:
+                    # Flag big τ shifts so the eye lands there first.
+                    colours[5] = "#F7B7B7"
+                c_rows.append(row)
+                c_cell_colors.append(colours)
+
+            c_tbl = ax_c.table(
+                cellText  = c_rows,
+                colLabels = ["pair (i,j)",
+                             "true family", r"true $\tau$",
+                             "fitted family", r"fitted $\tau$",
+                             r"$\Delta\tau$"],
+                cellColours = c_cell_colors if c_cell_colors else None,
+                loc       = "center",
+                cellLoc   = "center",
+            )
+            c_tbl.auto_set_font_size(False)
+            c_tbl.set_fontsize(8)
+            c_tbl.scale(1.0, 1.4)
+            ax_c.set_title(
+                r"Copulas — true vs fitted   "
+                r"(yellow: family change · pink: $|\Delta\tau| > 0.10$)",
+                loc="left", fontsize=10, pad=2,
+            )
+
+        # ---- joint prior heatmaps ----------------------------------------
+        ax_pt  = fig.add_subplot(priors_g[0, 0])
+        ax_pf  = fig.add_subplot(priors_g[0, 1])
+        ax_pd  = fig.add_subplot(priors_g[0, 2])
+
+        p_t = init_mdl  .prior_p
+        p_f = fitted_mdl.prior_p
+        p_d = p_f - p_t
+
+        # Common colour scale for the two raw priors so they're visually
+        # comparable; symmetric scale for the difference panel.
+        vmax_p = max(p_t.max(), p_f.max(), 1e-9)
+        for ax, mat, ttl, cmap, vmin, vmax in (
+            (ax_pt, p_t, "true",   "viridis", 0.0,  vmax_p),
+            (ax_pf, p_f, "fitted", "viridis", 0.0,  vmax_p),
+            (ax_pd, p_d, "fitted − true",
+                                "RdBu_r",  -np.max(np.abs(p_d)) - 1e-12,
+                                            np.max(np.abs(p_d)) + 1e-12),
+        ):
+            im = ax.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax,
+                           aspect="equal")
+            for i in range(K):
+                for j in range(K):
+                    val = mat[i, j]
+                    # Pick text colour by background luminance.
+                    txt_col = "white" if (cmap == "viridis"
+                                          and val > 0.5 * vmax) else "black"
+                    ax.text(j, i, f"{val:+.3f}" if cmap == "RdBu_r"
+                                                else f"{val:.3f}",
+                            ha="center", va="center", fontsize=7,
+                            color=txt_col)
+            ax.set_xticks(range(K))
+            ax.set_yticks(range(K))
+            ax.set_xticklabels([rf"$j={k}$" for k in range(K)])
+            ax.set_yticklabels([rf"$i={k}$" for k in range(K)])
+            ax.set_title(ttl, fontsize=10, pad=2)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        fig.suptitle(
+            r"Parameter comparison: true (init) vs ICE-fitted   "
+            rf"$K={K}$, variant: {init_mdl.variant.value}"
+        )
+        self._canvas.draw()
+
     # ----- view J: γ before vs. after ICE ----------------------------------
 
     def _plot_ice_gamma_compare(self, init_mdl: PMCModel, fitted_mdl: PMCModel, Y: np.ndarray):
@@ -2115,6 +2302,9 @@ class PMCMainWindow(QMainWindow):
         _ICE_VIEW_TAIL:       lambda self: self._plot_ice_tail(self._model),
         _ICE_VIEW_GAMMA:      lambda self: self._plot_ice_gamma_compare(
             self._init_model, self._model, self._ice_Y,
+        ),
+        _ICE_VIEW_PARAM_COMPARE: lambda self: self._plot_ice_param_compare(
+            self._init_model, self._model,
         ),
         _ICE_VIEW_PLAYBACK:   lambda self: self._setup_playback(self._ice_trace),
     }
@@ -2204,3 +2394,37 @@ def _class_colors(n_classes: int) -> list:
     """
     cmap = plt.get_cmap("tab10")
     return [cmap(k % 10) for k in range(n_classes)]
+
+
+# ---------------------------------------------------------------------------
+# Formatting helpers used by the parameter-comparison view
+# ---------------------------------------------------------------------------
+
+def _fmt_value(v: float) -> str:
+    """Compact float repr that uses a Unicode minus sign for readability."""
+    if v != v:                              # NaN
+        return "—"
+    s = f"{v:.4g}" if abs(v) < 1e4 else f"{v:.3e}"
+    return s.replace("-", "−")
+
+
+def _fmt_params(params: dict) -> str:
+    """``{'loc': -3.05, 'scale': 0.98}`` → ``'loc=−3.05, scale=0.98'``."""
+    if not params:
+        return "—"
+    return ", ".join(f"{k}={_fmt_value(float(v))}" for k, v in params.items())
+
+
+def _fmt_tau(tau: float) -> str:
+    """3-decimal τ with a Unicode minus and ``'—'`` for NaN."""
+    if tau != tau:
+        return "—"
+    return f"{tau:.3f}".replace("-", "−")
+
+
+def _fmt_signed(delta: float) -> str:
+    """``+0.034`` / ``−0.012`` / ``—``  — explicit sign on Δ values."""
+    if delta != delta:
+        return "—"
+    sign = "+" if delta >= 0 else "−"
+    return f"{sign}{abs(delta):.3f}"
