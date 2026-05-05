@@ -1151,3 +1151,93 @@ def test_ice_dashboard_renders_without_raising(qapp):
     # Force a real draw — that is what flushes mathtext parse errors.
     w._canvas.draw()
     assert w._has_plot
+
+
+def test_ice_dashboard_has_figure_level_family_legend(qapp):
+    """Dashboard view publishes a figure-level legend for ribbon colours.
+
+    Regression: the legend was removed when extracting it from the
+    family-ribbon panel (too crowded inside a 6-panel grid). It must be
+    re-attached at the figure level so users can decode the colours.
+    """
+    import pathlib
+
+    from prg.pmc.gui.main_window import PMCMainWindow, _ICE_VIEW_DASHBOARD
+    from prg.pmc.ice      import IceResult, ice
+    from prg.pmc.model    import PMCModel
+    from prg.pmc.simulate import simulate
+
+    toml = pathlib.Path("prg/pmc/models/pmc_gauss_k2.toml")
+    if not toml.exists():
+        pytest.skip(f"test fixture {toml} not present")
+
+    w   = PMCMainWindow()
+    mdl = PMCModel(toml)
+    w._load_model(toml)
+    _, Y = simulate(mdl, N=120, seed=0)
+    fitted, trace = ice(mdl, Y, ice_cfg={"max_iter": 3})
+    w._on_est_done(IceResult(initial_model=mdl, fitted_model=fitted,
+                              Y=Y, trace=trace))
+    w._switch_view(_ICE_VIEW_DASHBOARD)
+    w._canvas.draw()
+    # At least one figure-level legend, with at least one entry.
+    assert w._canvas.fig.legends, "dashboard has no figure-level legend"
+    leg = w._canvas.fig.legends[0]
+    assert len(leg.get_texts()) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Inline Export button (next to the View combobox)
+# ---------------------------------------------------------------------------
+
+def test_export_button_starts_disabled(qapp):
+    """Before any plot is drawn, the inline Export button is disabled."""
+    from prg.pmc.gui.main_window import PMCMainWindow
+
+    w = PMCMainWindow()
+    assert hasattr(w, "_btn_export")
+    assert w._btn_export.text() == "Export…"
+    assert not w._btn_export.isEnabled()
+
+
+def test_export_button_enabled_after_plot(qapp):
+    """``_finalize_plot`` enables the inline Export button alongside the menu action."""
+    from prg.pmc.gui.main_window import PMCMainWindow
+
+    w = PMCMainWindow()
+    # ``_finalize_plot`` is the canonical "a plot just finished rendering"
+    # hook. Enabling it should cascade to both the menu action and the
+    # inline button.
+    w._finalize_plot()
+    assert w._btn_export.isEnabled()
+    assert w._act_export_plot.isEnabled()
+
+
+def test_export_button_writes_png(qapp, tmp_path, monkeypatch):
+    """Clicking Export… saves the current canvas to the user-picked path."""
+    import pathlib
+
+    from prg.pmc.gui.main_window import PMCMainWindow, _VIEW_SIMULATION
+    from prg.pmc.model           import PMCModel
+    from prg.pmc.simulate        import simulate
+
+    toml = pathlib.Path("prg/pmc/models/pmc_gauss_k2.toml")
+    if not toml.exists():
+        pytest.skip(f"test fixture {toml} not present")
+
+    w   = PMCMainWindow()
+    mdl = PMCModel(toml)
+    w._load_model(toml)
+    X, Y = simulate(mdl, N=120, seed=0)
+    w._on_sim_done((X, Y, mdl))
+    w._switch_view(_VIEW_SIMULATION)
+    assert w._btn_export.isEnabled()
+
+    out = tmp_path / "view.png"
+    monkeypatch.setattr(
+        "PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out), "PNG image (*.png)"),
+    )
+    w._btn_export.click()
+    assert out.is_file()
+    assert out.stat().st_size > 0

@@ -434,6 +434,19 @@ class PMCMainWindow(QMainWindow):
         )
         self._cmb_view.currentTextChanged.connect(self._on_view_changed)
         view_row.addWidget(self._cmb_view, stretch=1)
+
+        # Inline Export button — duplicates ``File → Export plot…`` so
+        # exporting the visible canvas is one click away. Enabled state
+        # tracks ``_has_plot`` (see :meth:`_set_buttons_enabled` and
+        # :meth:`_finalize_plot`).
+        self._btn_export = QPushButton("Export…")
+        self._btn_export.setToolTip(
+            "Save the current plot as PNG / PDF / SVG (same as File → Export plot…)."
+        )
+        self._btn_export.setEnabled(False)
+        self._btn_export.clicked.connect(self._on_export_plot)
+        view_row.addWidget(self._btn_export)
+
         right_lay.addLayout(view_row)
 
         self._canvas = _Canvas()
@@ -598,6 +611,7 @@ class PMCMainWindow(QMainWindow):
         """
         self._has_plot = True
         self._act_export_plot.setEnabled(True)
+        self._btn_export.setEnabled(True)
 
     def _render_error(self, name: str, exc: Exception):
         """Surface a render failure to the canvas + log panel.
@@ -851,6 +865,7 @@ class PMCMainWindow(QMainWindow):
         self._act_save_data.setEnabled(self._last_Y is not None)
         # Export-plot is meaningful only when something has been drawn.
         self._act_export_plot.setEnabled(self._has_plot)
+        self._btn_export.setEnabled(self._has_plot)
 
     # ------------------------------------------------------------------
     # Menu actions — file
@@ -1885,10 +1900,15 @@ class PMCMainWindow(QMainWindow):
         self._draw_family_ribbon(ax_fam, trace)
         ax_fam.set_xlabel("iter")
         ax_fam.tick_params(labelsize=7)
-        # Compact the ribbon legend so it doesn't crowd the next row.
-        leg = ax_fam.get_legend()
-        if leg is not None:
-            leg.remove()
+        # The per-axes legend is too cramped inside a 6-panel grid.
+        # Promote it to a figure-level legend (constrained_layout reserves
+        # the space below) so users can still decode the ribbon colours.
+        fam_legend = ax_fam.get_legend()
+        ribbon_handles, ribbon_labels = [], []
+        if fam_legend is not None:
+            ribbon_handles = list(fam_legend.legend_handles)
+            ribbon_labels  = [t.get_text() for t in fam_legend.get_texts()]
+            fam_legend.remove()
 
         if trace.p_history is not None and trace.p_history.shape[0] >= 2:
             diffs = np.linalg.norm(
@@ -1942,6 +1962,20 @@ class PMCMainWindow(QMainWindow):
         ax_st.text(0.05, 0.95, msg, transform=ax_st.transAxes,
                    ha="left", va="top", family="monospace", fontsize=8)
         ax_st.set_title("Summary", loc="left")
+
+        # Figure-level legend that decodes the family-ribbon colours.
+        # ``loc="outside lower center"`` (matplotlib >= 3.6) lets
+        # constrained_layout reserve the strip below the grid, so the
+        # legend never overlaps a panel.
+        if ribbon_handles:
+            fig.legend(
+                ribbon_handles, ribbon_labels,
+                loc="outside lower center",
+                ncol=min(len(ribbon_handles), 6),
+                fontsize=7, frameon=False,
+                title="Copula family (ribbon colour)",
+                title_fontsize=7,
+            )
 
         fig.suptitle("ICE Dashboard")
         self._canvas.draw()
