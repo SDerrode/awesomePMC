@@ -20,11 +20,11 @@ report/
 ## Run
 
 ```bash
-# Quick (default — ~10 min on a recent laptop):
+# Quick (default — ~5 min on a recent 10-core laptop with parallel default):
 #   30 reps for §3.2/3.3, 5 ICE runs for §4.3.
 make            # equivalent to: make quick
 
-# Paper-sized (~3 h):
+# Paper-sized (~30-50 min wall time on the same machine, parallel):
 #   300 reps and 10 ICE runs.
 make full
 
@@ -34,6 +34,13 @@ python reproduce_csda2013.py --exp1 --quick
 # Compile the PDF only (after tables/ is built):
 make pdf
 ```
+
+The reproductions are embarrassingly parallel: by default the script
+uses **half the available CPU cores** (so the laptop stays usable).
+Override with `--jobs N`; pass `--jobs 1` for sequential, byte-for-byte
+deterministic log output. Output CSVs are bit-identical regardless of
+job count — work units are dispatched in input order via
+`ProcessPoolExecutor.map`.
 
 The script writes:
 

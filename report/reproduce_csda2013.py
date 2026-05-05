@@ -14,14 +14,20 @@ Usage
 -----
 ::
 
-    # Quick run (~10 min total) — 30 reps for §3.2/3.3, 5 ICE runs for §4.3.
+    # Quick run (~5 min on a 10-core laptop) — 30 reps for §3.2/3.3,
+    # 5 ICE runs for §4.3. Auto-parallel (uses half the CPU cores).
     python report/reproduce_csda2013.py --quick
 
-    # Full reproduction (~3 h) — 300 reps and 10 ICE runs as in the paper.
+    # Full reproduction (~30-50 min) — 300 reps and 10 ICE runs as
+    # in the paper.
     python report/reproduce_csda2013.py --full
 
-    # Run only one experiment.
-    python report/reproduce_csda2013.py --exp1 --quick
+    # Run only one experiment, force sequential mode for deterministic
+    # log output (output CSVs are bit-identical either way).
+    python report/reproduce_csda2013.py --exp1 --quick --jobs 1
+
+    # Use all 8 cores explicitly.
+    python report/reproduce_csda2013.py --full --jobs 8
 
 Outputs
 -------
@@ -35,8 +41,10 @@ import argparse
 import csv
 import logging
 import math
+import os
 import time
 from collections.abc import Iterable
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -161,6 +169,115 @@ def _clip_tau_to_range(tau: float, copula_code: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Multiprocessing helpers
+# ---------------------------------------------------------------------------
+#
+# Reps and ICE runs in this script are independent and embarrassingly
+# parallel. We dispatch them via :class:`ProcessPoolExecutor` so a 10-core
+# laptop drops the ``--full`` wall time from ~3 h to ~30-40 min using
+# half the cores (the user-requested default).
+#
+# Workers re-build the relevant ``PMCModel`` instances on each call from
+# tiny picklable arguments (margins/prior dicts, sim_code strings,
+# scalar τ values). Model construction is ~1 ms — negligible vs. the
+# ~300 ms classification work or the ~2 s ICE run, so we keep the
+# implementation simple and avoid per-process model caching.
+
+
+def _default_jobs() -> int:
+    """Half the available CPU cores, floored at 1 — the user-requested default.
+
+    Picks up ``os.sched_getaffinity`` when available (Linux) so we play
+    nicely with cgroups / taskset; falls back to ``os.cpu_count``.
+    """
+    n = None
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            n = len(os.sched_getaffinity(0))
+        except OSError:                                   # pragma: no cover
+            n = None
+    if n is None:
+        n = os.cpu_count() or 1
+    return max(1, n // 2)
+
+
+def _exp_pmc_rep_worker(args: tuple) -> np.ndarray:
+    """One PMC supervised rep — pickle-safe, used by exp1.
+
+    ``args`` carries everything needed to rebuild the models locally;
+    no PMCModel objects cross the process boundary (each is ~2 MB
+    pickled, so per-task pickling would dominate).
+    """
+    sim_code, est_codes, tau, margins, prior, n_obs, seed = args
+    sim_mdl = _build_pmc_model(
+        sim_code, _clip_tau_to_range(tau, sim_code), margins, prior,
+    )
+    est_mdls = [
+        _build_pmc_model(c, _clip_tau_to_range(tau, c), margins, prior)
+        for c in est_codes
+    ]
+    X_ref, Y = simulate(sim_mdl, N=n_obs, seed=seed)
+    return np.array(
+        [error_rate(X_ref, classify(m, Y)[0]) for m in est_mdls],
+        dtype=float,
+    )
+
+
+def _exp_pmm_rep_worker(args: tuple) -> np.ndarray:
+    """One PMM (i.i.d.) rep — pickle-safe, used by exp2."""
+    sim_code, est_codes, tau, margins, prior, n_obs, seed = args
+    sim_mdl = _build_pmc_model(
+        sim_code, _clip_tau_to_range(tau, sim_code), margins, prior,
+    )
+    est_mdls = [
+        _build_pmc_model(c, _clip_tau_to_range(tau, c), margins, prior)
+        for c in est_codes
+    ]
+    n_pairs = n_obs // 2
+    X_ref, Y = simulate_pmm(sim_mdl, n_pairs=n_pairs, seed=seed)
+    return np.array(
+        [error_rate(X_ref, classify_pmm(m, Y)[0]) for m in est_mdls],
+        dtype=float,
+    )
+
+
+def _exp3_run_worker(args: tuple) -> dict:
+    """One ICE run for exp3 — returns the per-run summary dict.
+
+    The selected family + Kendall τ are returned per pair (i, j) so
+    the parent can tally hit-counts and mean-τ identically to the
+    sequential code path.
+    """
+    (truth_layout, candidates_short, init_layout, margins, prior, n_obs,
+     max_iter, criterion, seed) = args
+    truth_mdl = _build_pmc_model_per_pair(truth_layout, margins, prior)
+    init_mdl  = _build_pmc_model_per_pair(init_layout,  margins, prior)
+    X_ref, Y = simulate(truth_mdl, N=n_obs, seed=seed)
+    fitted, _trace = ice(init_mdl, Y, ice_cfg={
+        "max_iter":           max_iter,
+        "candidates":         candidates_short,
+        "fit_margins":        False,
+        "selection_criterion": criterion,
+    })
+    K = truth_mdl.K
+    selected = {}
+    for i in range(K):
+        for j in range(K):
+            cop = fitted.copula(i, j)
+            selected[(i, j)] = (
+                cop.copula_enum.value.SHORT_NAME,
+                float(cop.params["tau_k"]),
+            )
+    X_hat_sup,   _, _ = classify(truth_mdl, Y)
+    X_hat_unsup, _, _ = classify(fitted,    Y)
+    return {
+        "selected":  selected,
+        "sup_err":   float(error_rate(X_ref, X_hat_sup)),
+        "unsup_err": float(error_rate(X_ref, X_hat_unsup)),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Experiment #1 — PMC supervised, impact of copula shape
 # ---------------------------------------------------------------------------
 
@@ -183,46 +300,52 @@ def _run_pmc_supervised_row(
     sim_code:   str,
     cfg:        _ExpConfig,
     seed_base:  int,
+    *,
+    executor:   ProcessPoolExecutor | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run one *row* of the table.
 
     For a single simulation copula ``sim_code``, generates ``cfg.reps``
-    PMC sequences once and classifies each of them with every estimator
-    in ``cfg.copulas``. This is faithful to CSDA-2013's protocol (the
+    PMC sequences and classifies each of them with every estimator in
+    ``cfg.copulas``. This is faithful to CSDA-2013's protocol (the
     paper writes "we restored simulated observations [...] using all
     simulation parameters except the copula shape"), and it is also the
     only computationally tractable strategy when the simulation copula
     is itself slow (Student, GH, A12, A14 — all rely on ``brentq``-based
     Rosenblatt inversion).
 
+    When ``executor`` is given, reps are dispatched in parallel; results
+    are aggregated in a stable order so the final ``(means, stds)`` are
+    bit-identical to the sequential path for the same seeds.
+
     Returns ``(means, stds)``, both 1-D arrays of length ``len(cfg.copulas)``
     in the same order as ``cfg.copulas``, expressed as percentages.
     """
-    tau_sim = _clip_tau_to_range(cfg.tau, sim_code)
-    sim_mdl = _build_pmc_model(sim_code, tau_sim, cfg.margins, PMC_PRIOR_ORIG)
-
-    # Pre-build estimator models once (immutable across reps).
-    est_mdls = [
-        _build_pmc_model(
-            est_code,
-            _clip_tau_to_range(cfg.tau, est_code),
-            cfg.margins,
-            PMC_PRIOR_ORIG,
-        )
-        for est_code in cfg.copulas
+    n_est = len(cfg.copulas)
+    args_list = [
+        (sim_code, list(cfg.copulas), cfg.tau, cfg.margins, PMC_PRIOR_ORIG,
+         cfg.n_obs, seed_base + r)
+        for r in range(cfg.reps)
     ]
-
-    n_est  = len(cfg.copulas)
-    err    = np.empty((cfg.reps, n_est), dtype=float)
-    for r in range(cfg.reps):
-        X_ref, Y = simulate(sim_mdl, N=cfg.n_obs, seed=seed_base + r)
-        for c, est_mdl in enumerate(est_mdls):
-            X_hat, _, _ = classify(est_mdl, Y)
-            err[r, c] = error_rate(X_ref, X_hat)
+    err = np.empty((cfg.reps, n_est), dtype=float)
+    if executor is None:
+        for r, args in enumerate(args_list):
+            err[r, :] = _exp_pmc_rep_worker(args)
+    else:
+        # Preserve order (chunksize tuned for ~30-300 reps; small enough
+        # for load-balancing, large enough to amortise pickle overhead).
+        for r, vec in enumerate(executor.map(_exp_pmc_rep_worker, args_list,
+                                             chunksize=4)):
+            err[r, :] = vec
     return 100.0 * err.mean(axis=0), 100.0 * err.std(axis=0)
 
 
-def run_exp1(reps: int, n_obs: int = 2000) -> dict[str, dict]:
+def run_exp1(
+    reps:      int,
+    n_obs:     int = 2000,
+    *,
+    executor:  ProcessPoolExecutor | None = None,
+) -> dict[str, dict]:
     """Run §3.2 — Tables 2 and 3 of CSDA 2013."""
     configs = [
         _ExpConfig("low_tau_gauss",  tau=0.16, copulas=PI_LOW,
@@ -250,6 +373,7 @@ def run_exp1(reps: int, n_obs: int = 2000) -> dict[str, dict]:
         for r, sim_code in enumerate(cfg.copulas):
             row_means, row_stds = _run_pmc_supervised_row(
                 sim_code, cfg, seed_base=1000 + r * 100,
+                executor=executor,
             )
             means[r, :] = row_means
             stds[r,  :] = row_stds
@@ -282,31 +406,33 @@ def _run_pmm_supervised_row(
     sim_code: str,
     cfg:      _ExpConfig,
     seed_base: int,
+    *,
+    executor: ProcessPoolExecutor | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """PMM analogue of :func:`_run_pmc_supervised_row`."""
-    tau_sim = _clip_tau_to_range(cfg.tau, sim_code)
-    sim_mdl = _build_pmc_model(sim_code, tau_sim, cfg.margins, PMC_PRIOR_ORIG)
-    est_mdls = [
-        _build_pmc_model(
-            est_code,
-            _clip_tau_to_range(cfg.tau, est_code),
-            cfg.margins,
-            PMC_PRIOR_ORIG,
-        )
-        for est_code in cfg.copulas
-    ]
-    n_pairs = cfg.n_obs // 2
     n_est = len(cfg.copulas)
-    err   = np.empty((cfg.reps, n_est), dtype=float)
-    for r in range(cfg.reps):
-        X_ref, Y = simulate_pmm(sim_mdl, n_pairs=n_pairs, seed=seed_base + r)
-        for c, est_mdl in enumerate(est_mdls):
-            X_hat, _ = classify_pmm(est_mdl, Y)
-            err[r, c] = error_rate(X_ref, X_hat)
+    args_list = [
+        (sim_code, list(cfg.copulas), cfg.tau, cfg.margins, PMC_PRIOR_ORIG,
+         cfg.n_obs, seed_base + r)
+        for r in range(cfg.reps)
+    ]
+    err = np.empty((cfg.reps, n_est), dtype=float)
+    if executor is None:
+        for r, args in enumerate(args_list):
+            err[r, :] = _exp_pmm_rep_worker(args)
+    else:
+        for r, vec in enumerate(executor.map(_exp_pmm_rep_worker, args_list,
+                                             chunksize=4)):
+            err[r, :] = vec
     return 100.0 * err.mean(axis=0), 100.0 * err.std(axis=0)
 
 
-def run_exp2(reps: int, n_obs: int = 2000) -> dict[str, dict]:
+def run_exp2(
+    reps:      int,
+    n_obs:     int = 2000,
+    *,
+    executor:  ProcessPoolExecutor | None = None,
+) -> dict[str, dict]:
     """Run §3.3 — Tables 4 and 5 (PMM)."""
     configs = [
         _ExpConfig("low_tau_gauss",  tau=0.16, copulas=PI_LOW,
@@ -334,6 +460,7 @@ def run_exp2(reps: int, n_obs: int = 2000) -> dict[str, dict]:
         for r, sim_code in enumerate(cfg.copulas):
             row_means, row_stds = _run_pmm_supervised_row(
                 sim_code, cfg, seed_base=2000 + r * 100,
+                executor=executor,
             )
             means[r, :] = row_means
             stds[r,  :] = row_stds
@@ -398,6 +525,8 @@ def _build_pmc_model_per_pair(
 def run_exp3(
     runs: int,
     criteria: list[str] | None = None,
+    *,
+    executor: ProcessPoolExecutor | None = None,
 ) -> dict[str, dict]:
     """Run §4.3 — Tables 6 and 7 (ICE-based copula selection).
 
@@ -409,6 +538,8 @@ def run_exp3(
                Each criterion is run on each config; results are keyed
                ``f"{cfg.label}__{criterion}"`` so the LaTeX writer can
                group them naturally.
+    executor : optional :class:`ProcessPoolExecutor` for parallel ICE
+               runs (the dominant cost for ``--full``).
     """
     if criteria is None:
         criteria = ["mle", "aic", "bic", "huard", "cvm"]
@@ -482,42 +613,43 @@ def run_exp3(
         # Error rates
         sup_err = np.empty(cfg.runs, dtype=float)
         unsup_err = np.empty(cfg.runs, dtype=float)
-        # Build the truth model once.
-        truth_mdl = _build_pmc_model_per_pair(cfg.truth, cfg.margins, cfg.p)
-        # Candidate SHORT_NAMEs for ICE.
+        # Candidate SHORT_NAMEs for ICE. The truth/init models themselves
+        # are rebuilt per-run inside the worker so no PMCModel object
+        # needs to cross the process boundary.
         cand_short = [COPULA_REGISTRY[c]["short"] for c in cfg.candidates]
 
-        t0 = time.time()
-        for r in range(cfg.runs):
-            X_ref, Y = simulate(truth_mdl, N=cfg.n_obs, seed=3000 + r)
-            # Initial model — kmeans-style heuristic from CSDA: start from
-            # the mid-range τ for each candidate, on the first candidate.
-            init_truth = {
-                (i, j): (cfg.candidates[0], 0.0) for i in range(K) for j in range(K)
-            }
-            init_mdl = _build_pmc_model_per_pair(init_truth, cfg.margins, cfg.p)
-            fitted, trace = ice(init_mdl, Y, ice_cfg={
-                "max_iter": cfg.max_iter,
-                "candidates": cand_short,
-                "fit_margins": False,        # margins assumed known per CSDA §4
-                "selection_criterion": crit,
-            })
-            # Tally hits / mean τ
-            for i in range(K):
-                for j in range(K):
-                    cop = fitted.copula(i, j)
-                    selected = cop.copula_enum.value.SHORT_NAME
-                    if selected == truth_short[(i, j)]:
-                        hit_count[(i, j)] += 1
-                    sum_tau[(i, j)] += float(cop.params["tau_k"])
-            # Error rates: supervised (truth model) vs unsupervised (fitted).
-            X_hat_sup, _, _   = classify(truth_mdl, Y)
-            X_hat_unsup, _, _ = classify(fitted, Y)
-            sup_err[r]   = error_rate(X_ref, X_hat_sup)
-            unsup_err[r] = error_rate(X_ref, X_hat_unsup)
+        # Initial model layout — CSDA's kmeans-style heuristic: start
+        # every (i, j) on the first candidate at τ = 0.
+        init_layout = {
+            (i, j): (cfg.candidates[0], 0.0) for i in range(K) for j in range(K)
+        }
+        # Per-run argument tuple — picklable, picklable, picklable (no
+        # PMCModel crosses the process boundary).
+        run_args = [
+            (cfg.truth, cand_short, init_layout, cfg.margins, cfg.p,
+             cfg.n_obs, cfg.max_iter, crit, 3000 + r)
+            for r in range(cfg.runs)
+        ]
 
-            if (r + 1) % max(1, cfg.runs // 5) == 0:
-                logger.info("  run %d/%d  elapsed=%.1fs", r + 1, cfg.runs, time.time() - t0)
+        t0 = time.time()
+        if executor is None:
+            run_results = [_exp3_run_worker(a) for a in run_args]
+        else:
+            # ICE runs are seconds-long, so chunksize=1 is fine for
+            # load-balancing without significant pickle overhead.
+            run_results = list(executor.map(_exp3_run_worker, run_args,
+                                            chunksize=1))
+
+        # Tally hits, mean τ, and error rates from the per-run results.
+        for r, res in enumerate(run_results):
+            for (i, j), (selected, tau_k) in res["selected"].items():
+                if selected == truth_short[(i, j)]:
+                    hit_count[(i, j)] += 1
+                sum_tau[(i, j)] += tau_k
+            sup_err[r]   = res["sup_err"]
+            unsup_err[r] = res["unsup_err"]
+        logger.info("  %d/%d ICE runs done  elapsed=%.1fs",
+                    cfg.runs, cfg.runs, time.time() - t0)
 
         # Build the (i, j) report rows.
         rows = []
@@ -819,6 +951,12 @@ def main(argv=None) -> int:
                         help="Override the number of ICE runs for exp3.")
     parser.add_argument("--n-obs", type=int, default=2000,
                         help="Sequence length for exp1/2 (default 2000).")
+    parser.add_argument("--jobs", type=int, default=None,
+                        help="Number of worker processes for parallel reps "
+                             "and ICE runs. Default: half the available "
+                             "CPUs (currently %d on this machine). "
+                             "Pass 1 to disable parallelism."
+                             % _default_jobs())
     args = parser.parse_args(argv)
 
     # Defaults: --quick if neither --quick nor --full given.
@@ -830,16 +968,33 @@ def main(argv=None) -> int:
         runs_default = 5
     reps = args.reps if args.reps is not None else reps_default
     runs = args.runs if args.runs is not None else runs_default
+    jobs = args.jobs if args.jobs is not None else _default_jobs()
 
     do_all = not (args.exp1 or args.exp2 or args.exp3)
 
-    res1 = res2 = res3 = None
-    if do_all or args.exp1:
-        res1 = run_exp1(reps=reps, n_obs=args.n_obs)
-    if do_all or args.exp2:
-        res2 = run_exp2(reps=reps, n_obs=args.n_obs)
-    if do_all or args.exp3:
-        res3 = run_exp3(runs=runs)
+    # Parallel pool — created once and shared across the three experiments
+    # so we pay the (~few-hundred-ms) worker spin-up cost only once.
+    # ``jobs == 1`` disables parallelism entirely (sequential path); useful
+    # for debugging and for users who want byte-for-byte reproducibility
+    # of the in-order log output.
+    executor: ProcessPoolExecutor | None = None
+    if jobs > 1:
+        logger.info("Parallel mode: %d worker processes", jobs)
+        executor = ProcessPoolExecutor(max_workers=jobs)
+    else:
+        logger.info("Sequential mode (--jobs 1)")
+
+    try:
+        res1 = res2 = res3 = None
+        if do_all or args.exp1:
+            res1 = run_exp1(reps=reps, n_obs=args.n_obs, executor=executor)
+        if do_all or args.exp2:
+            res2 = run_exp2(reps=reps, n_obs=args.n_obs, executor=executor)
+        if do_all or args.exp3:
+            res3 = run_exp3(runs=runs, executor=executor)
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True)
 
     write_all_latex_tables(res1, res2, res3)
 
