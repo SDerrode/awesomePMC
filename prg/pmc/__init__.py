@@ -31,8 +31,17 @@ ice       : unsupervised ICE parameter estimation (A16 §4 + A23 §3 GICE).
 from prg.pmc.model         import PMCModel, Variant
 from prg.pmc.simulate      import simulate
 from prg.pmc.pmm           import simulate_pmm, classify_pmm
-from prg.pmc.inference     import classify, forward, backward, smooth, mpm, error_rate
-from prg.pmc.ice           import ice
+from prg.pmc.inference     import classify, classify_image, forward, backward, smooth, mpm, error_rate
+from prg.pmc.ice           import ice, ice_image
+from prg.pmc.peano         import (
+    peano_path,
+    image_to_signal,
+    signal_to_image,
+    load_grayscale,
+    load_color,
+    load_labels,
+    save_segmentation,
+)
 from prg.pmc.logging_setup import configure as configure_logging
 
 __all__ = [
@@ -44,6 +53,7 @@ __all__ = [
     "simulate_pmm",
     # inference
     "classify",
+    "classify_image",
     "classify_pmm",
     "forward",
     "backward",
@@ -52,6 +62,15 @@ __all__ = [
     "error_rate",
     # unsupervised estimation
     "ice",
+    "ice_image",
+    # image ↔ signal transforms (Generalized Hilbert / "gilbert")
+    "peano_path",
+    "image_to_signal",
+    "signal_to_image",
+    "load_grayscale",
+    "load_color",
+    "load_labels",
+    "save_segmentation",
     # logging
     "configure_logging",
 ]

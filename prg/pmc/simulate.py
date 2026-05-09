@@ -98,13 +98,15 @@ def simulate(
     -------
     X : np.ndarray, shape (N,), dtype int
         Hidden state sequence  X_{1:N}  ∈ {0, …, K-1}.
-    Y : np.ndarray, shape (N,), dtype float
-        Observed sequence  Y_{1:N}.
+    Y : np.ndarray
+        Observed sequence  Y_{1:N}. Shape ``(N,)`` for scalar models
+        (``model.d == 1``); ``(N, d)`` when observations are vectors.
     """
     if N is None:
         N = model.N_default
     rng = np.random.default_rng(seed)
     K   = model.K
+    d   = getattr(model, "d", 1)
     pi  = model.stationary_pi
     A   = model.transition_A
 
@@ -131,7 +133,8 @@ def simulate(
     X_out = states[1:]   # shape (N,)
 
     # ── 2. Generate observations Y_1, ..., Y_N ───────────────────────────────
-    Y = np.empty(N, dtype=float)
+    # Allocate (N,) for scalar models, (N, d) for vector models.
+    Y = np.empty((N, d) if d > 1 else (N,), dtype=float)
     v  = model.variant
     uses_copula = v.uses_copula
 
@@ -140,12 +143,19 @@ def simulate(
         j = int(states[n + 1])   # X_{n+1} (current  latent state)
 
         if uses_copula and n > 0:
-            # Copula-based conditional on the previous observation
+            # Copula path is forbidden for d>1 (validated at model load),
+            # so this branch is only reachable for scalar margins.
             Y[n] = _sample_copula_conditional(model, i, j, Y[n - 1], rng)
         else:
             # Marginal sample: under SR-PMC the right-margin of pair
             # (i, j) is f_j — independent of the previous state.
-            Y[n] = float(model.margin(j).rvs(1, rng)[0])
+            sample = model.margin(j).rvs(1, rng)
+            if d > 1:
+                # multivariate_normal.rvs(size=1) returns (1, d); strip
+                # the leading singleton.
+                Y[n] = np.asarray(sample, dtype=float).reshape(d)
+            else:
+                Y[n] = float(np.asarray(sample).reshape(-1)[0])
 
     logger.debug(
         "simulate: variant=%s  K=%d  N=%d  seed=%s",

@@ -53,7 +53,7 @@ from scipy.optimize import minimize, minimize_scalar
 
 from prg.copulas._base import CopulaEnum
 from prg.pmc.inference import backward, forward, precompute_weights, smooth
-from prg.pmc.model import PMCModel, Variant
+from prg.pmc.model import PMCModel, Variant, _MULTIVARIATE_DISTS as _MULTIVARIATE_DIST_NAMES
 from prg.numerics import EPS, ONE_MINUS_EPS, MIN_POSITIVE
 
 logger = logging.getLogger(__name__)
@@ -711,8 +711,13 @@ def _fit_margin_weighted(blk: dict, y: np.ndarray, weights: np.ndarray) -> dict:
 
     Strategy:
 
-    * **Closed form** for Gaussian (``dist="norm"``) — the only family with
-      a one-shot weighted MLE.  μ̂ = Σ w_i y_i, σ̂² = Σ w_i (y_i − μ̂)².
+    * **Closed form** for Gaussian (``dist="norm"``) — the only scalar family
+      with a one-shot weighted MLE.  μ̂ = Σ w_i y_i, σ̂² = Σ w_i (y_i − μ̂)².
+
+    * **Closed form** for multivariate Gaussian (``dist="multivariate_normal"``)
+      — μ̂ = Σ w_i y_i,  Σ̂ = Σ w_i (y_i − μ̂)(y_i − μ̂)ᵀ. ``y`` is expected
+      to be 2D ``(N, d)`` in this branch; a small diagonal jitter is added
+      to ``Σ̂`` to keep it positive definite if a state is starved.
 
     * **Numerical fit** for every other ``scipy.stats`` continuous family
       via ``scipy.optimize.minimize`` (L-BFGS-B) on the negative weighted
@@ -732,15 +737,67 @@ def _fit_margin_weighted(blk: dict, y: np.ndarray, weights: np.ndarray) -> dict:
     init_params = dict(blk.get("params", {}))
     w_norm      = weights / (weights.sum() + MIN_POSITIVE)
 
-    # ── Fast path: Gaussian — closed form ─────────────────────────────
+    # ── Fast path: scalar Gaussian — closed form ──────────────────────
     if dist_name == "norm":
         mu   = float(np.dot(w_norm, y))
         sig2 = float(np.dot(w_norm, (y - mu) ** 2))
         sig  = float(np.sqrt(max(sig2, 1e-8)))
         return {"params": {"loc": mu, "scale": sig}}
 
+    # ── Multivariate Gaussian — closed form on (N, d) data ────────────
+    if dist_name == "multivariate_normal":
+        return _fit_multivariate_gaussian_weighted(y, w_norm)
+
     # ── Numerical path for any other scipy.stats family ───────────────
     return _fit_margin_weighted_numerical(dist_name, init_params, y, w_norm)
+
+
+def _fit_multivariate_gaussian_weighted(
+    y: np.ndarray,
+    w_norm: np.ndarray,
+) -> dict:
+    """Closed-form weighted MLE for the multivariate Gaussian distribution.
+
+    Parameters
+    ----------
+    y      : np.ndarray, shape (N, d) — observations.
+    w_norm : np.ndarray, shape (N,)  — non-negative weights summing to 1.
+
+    Returns
+    -------
+    dict with key ``"params"`` containing ``{"mean": [...], "cov": [[...]]}``
+    serialisable to TOML (lists, not arrays).
+
+    Notes
+    -----
+    Adds a small diagonal jitter (``1e-8 * I``) to the empirical covariance
+    so a starved state (very small Σ w) does not yield a singular matrix
+    that would break the next E-step. This is the standard regulariser for
+    Gaussian HMM ICE / EM.
+    """
+    Y = np.asarray(y, dtype=float)
+    if Y.ndim != 2:
+        raise ValueError(
+            f"_fit_multivariate_gaussian_weighted expects 2D y of shape "
+            f"(N, d); got {Y.shape}."
+        )
+    N, d = Y.shape
+
+    # Weighted mean: μ_k = Σ_n w_n y_n
+    mu = (w_norm[:, None] * Y).sum(axis=0)            # (d,)
+
+    # Weighted covariance:  Σ = Σ_n w_n (y_n − μ)(y_n − μ)ᵀ
+    centered = Y - mu                                  # (N, d)
+    cov = (w_norm[:, None, None] * centered[:, :, None] * centered[:, None, :]).sum(axis=0)
+    # Diagonal jitter for positive-definiteness under starved states.
+    cov += 1e-8 * np.eye(d)
+
+    return {
+        "params": {
+            "mean": [float(x) for x in mu],
+            "cov":  [[float(x) for x in row] for row in cov],
+        }
+    }
 
 
 def _fit_margin_weighted_numerical(
@@ -956,6 +1013,18 @@ def _select_margin_family(
     cands_raw = blk.get("candidates", None)
     if not cands_raw:
         # No candidate set → keep v0.5 behaviour.
+        return _fit_margin_weighted(blk, y, weights)
+
+    # GICE is undefined for multivariate margins (the candidate vocabulary
+    # is implicitly a list of *univariate* scipy.stats families). Skip it
+    # cleanly — the M-step still updates the (mean, cov) of the
+    # multivariate Gaussian via the closed-form path.
+    if blk.get("dist") in _MULTIVARIATE_DIST_NAMES:
+        logger.info(
+            "GICE: 'candidates' ignored for multivariate margin (i=%s, "
+            "dist=%s); only mean/cov updated.",
+            blk.get("i"), blk.get("dist"),
+        )
         return _fit_margin_weighted(blk, y, weights)
 
     if rule not in MARGIN_SELECTION_RULES:
@@ -1261,6 +1330,43 @@ def ice(
         trace for k, (_, _, trace) in enumerate(runs) if k != best_idx
     ]
     return best_mdl, best_trace
+
+
+def ice_image(
+    model: PMCModel,
+    img: np.ndarray,
+    ice_cfg: dict | None = None,
+    progress_cb=None,
+) -> tuple[PMCModel, IceTrace]:
+    """ICE on a 2D image — linearises along the gilbert path then calls :func:`ice`.
+
+    Parameters
+    ----------
+    model    : PMCModel — initial model (starting point for ICE).
+    img      : np.ndarray
+        Shape ``(H, W)`` for grayscale (when ``model.d == 1``) or
+        ``(H, W, d)`` for multi-channel (when ``model.d > 1``).
+    ice_cfg  : dict, optional — same as :func:`ice`.
+    progress_cb : callable, optional — same as :func:`ice`.
+
+    Returns
+    -------
+    fitted_model : PMCModel
+    trace        : IceTrace
+    """
+    from prg.pmc.peano import image_to_signal
+
+    if img.ndim not in (2, 3):
+        raise ValueError(
+            f"ice_image expects 2D (H, W) or 3D (H, W, d); got shape {img.shape}."
+        )
+    img_d = 1 if img.ndim == 2 else img.shape[2]
+    if img_d != model.d:
+        raise ValueError(
+            f"Image channels ({img_d}) do not match model.d = {model.d}."
+        )
+    Y = image_to_signal(img)
+    return ice(model, Y, ice_cfg=ice_cfg, progress_cb=progress_cb)
 
 
 def _ice_single_run(

@@ -1,0 +1,30 @@
+[model]
+name      = "HMC-IN multivariate-Gaussian K=2 d=3 (RGB)"
+variant   = "HMC-IN"
+K         = 2
+d         = 3                    # observation dimension (e.g. R, G, B)
+N_default = 5000
+
+[prior]
+A = [[0.9, 0.1],
+     [0.1, 0.9]]
+
+# Class 0 — darker pixels, mild positive RG / GB correlation.
+[[margins]]
+i      = 0
+dist   = "multivariate_normal"
+params = { mean = [-1.0, -0.8, -0.5], cov = [[1.0, 0.3, 0.2], [0.3, 1.0, 0.4], [0.2, 0.4, 1.0]] }
+
+# Class 1 — brighter pixels, mild negative cross-correlation between R and G.
+[[margins]]
+i      = 1
+dist   = "multivariate_normal"
+params = { mean = [1.0, 0.8, 0.5], cov = [[1.0, -0.2, 0.1], [-0.2, 1.0, 0.0], [0.1, 0.0, 1.0]] }
+
+[ice]
+fit_margins = true
+max_iter    = 30
+tol         = 1e-4
+# GICE candidates intentionally omitted — multivariate ICE only updates
+# (mean, cov) of the multivariate_normal margin; family selection is not
+# meaningful when there is a single multivariate family in the toolbox.

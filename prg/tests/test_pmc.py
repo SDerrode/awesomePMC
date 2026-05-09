@@ -85,6 +85,12 @@ def test_model_weight_positive(toml_path: Path):
     """
     from prg.pmc.simulate import simulate
     mdl = PMCModel(toml_path)
+    if mdl.d > 1:
+        pytest.skip(
+            "weight() takes scalar y_n / y_{n+1} arguments; multivariate "
+            "models exercise the equivalent path through precompute_weights "
+            "which is covered by test_multivariate.py."
+        )
     _X, Y = simulate(mdl, N=50, seed=0)
     rng = np.random.default_rng(0)
     for _ in range(20):
@@ -230,7 +236,8 @@ def test_simulate_empirical_pi(toml_path: Path):
     X, Y = simulate(mdl, N=N, seed=42)
 
     assert X.shape == (N,)
-    assert Y.shape == (N,)
+    expected_y_shape = (N,) if mdl.d == 1 else (N, mdl.d)
+    assert Y.shape == expected_y_shape
     assert X.dtype.kind == "i"
     assert np.all((X >= 0) & (X < mdl.K))
 
