@@ -900,6 +900,120 @@ def write_latex_table_ice(
     path.write_text("\n".join(lines) + "\n")
 
 
+def write_latex_table_criterion_summary(
+    path:    Path,
+    label:   str,
+    caption: str,
+    res3:    dict,
+) -> None:
+    """Aggregate the criterion-comparison results into one summary table.
+
+    For every (configuration × criterion) pair, computes:
+
+    * **diagonal recovery** — fraction of times the true copula is picked
+      across the K diagonal cells (i = j), pooled over all ICE runs.
+    * **off-diagonal recovery** — same, pooled over the K(K−1) off-diagonal
+      cells.
+    * **unsupervised error rate** — mean error of the MPM classifier when
+      using the ICE-fitted model.
+
+    The resulting LaTeX table mirrors the analysis prose of §7 of the
+    report and is fully driven by the numbers on disk; running with
+    different ``--full`` / ``--quick`` settings refreshes the table
+    automatically.
+    """
+    # Group keys "<cfg>__<criterion>" by configuration, in display order.
+    cfg_order  = ["exp1_orig_p", "exp2_orig_p", "exp1_bal_p", "exp2_bal_p"]
+    crit_order = ["mle", "aic", "bic", "huard", "cvm"]
+    cfg_descr  = {
+        "exp1_orig_p": r"exp.\ 1, $p_{\text{orig}}$",
+        "exp2_orig_p": r"exp.\ 2, $p_{\text{orig}}$",
+        "exp1_bal_p":  r"exp.\ 1, $p_{\text{bal}}$",
+        "exp2_bal_p":  r"exp.\ 2, $p_{\text{bal}}$",
+    }
+    crit_descr = {
+        "mle":   "MLE",
+        "aic":   "AIC",
+        "bic":   "BIC",
+        "huard": "Huard",
+        "cvm":   r"CvM",
+    }
+
+    # Build aggregates: cfg -> crit -> (diag_pct, off_pct, unsup_mean)
+    summary: dict[str, dict[str, tuple[float, float, float]]] = {}
+    for k, r in res3.items():
+        if "__" not in k:
+            continue
+        cfg, crit = k.split("__", 1)
+        diag_h = diag_n = off_h = off_n = 0
+        for row in r["rows"]:
+            i, j = int(row["i"]), int(row["j"])
+            h, n = int(row["hits"]), int(row["runs"])
+            if i == j:
+                diag_h += h; diag_n += n
+            else:
+                off_h += h;  off_n += n
+        diag_pct = 100.0 * diag_h / max(diag_n, 1)
+        off_pct  = 100.0 * off_h  / max(off_n,  1)
+        summary.setdefault(cfg, {})[crit] = (
+            diag_pct, off_pct, float(r["unsup_err_mean"]),
+        )
+
+    # Bold the best (highest recovery, lowest err) per row.
+    lines = [
+        r"\begin{table}[htbp]", r"  \centering",
+        rf"  \caption{{{caption}}}",
+        rf"  \label{{{label}}}",
+        r"  \footnotesize",
+        r"  \begin{tabular}{l " + "ccc " * len(crit_order) + r"}",
+        r"    \toprule",
+        r"    & " + " & ".join(
+            rf"\multicolumn{{3}}{{c}}{{{crit_descr[c]}}}"
+            for c in crit_order
+        ) + r" \\",
+        r"    \cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}"
+        r"\cmidrule(lr){11-13}\cmidrule(lr){14-16}",
+        r"    config "
+        + " & " + " & ".join([r"D & O & $\bar{e}$"] * len(crit_order))
+        + r" \\",
+        r"    \midrule",
+    ]
+    for cfg in cfg_order:
+        per = summary.get(cfg)
+        if per is None:
+            continue
+        # Best per metric across criteria (for this cfg row).
+        diags = {c: per[c][0] for c in crit_order if c in per}
+        offs  = {c: per[c][1] for c in crit_order if c in per}
+        errs  = {c: per[c][2] for c in crit_order if c in per}
+        if diags:
+            best_d = max(diags.values()); best_o = max(offs.values()); best_e = min(errs.values())
+        else:
+            best_d = best_o = best_e = None
+        cells = [cfg_descr.get(cfg, cfg)]
+        for c in crit_order:
+            if c not in per:
+                cells.extend(["—", "—", "—"])
+                continue
+            d, o, e = per[c]
+            cells.append(rf"\textbf{{{d:.0f}}}" if d == best_d else f"{d:.0f}")
+            cells.append(rf"\textbf{{{o:.0f}}}" if o == best_o else f"{o:.0f}")
+            cells.append(rf"\textbf{{{e:.1f}}}" if e == best_e else f"{e:.1f}")
+        lines.append("    " + " & ".join(cells) + r" \\")
+    lines.extend([
+        r"    \bottomrule",
+        r"  \end{tabular}",
+        r"  \par\smallskip",
+        r"  \emph{D} = diagonal recovery rate (\%, higher is better, "
+        r"$K{=}2$ diagonal cells $\times$ runs); "
+        r"\emph{O} = off-diagonal recovery rate (\%); "
+        r"$\bar{e}$ = mean unsupervised classification error (\%, lower is "
+        r"better). Bold = best per row.",
+        r"\end{table}",
+    ])
+    path.write_text("\n".join(lines) + "\n")
+
+
 def write_all_latex_tables(
     res1: dict | None,
     res2: dict | None,
@@ -968,6 +1082,20 @@ def write_all_latex_tables(
                 rows=r["rows"],
                 sup_err=(r["sup_err_mean"],   r["sup_err_std"]),
                 unsup_err=(r["unsup_err_mean"], r["unsup_err_std"]),
+            )
+
+        # One aggregated summary across configs × criteria — drives the
+        # numerical synthesis prose of §7 of the report.
+        if any("__" in k for k in res3):
+            write_latex_table_criterion_summary(
+                TABLES_DIR / "exp4_criterion_summary.tex",
+                label="tab:exp4-summary",
+                caption=(
+                    r"Selection-criterion comparison (summary). "
+                    r"D / O = diagonal / off-diagonal recovery (\%); "
+                    r"$\bar{e}$ = mean unsupervised classification error (\%)."
+                ),
+                res3=res3,
             )
 
 
