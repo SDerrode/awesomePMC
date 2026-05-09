@@ -3,9 +3,11 @@ cli.py — Command-line interface for PMC/HMC simulation, classification, and GU
 
 Usage
 -----
-  python -m prg.pmc simulate --model MODEL.toml [--N 5000] [--seed 42] [--out seq.csv]
-  python -m prg.pmc classify --model MODEL.toml --data seq.csv [--out res.csv] [--ref ref_col]
-  python -m prg.pmc estimate --model INIT.toml --data seq.csv [--out fitted.toml]
+  python -m prg.pmc simulate       --model MODEL.toml [--N 5000] [--seed 42] [--out seq.csv]
+  python -m prg.pmc classify       --model MODEL.toml --data seq.csv  [--out res.csv] [--ref ref_col]
+  python -m prg.pmc estimate       --model INIT.toml  --data seq.csv  [--out fitted.toml]
+  python -m prg.pmc classify-image --model MODEL.toml --image img.png [--out seg.png] [--ref-image ref.png]
+  python -m prg.pmc estimate-image --model INIT.toml  --image img.png [--out fitted.toml]
   python -m prg.pmc gui [MODEL.toml]
   python -m prg.pmc --help
 
@@ -17,6 +19,13 @@ CSV formats
 
   If --ref <col> is given on 'classify', the reference labels column is used
   to compute and print the classification error rate.
+
+Image I/O
+---------
+  classify-image / estimate-image accept any format Pillow decodes (PNG,
+  JPG, BMP, TIFF, …). Images are converted to grayscale (PIL ``L`` mode)
+  and linearised along the Generalized Hilbert ("gilbert") path before
+  being passed to the same forward-backward / ICE machinery as 1D signals.
 """
 
 import argparse
@@ -207,6 +216,105 @@ def cmd_estimate(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Sub-command: classify-image
+# ---------------------------------------------------------------------------
+
+def cmd_classify_image(args: argparse.Namespace) -> int:
+    from prg.pmc.model     import PMCModel
+    from prg.pmc.inference import classify_image, error_rate
+    from prg.pmc.peano     import load_grayscale, load_color, save_segmentation
+
+    mdl = PMCModel(args.model)
+    K   = mdl.K
+
+    if mdl.d > 1 or args.color:
+        img = load_color(args.image)
+    else:
+        img = load_grayscale(args.image)
+    H, W = img.shape[:2]
+
+    X_hat_2d, gamma_2d, log_lik = classify_image(mdl, img)
+
+    print(f"Model      : {mdl.name}  ({mdl.variant.value}, K={K})")
+    print(f"Image      : {args.image}  ({H}×{W} = {H * W} px)")
+    print(f"Log-lik    : {log_lik:.4f}")
+
+    if args.ref_image:
+        from prg.pmc.peano import load_labels
+        ref_labels = load_labels(args.ref_image)
+        if ref_labels.shape != (H, W):
+            print(
+                f"WARNING: --ref-image shape {ref_labels.shape} ≠ image spatial "
+                f"shape ({H}, {W}); ignored.",
+                file=sys.stderr,
+            )
+        else:
+            er = error_rate(ref_labels.ravel(), X_hat_2d.ravel())
+            print(f"Error rate : {er:.4f}  ({er * 100:.1f} %)")
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    save_segmentation(out, X_hat_2d.astype(np.int32), K=K)
+    print(f"Segmentation : {out}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Sub-command: estimate-image  (ICE on an image)
+# ---------------------------------------------------------------------------
+
+def cmd_estimate_image(args: argparse.Namespace) -> int:
+    from prg.pmc.model     import PMCModel
+    from prg.pmc.ice       import ice_image
+    from prg.pmc.inference import classify_image, error_rate
+    from prg.pmc.peano     import load_grayscale, load_color
+
+    mdl = PMCModel(args.model)
+    if mdl.d > 1 or args.color:
+        img = load_color(args.image)
+    else:
+        img = load_grayscale(args.image)
+    H, W = img.shape[:2]
+
+    cfg: dict = {}
+    if args.max_iter is not None:
+        cfg["max_iter"] = args.max_iter
+    if args.candidates:
+        cfg["candidates"] = args.candidates.split(",")
+    if args.fit_margins:
+        cfg["fit_margins"] = True
+
+    print(
+        f"Running ICE on image {args.image} ({H}×{W}) "
+        f"with {mdl.name} ({mdl.variant.value}, K={mdl.K}) …"
+    )
+    fitted, trace = ice_image(mdl, img, ice_cfg=cfg)
+    lls = trace.log_liks
+
+    print(f"  Iterations    : {len(lls)}")
+    print(f"  Final log-lik : {lls[-1]:.4f}")
+    print(f"  LL history    : {[round(ll, 2) for ll in lls]}")
+
+    if args.ref_image:
+        from prg.pmc.peano import load_labels
+        ref_labels = load_labels(args.ref_image)
+        if ref_labels.shape == (H, W):
+            X_hat_2d, _, _ = classify_image(fitted, img)
+            er = error_rate(ref_labels.ravel(), X_hat_2d.ravel())
+            print(f"  Error rate    : {er:.4f}  ({er * 100:.1f} %)")
+        else:
+            print(
+                f"WARNING: --ref-image shape {ref_labels.shape} ≠ image "
+                f"spatial shape ({H}, {W}); ignored.",
+                file=sys.stderr,
+            )
+
+    fitted.save(args.out)
+    print(f"  Fitted model  : {args.out}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -304,6 +412,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reference label column for error rate (default: 'X'). Pass '' to skip.",
     )
     p_est.set_defaults(func=cmd_estimate)
+
+    # ── classify-image ────────────────────────────────────────────────────
+    p_clsi = sub.add_parser(
+        "classify-image",
+        help="MPM classification of a 2D image (linearised via gilbert curve).",
+    )
+    p_clsi.add_argument(
+        "--model", "-m", required=True, metavar="MODEL.toml",
+        help="Path to the TOML model file.",
+    )
+    p_clsi.add_argument(
+        "--image", "-i", required=True, metavar="IMG",
+        help="Input image (PNG/JPG/BMP/TIFF — converted to grayscale).",
+    )
+    p_clsi.add_argument(
+        "--out", "-o", default="segmentation.png", metavar="OUT.png",
+        help="Output PNG path for the class-label map (default: segmentation.png).",
+    )
+    p_clsi.add_argument(
+        "--ref-image", default=None, metavar="REF",
+        help="Optional reference label image (greyscale; intensities are "
+             "rescaled to {0,…,K-1}) used to compute the error rate.",
+    )
+    p_clsi.add_argument(
+        "--color", action="store_true",
+        help="Force RGB load (default: auto — RGB if model.d > 1 else grayscale).",
+    )
+    p_clsi.set_defaults(func=cmd_classify_image)
+
+    # ── estimate-image (ICE on image) ─────────────────────────────────────
+    p_esti = sub.add_parser(
+        "estimate-image",
+        help="Unsupervised ICE estimation directly from a 2D image.",
+    )
+    p_esti.add_argument(
+        "--model", "-m", required=True, metavar="INIT.toml",
+        help="Path to the initial TOML model file (starting point for ICE).",
+    )
+    p_esti.add_argument(
+        "--image", "-i", required=True, metavar="IMG",
+        help="Input image (PNG/JPG/BMP/TIFF — converted to grayscale).",
+    )
+    p_esti.add_argument(
+        "--out", "-o", default="fitted.toml", metavar="OUT.toml",
+        help="Output TOML path for the fitted model (default: fitted.toml).",
+    )
+    p_esti.add_argument(
+        "--max-iter", dest="max_iter", type=int, default=None, metavar="N",
+        help="Maximum ICE iterations (overrides TOML [ice] section).",
+    )
+    p_esti.add_argument(
+        "--candidates", default=None, metavar="C1,C2,...",
+        help="Comma-separated copula SHORT_NAMEs to try (e.g. 'Gauss,Clayton,GH').",
+    )
+    p_esti.add_argument(
+        "--fit-margins", dest="fit_margins", action="store_true",
+        help="Also re-estimate margin parameters (Gaussian only).",
+    )
+    p_esti.add_argument(
+        "--ref-image", default=None, metavar="REF",
+        help="Optional reference label image used to print the post-fit error rate.",
+    )
+    p_esti.add_argument(
+        "--color", action="store_true",
+        help="Force RGB load (default: auto — RGB if model.d > 1 else grayscale).",
+    )
+    p_esti.set_defaults(func=cmd_estimate_image)
 
     # ── gui ───────────────────────────────────────────────────────────────
     p_gui = sub.add_parser(

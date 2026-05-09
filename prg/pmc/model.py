@@ -103,8 +103,25 @@ PER_CLASS_MARGIN = {v for v in Variant if v.per_class_margin}
 # Thin wrapper around a frozen scipy.stats distribution
 # ---------------------------------------------------------------------------
 
+_MULTIVARIATE_DISTS = frozenset({"multivariate_normal"})
+
+
+def _build_margin(dist_name: str, params: dict):
+    """Factory: scalar ``_MarginDist`` or ``_VectorMargin`` based on ``dist_name``.
+
+    Multivariate distributions (currently: ``multivariate_normal``) get the
+    vector wrapper; everything else is treated as a scalar scipy.stats family.
+    """
+    if dist_name in _MULTIVARIATE_DISTS:
+        return _VectorMargin(dist_name, params)
+    return _MarginDist(dist_name, params)
+
+
 class _MarginDist:
-    """Thin wrapper around a frozen ``scipy.stats`` distribution."""
+    """Thin wrapper around a frozen scalar ``scipy.stats`` distribution."""
+
+    is_multivariate = False
+    d = 1
 
     def __init__(self, dist_name: str, params: dict):
         self.dist_name = dist_name
@@ -143,6 +160,102 @@ class _MarginDist:
 
     def __repr__(self) -> str:
         return f"_MarginDist({self.dist_name!r}, {self.params})"
+
+
+class _VectorMargin:
+    """Wrapper for a multivariate ``scipy.stats`` distribution.
+
+    Only ``multivariate_normal`` is supported in this version (the only
+    multivariate margin GICE/ICE knows how to update). Copula variants
+    (HMC-DN, PMC) are forbidden when any margin is multivariate — see
+    :meth:`PMCModel._parse` validation — so :meth:`cdf` / :meth:`ppf` are
+    not part of the contract.
+
+    Parameters
+    ----------
+    dist_name : str
+        Currently must be ``"multivariate_normal"``.
+    params : dict with keys
+        ``mean`` : list/array of length d.
+        ``cov``  : list-of-lists / array of shape (d, d).
+    """
+
+    is_multivariate = True
+
+    def __init__(self, dist_name: str, params: dict):
+        if dist_name not in _MULTIVARIATE_DISTS:
+            raise ValueError(
+                f"_VectorMargin: unsupported multivariate distribution "
+                f"{dist_name!r}. Supported: {sorted(_MULTIVARIATE_DISTS)}"
+            )
+        self.dist_name = dist_name
+        self.params    = {
+            "mean": [float(x) for x in params["mean"]],
+            "cov":  [[float(x) for x in row] for row in params["cov"]],
+        }
+        mean = np.asarray(self.params["mean"], dtype=float)
+        cov  = np.asarray(self.params["cov"],  dtype=float)
+        if mean.ndim != 1:
+            raise ValueError(
+                f"_VectorMargin {dist_name}: mean must be 1D, got shape {mean.shape}."
+            )
+        d = mean.size
+        if cov.shape != (d, d):
+            raise ValueError(
+                f"_VectorMargin {dist_name}: cov must be ({d}, {d}), got {cov.shape}."
+            )
+        self.d = d
+        # ``allow_singular=True`` gives a graceful pinv-based density when ICE
+        # produces a near-singular covariance for a starved state; without it
+        # the M-step can crash mid-iteration on real data.
+        self._frozen = _ss.multivariate_normal(mean=mean, cov=cov, allow_singular=True)
+
+    # ── scalar-input methods (single observation y ∈ ℝ^d) ────────────────
+    def pdf(self, y) -> float:
+        return float(self._frozen.pdf(np.asarray(y, dtype=float)))
+
+    def logpdf(self, y) -> float:
+        return float(self._frozen.logpdf(np.asarray(y, dtype=float)))
+
+    # ── vectorised pdf — accepts Y of shape (N, d) ───────────────────────
+    def pdf_vec(self, Y: np.ndarray) -> np.ndarray:
+        Y = np.asarray(Y, dtype=float)
+        if Y.ndim != 2 or Y.shape[1] != self.d:
+            raise ValueError(
+                f"_VectorMargin.pdf_vec expects Y of shape (N, {self.d}); "
+                f"got {Y.shape}."
+            )
+        return self._frozen.pdf(Y)
+
+    # ── CDF / PPF are undefined here: variants requiring them are
+    #    forbidden when d > 1 (validation in PMCModel). Keep stub raisers
+    #    in case a future code path hits them — clearer than a cryptic
+    #    AttributeError deep in forward-backward.
+    def cdf(self, y) -> float:
+        raise NotImplementedError(
+            "Multivariate margins have no scalar CDF; copula variants are "
+            "not allowed when d > 1."
+        )
+
+    def cdf_vec(self, Y: np.ndarray) -> np.ndarray:
+        raise NotImplementedError(
+            "Multivariate margins have no scalar CDF; copula variants are "
+            "not allowed when d > 1."
+        )
+
+    def ppf(self, q) -> float:
+        raise NotImplementedError(
+            "Multivariate margins have no scalar quantile function."
+        )
+
+    def rvs(self, size: int, rng) -> np.ndarray:
+        return self._frozen.rvs(size=size, random_state=rng)
+
+    def __repr__(self) -> str:
+        return (
+            f"_VectorMargin({self.dist_name!r}, "
+            f"d={self.d}, mean={self.params['mean']}, cov=[…])"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +416,21 @@ class PMCModel:
             raise ValueError(f"K must be >= 2, got {self.K}.")
         self.N_default = int(m.get("N_default", 5000))
 
+        # ── Observation dimension d (default 1 for backward compat) ──────
+        # When d > 1, observations are vectors in ℝ^d (e.g. RGB images), all
+        # margins must be ``multivariate_normal``, and copula-using variants
+        # (HMC-DN, PMC) are forbidden — copulas operate on scalar CDFs which
+        # are undefined for multivariate margins.
+        self.d = int(m.get("d", 1))
+        if self.d < 1:
+            raise ValueError(f"[model].d must be ≥ 1, got {self.d}.")
+        if self.d > 1 and self.variant.uses_copula:
+            raise ValueError(
+                f"Variant {self.variant.value} uses temporal copulas, which "
+                f"require scalar margins; got [model].d = {self.d}. "
+                f"For multivariate observations, use HMC-IN, HMC-IN2 or PMC-IN."
+            )
+
         # ── [prior] ───────────────────────────────────────────────────
         prior_raw = raw.get("prior", {})
 
@@ -394,6 +522,24 @@ class PMCModel:
         # noise) and collapses them to K state-indexed entries.
         margins_raw = raw.get("margins", [])
         self._state_margins, self._raw_margin_blocks = self._parse_margins(margins_raw)
+
+        # ── Post-margin dimensionality check ─────────────────────────────
+        # Every margin must agree with [model].d. Univariate margins have
+        # ``d == 1``; multivariate margins expose their own ``d`` matching
+        # the length of ``mean``.
+        for i, mg in self._state_margins.items():
+            mg_d = getattr(mg, "d", 1)
+            if mg_d != self.d:
+                raise ValueError(
+                    f"Margin for state i={i} has dimension {mg_d}, but "
+                    f"[model].d = {self.d}. All margins must match."
+                )
+            if self.d > 1 and not getattr(mg, "is_multivariate", False):
+                raise ValueError(
+                    f"Margin for state i={i} is scalar ({mg.dist_name!r}), "
+                    f"but [model].d = {self.d}. Use 'multivariate_normal' "
+                    f"for multivariate observations."
+                )
         # ``self._margins[(i, j)]`` retained for back-compat; under SR-PMC
         # all entries with the same ``i`` point to the same _MarginDist.
         self._margins: dict[tuple[int, int], _MarginDist] = {
@@ -528,7 +674,7 @@ class PMCModel:
                 raise ValueError(
                     f"[[margins]] block #{n_blk} (i={i}) missing the 'dist' key."
                 )
-            state_margins[i] = _MarginDist(block["dist"], block.get("params", {}))
+            state_margins[i] = _build_margin(block["dist"], block.get("params", {}))
             kept = {
                 "i": i,
                 "dist": block["dist"],
@@ -616,7 +762,7 @@ class PMCModel:
                         f"(i={i}, j={j}): {blk['dist']}({blk.get('params', {})}) "
                         f"≠ anchor (i={i}, j=0): {anchor_dist}({anchor_params})"
                     )
-            state_margins[i] = _MarginDist(anchor_dist, anchor_params)
+            state_margins[i] = _build_margin(anchor_dist, anchor_params)
             raw_blocks.append({"i": i, "dist": anchor_dist, "params": anchor_params})
 
         if conflicts:

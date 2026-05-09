@@ -203,8 +203,11 @@ def forward(
     if not np.isfinite(C_1) or C_1 <= 0.0:
         # Genuine modelling error: Y[0] has zero density under every state.
         # Continuing with a synthetic floor would silently lie to the caller.
+        # ``Y[0]`` is a scalar in the d=1 case but a vector for multivariate
+        # observations — use ``np.array2string`` for a uniform short repr.
+        y0_repr = np.array2string(np.asarray(Y[0]), precision=4, separator=", ")
         raise IncompatibleObservationError(
-            f"Forward pass: marginal density of Y[0]={Y[0]:.4g} is zero or "
+            f"Forward pass: marginal density of Y[0]={y0_repr} is zero or "
             f"non-finite under every state (C_1={C_1!r}). The observation "
             f"sequence is incompatible with the model — check margin "
             f"parameters or for outliers."
@@ -362,6 +365,62 @@ def classify(
 # ---------------------------------------------------------------------------
 # Accuracy helper
 # ---------------------------------------------------------------------------
+
+def classify_image(
+    model: PMCModel,
+    img: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """
+    Supervised MPM classification of a 2D image (mono- or multi-channel).
+
+    The image is linearised along the Generalized Hilbert ("gilbert") path,
+    classified with :func:`classify`, then re-folded into 2D maps.
+
+    Parameters
+    ----------
+    model : PMCModel — fully specified model (parameters known).
+    img   : np.ndarray
+        Shape ``(H, W)`` for grayscale (when ``model.d == 1``) or
+        ``(H, W, d)`` for multi-channel (when ``model.d > 1``).
+
+    Returns
+    -------
+    X_hat_2d : np.ndarray, shape (H, W), int — MPM class-label map.
+    gamma_2d : np.ndarray, shape (H, W, K)   — per-pixel posterior marginals.
+    log_lik  : float                          — log p(image | model).
+
+    Notes
+    -----
+    The class-label map is always 2D (segmentation is per-pixel, scalar)
+    regardless of the input dimensionality. Posterior marginals are over
+    states, so their last axis is always ``K`` — independent of ``model.d``.
+    """
+    from prg.pmc.peano import image_to_signal, signal_to_image
+
+    if img.ndim not in (2, 3):
+        raise ValueError(
+            f"classify_image expects 2D (H, W) or 3D (H, W, d); "
+            f"got shape {img.shape}."
+        )
+    img_d = 1 if img.ndim == 2 else img.shape[2]
+    if img_d != model.d:
+        raise ValueError(
+            f"Image channels ({img_d}) do not match model.d = {model.d}. "
+            f"Use load_grayscale for a d=1 model or load_color for d=3."
+        )
+
+    Y = image_to_signal(img)                 # (N,) if d=1, (N, d) if d>1
+    X_hat, gamma, log_lik = classify(model, Y)
+
+    H, W = img.shape[:2]
+    X_hat_2d = signal_to_image(X_hat, (H, W))
+    K        = gamma.shape[1]
+    gamma_2d = np.empty((H, W, K), dtype=gamma.dtype)
+    for k in range(K):
+        gamma_2d[..., k] = signal_to_image(gamma[:, k], (H, W))
+
+    return X_hat_2d, gamma_2d, log_lik
+
 
 def error_rate(X_true: np.ndarray, X_hat: np.ndarray) -> float:
     """

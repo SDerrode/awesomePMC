@@ -109,6 +109,8 @@ _VIEW_NONE             = "—"
 _VIEW_SIMULATION       = "Simulation"
 _VIEW_CLASSIFICATION   = "Classification"
 _VIEW_GOF_HEATMAP      = "GoF — p-value heatmap"
+_VIEW_IMAGE_RAW        = "Image — input"
+_VIEW_IMAGE_SEG        = "Image — segmentation"
 # ICE-trace views (only available after a successful estimate)
 _ICE_VIEW_LOGLIK       = "ICE — Log-likelihood"
 _ICE_VIEW_TAU          = "ICE — τ trajectories"           # A
@@ -127,7 +129,9 @@ _ICE_VIEW_PARAM_COMPARE = "ICE — Parameters: true vs fitted"  # M
 
 # Display order in the combobox (None entries denote separators visually).
 _ALL_VIEWS = [
-    _VIEW_SIMULATION, _VIEW_CLASSIFICATION, _VIEW_GOF_HEATMAP,
+    _VIEW_SIMULATION, _VIEW_CLASSIFICATION,
+    _VIEW_IMAGE_RAW, _VIEW_IMAGE_SEG,
+    _VIEW_GOF_HEATMAP,
     _ICE_VIEW_DASHBOARD, _ICE_VIEW_PARAM_COMPARE,
     _ICE_VIEW_LOGLIK, _ICE_VIEW_TAU, _ICE_VIEW_FAMILY,
     _ICE_VIEW_MARGIN_FAMILY,
@@ -207,6 +211,13 @@ class PMCMainWindow(QMainWindow):
         self._sim_state: tuple | None     = None      # (X, Y, mdl)
         self._cls_state: tuple | None     = None      # (Y, X_hat, gamma, X_ref, mdl)
         self._gof_state: list | None      = None      # [{...}, ...]
+        # 2D image state — when an image is loaded, ``_last_Y`` holds its
+        # linearised gilbert scan and ``_last_image`` keeps the 2D array
+        # for the Image-* views. Reference labels (if loaded) are stored
+        # 2D in ``_last_image_ref`` AND linearised into ``_last_X`` so the
+        # existing ``error_rate`` path works unchanged.
+        self._last_image: np.ndarray | None     = None        # (H, W)
+        self._last_image_ref: np.ndarray | None = None        # (H, W) int labels
         self._ice_trace                   = None      # :class:`IceTrace`
         self._init_model: PMCModel | None = None      # initial model for ICE
         self._ice_Y:      np.ndarray | None = None    # observation seq fed to ICE
@@ -270,10 +281,34 @@ class PMCMainWindow(QMainWindow):
         act_load_data = file.addAction("Load &data (CSV)…")
         act_load_data.triggered.connect(self._on_load_data)
 
+        act_load_image = file.addAction("Load &image…")
+        act_load_image.setToolTip(
+            "Load a grayscale image (PNG/JPG/BMP/TIFF). The image is "
+            "linearised along the Generalized Hilbert (gilbert) path and "
+            "fed to Classify / Estimate as a 1D signal; results can then "
+            "be viewed as 2D segmentation maps."
+        )
+        act_load_image.triggered.connect(self._on_load_image)
+
+        act_load_image_ref = file.addAction("Load image &reference labels…")
+        act_load_image_ref.setToolTip(
+            "Optional reference label image (paletted PNG or grayscale) — "
+            "used to compute the classification error rate."
+        )
+        act_load_image_ref.triggered.connect(self._on_load_image_ref)
+
         act_save_data = file.addAction("Sa&ve data (CSV)…")
         act_save_data.setToolTip("Save the last simulated/loaded (X, Y) sequence.")
         act_save_data.triggered.connect(self._on_save_data)
         self._act_save_data = act_save_data
+
+        self._act_save_seg = file.addAction("Save se&gmentation (PNG)…")
+        self._act_save_seg.setToolTip(
+            "Save the current 2D segmentation map (folded back from the "
+            "1D Classify result) as a paletted PNG."
+        )
+        self._act_save_seg.triggered.connect(self._on_save_segmentation)
+        self._act_save_seg.setEnabled(False)
 
         self._act_export_plot = file.addAction("Export &plot…")
         self._act_export_plot.setToolTip(
@@ -521,6 +556,11 @@ class PMCMainWindow(QMainWindow):
             return self._cls_state is not None
         if name == _VIEW_GOF_HEATMAP:
             return self._gof_state is not None
+        if name == _VIEW_IMAGE_RAW:
+            return self._last_image is not None
+        if name == _VIEW_IMAGE_SEG:
+            return (self._last_image is not None
+                    and self._cls_state is not None)
         if name == _ICE_VIEW_MULTISTART:
             return (self._ice_trace is not None
                     and len(self._ice_trace.multistart_runs) > 0)
@@ -929,12 +969,113 @@ class PMCMainWindow(QMainWindow):
             return
         self._last_Y = Y
         self._last_X = X
+        # Loading 1D data invalidates any prior image state.
+        self._last_image = None
+        self._last_image_ref = None
+        self._act_save_seg.setEnabled(False)
         self._act_save_data.setEnabled(True)
         self._log_append(
             f"Loaded data: N={len(Y)}  "
             f"{'(X labels present)' if X is not None else '(no X labels)'}"
         )
         self._status.showMessage(f"Data loaded: {path}  N={len(Y)}")
+        self._populate_view_selector()
+
+    def _on_load_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All files (*)",
+        )
+        if not path:
+            return
+        from prg.pmc.peano import image_to_signal, load_color, load_grayscale
+        # Auto-dispatch on model.d: RGB for multivariate models, grayscale
+        # for scalar ones. If no model is loaded, fall back to grayscale.
+        d_target = getattr(self._model, "d", 1) if self._model is not None else 1
+        try:
+            img = load_color(path) if d_target > 1 else load_grayscale(path)
+        except Exception as exc:
+            logger.exception("Failed to load image %s", path)
+            QMessageBox.critical(self, "Image Error", str(exc))
+            return
+        self._last_image       = img
+        self._last_Y           = image_to_signal(img)
+        # Loading a new image invalidates any prior reference labels and
+        # any prior 1D-only ground truth.
+        self._last_image_ref   = None
+        self._last_X           = None
+        self._cls_state        = None         # force re-classify on this image
+        self._sim_state        = None
+        self._act_save_data.setEnabled(True)
+        H, W = img.shape
+        self._log_append(
+            f"Loaded image: {path}  ({H}×{W} = {H * W} px)  "
+            f"intensity ∈ [{img.min():.3f}, {img.max():.3f}]"
+        )
+        self._status.showMessage(f"Image loaded: {path}  {H}×{W}")
+        self._populate_view_selector()
+        self._switch_view(_VIEW_IMAGE_RAW)
+
+    def _on_load_image_ref(self):
+        if self._last_image is None:
+            QMessageBox.warning(
+                self, "No image",
+                "Load an input image first — reference labels must match its shape.",
+            )
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load reference label image",
+            "",
+            "Images (*.png *.tif *.tiff *.bmp);;All files (*)",
+        )
+        if not path:
+            return
+        from prg.pmc.peano import image_to_signal, load_labels
+        try:
+            ref = load_labels(path)
+        except Exception as exc:
+            logger.exception("Failed to load reference labels %s", path)
+            QMessageBox.critical(self, "Image Error", str(exc))
+            return
+        H, W = self._last_image.shape[:2]
+        if ref.shape != (H, W):
+            QMessageBox.warning(
+                self, "Shape mismatch",
+                f"Reference shape {ref.shape} does not match image spatial "
+                f"shape ({H}, {W}).",
+            )
+            return
+        self._last_image_ref = ref
+        self._last_X         = image_to_signal(ref)
+        self._log_append(
+            f"Loaded reference labels: {path}  classes={np.unique(ref).tolist()}"
+        )
+        self._status.showMessage(f"Reference loaded: {path}")
+
+    def _on_save_segmentation(self):
+        if self._cls_state is None or self._last_image is None:
+            QMessageBox.information(
+                self, "No segmentation",
+                "Load an image and run Classify (or Estimate then Classify) first.",
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save segmentation PNG", "segmentation.png",
+            "PNG image (*.png);;All files (*)",
+        )
+        if not path:
+            return
+        from prg.pmc.peano import save_segmentation, signal_to_image
+        _Y, X_hat, _gamma, _X_ref, mdl = self._cls_state
+        try:
+            X_hat_2d = signal_to_image(X_hat, self._last_image.shape)
+            save_segmentation(path, X_hat_2d.astype(np.int32), K=mdl.K)
+            self._log_append(f"Saved segmentation: {path}")
+            self._status.showMessage(f"Segmentation saved: {path}")
+        except Exception as exc:
+            logger.exception("Failed to save segmentation to %s", path)
+            QMessageBox.critical(self, "Save Error", str(exc))
 
     def _on_save_data(self):
         if self._last_Y is None:
@@ -989,11 +1130,22 @@ class PMCMainWindow(QMainWindow):
         """Clear loaded data, last results, and the plot canvas."""
         self._last_X = None
         self._last_Y = None
+        self._last_image = None
+        self._last_image_ref = None
+        self._sim_state = None
+        self._cls_state = None
+        self._gof_state = None
+        self._ice_trace = None
+        self._init_model = None
+        self._ice_Y = None
+        self._act_save_seg.setEnabled(False)
+        self._act_save_data.setEnabled(False)
         self._canvas.clear()
         self._has_plot = False
         self._log.clear()
         self._status.showMessage("Session reset.")
         self._set_buttons_enabled(self._model is not None)
+        self._populate_view_selector()
 
     def _on_about(self):
         QMessageBox.information(
@@ -1062,6 +1214,10 @@ class PMCMainWindow(QMainWindow):
         self._last_Y = Y
         self._model  = mdl
         self._sim_state = (X, Y, mdl)
+        # Simulation is 1D — invalidate any previously-loaded image.
+        self._last_image = None
+        self._last_image_ref = None
+        self._act_save_seg.setEnabled(False)
         self._act_save_data.setEnabled(True)
         self._log_append(
             f"Simulated N={len(Y)}  Y∈[{Y.min():.2f}, {Y.max():.2f}]  "
@@ -1109,8 +1265,16 @@ class PMCMainWindow(QMainWindow):
             msg += f"  error={er:.4f} ({er*100:.1f}%)"
         self._log_append(msg)
         self._cls_state = (self._last_Y, X_hat, gamma, self._last_X, mdl)
+        # 2D-image segmentation save becomes available once we have a
+        # classification AND an image.
+        self._act_save_seg.setEnabled(self._last_image is not None)
         self._populate_view_selector()
-        self._switch_view(_VIEW_CLASSIFICATION)
+        # When the data came from an image, jump to the 2D segmentation view;
+        # otherwise keep the existing 1D view.
+        if self._last_image is not None:
+            self._switch_view(_VIEW_IMAGE_SEG)
+        else:
+            self._switch_view(_VIEW_CLASSIFICATION)
 
     # ------------------------------------------------------------------
     # Action: Estimate (ICE) — uses the worker's progress signal
@@ -1499,6 +1663,80 @@ class PMCMainWindow(QMainWindow):
         ax.set_ylabel(r"Log-likelihood $\log p(Y\mid\theta)$")
         ax.set_title("ICE convergence")
         ax.grid(True, alpha=0.3)
+        self._canvas.draw()
+
+    def _plot_image_raw(self, img: np.ndarray):
+        """Display the loaded grayscale or RGB image."""
+        fig = self._begin_figure()
+        ax  = fig.add_subplot(1, 1, 1)
+        if img.ndim == 3:
+            ax.imshow(np.clip(img, 0, 1), interpolation="nearest")
+            ch = f", d={img.shape[2]}"
+        else:
+            ax.imshow(img, cmap="gray", interpolation="nearest")
+            ch = ""
+        ax.set_title(
+            f"Input image  ($H \\times W{ch}$ = "
+            f"{img.shape[0]} × {img.shape[1]}{ch.replace(', d=', ' × ') if ch else ''})"
+        )
+        ax.set_xticks([]); ax.set_yticks([])
+        self._canvas.draw()
+
+    def _plot_image_seg(self, img: np.ndarray, cls_state, ref_2d):
+        """Show input image, segmentation map, and (if available) error map.
+
+        Parameters
+        ----------
+        img       : (H, W) — original grayscale image.
+        cls_state : tuple from :attr:`_cls_state` —
+                    ``(Y, X_hat, gamma, X_ref, mdl)`` where ``X_hat`` is the
+                    1D MPM label sequence along the gilbert path.
+        ref_2d    : (H, W) int reference labels, or ``None``.
+        """
+        from prg.pmc.peano import signal_to_image
+        Y, X_hat, gamma, X_ref, mdl = cls_state
+        H, W = img.shape[:2]
+        K = mdl.K
+        seg = signal_to_image(X_hat, (H, W))
+
+        ncols = 3 if ref_2d is not None else 2
+        fig = self._begin_figure()
+        ax_img = fig.add_subplot(1, ncols, 1)
+        if img.ndim == 3:
+            ax_img.imshow(np.clip(img, 0, 1), interpolation="nearest")
+        else:
+            ax_img.imshow(img, cmap="gray", interpolation="nearest")
+        ax_img.set_title("Input image")
+        ax_img.set_xticks([]); ax_img.set_yticks([])
+
+        ax_seg = fig.add_subplot(1, ncols, 2)
+        cmap_name = "tab10" if K <= 10 else "viridis"
+        im = ax_seg.imshow(
+            seg, cmap=plt.get_cmap(cmap_name),
+            vmin=0, vmax=max(K - 1, 1), interpolation="nearest",
+        )
+        ax_seg.set_title(rf"Segmentation  ($K = {K}$, MPM)")
+        ax_seg.set_xticks([]); ax_seg.set_yticks([])
+
+        if ref_2d is not None:
+            from prg.pmc.inference import error_rate
+            from scipy.optimize import linear_sum_assignment
+            # Reuse the Hungarian assignment used by error_rate so the colours
+            # of the predicted classes line up with the reference's.
+            K_ref = int(max(ref_2d.max(), seg.max())) + 1
+            C = np.zeros((K_ref, K_ref), dtype=int)
+            for t, h in zip(ref_2d.ravel(), seg.ravel()):
+                C[t, h] += 1
+            row_ind, col_ind = linear_sum_assignment(-C)
+            mapping = {int(c): int(r) for r, c in zip(row_ind, col_ind)}
+            seg_aligned = np.vectorize(lambda v: mapping.get(int(v), int(v)))(seg)
+            err_map = (seg_aligned != ref_2d).astype(np.uint8)
+            er = error_rate(ref_2d.ravel(), seg.ravel())
+
+            ax_err = fig.add_subplot(1, ncols, 3)
+            ax_err.imshow(err_map, cmap="gray_r", interpolation="nearest")
+            ax_err.set_title(f"Misclassified  ({er * 100:.1f} %)")
+            ax_err.set_xticks([]); ax_err.set_yticks([])
         self._canvas.draw()
 
     def _plot_gof_heatmap(self, results: list[dict]):
@@ -2345,6 +2583,10 @@ class PMCMainWindow(QMainWindow):
         _VIEW_SIMULATION:     lambda self: self._plot_simulation(*self._sim_state),
         _VIEW_CLASSIFICATION: lambda self: self._plot_classification(*self._cls_state),
         _VIEW_GOF_HEATMAP:    lambda self: self._plot_gof_heatmap(self._gof_state),
+        _VIEW_IMAGE_RAW:      lambda self: self._plot_image_raw(self._last_image),
+        _VIEW_IMAGE_SEG:      lambda self: self._plot_image_seg(
+            self._last_image, self._cls_state, self._last_image_ref,
+        ),
         _ICE_VIEW_LOGLIK:     lambda self: self._plot_loglik(self._ice_trace.log_liks),
         _ICE_VIEW_TAU:        lambda self: self._plot_ice_tau(self._ice_trace),
         _ICE_VIEW_FAMILY:     lambda self: self._plot_ice_family(self._ice_trace),
