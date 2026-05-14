@@ -419,6 +419,39 @@ add_widget_handler(my_widget, level=logging.INFO)
 
 ---
 
+## Diagnostics — multivariate Kolmogorov-Smirnov test
+
+The `prg.diagnostics` sub-package collects standalone goodness-of-fit utilities
+that complement the estimation routines in `prg.pmc`.
+
+```python
+import numpy as np
+from scipy import stats
+from prg.diagnostics import mks_1samp, mks_2samp
+
+rng = np.random.default_rng(0)
+
+# 1-sample: is `x` drawn from a 2-D standard normal?
+x   = rng.standard_normal(size=(300, 2))
+cdf = lambda t: float(stats.norm.cdf(t[0]) * stats.norm.cdf(t[1]))
+res = mks_1samp(x, cdf, alpha=0.05)
+print(res.statistic, res.critical_value, res.reject)
+
+# 2-sample: do `a` and `b` share the same distribution?
+a = rng.standard_normal(size=(300, 2))
+b = rng.standard_normal(size=(300, 2)) + 2.0     # shifted mean → reject H0
+res = mks_2samp(a, b, alpha=0.05)
+assert res.reject
+```
+
+The test extends the classical 1-D Kolmogorov-Smirnov statistic to `d > 1`
+dimensions via Naaman's construction (*Statistics & Probability Letters* 173,
+2021). The default critical value uses the finite-sample union bound (safe
+but conservative); pass `asymptotic=True` for the tighter large-`N`
+approximation.
+
+---
+
 ## Folder structure
 
 ```text
@@ -439,8 +472,9 @@ copulasformm/
 │   ├── pmc/                        Pairwise Markov Chain models
 │   │   ├── model.py                PMCModel — TOML load/save/validate
 │   │   ├── simulate.py             Sequence generator (all 5 variants)
-│   │   ├── inference.py            Forward-backward, MPM, smooth
+│   │   ├── inference.py            Forward-backward, MPM, smooth, FFBS
 │   │   ├── ice.py                  ICE unsupervised estimator
+│   │   ├── sem.py                  SEM unsupervised estimator (PR2)
 │   │   ├── logging_setup.py        File + console + QTextEdit handlers
 │   │   ├── cli.py  __main__.py     CLI entry point
 │   │   ├── gui/
@@ -452,6 +486,8 @@ copulasformm/
 │   │       ├── hmc_dn_gauss_k2.toml
 │   │       ├── pmc_in_gauss_k2.toml
 │   │       └── pmc_gauss_k2.toml
+│   ├── diagnostics/                Standalone goodness-of-fit tools
+│   │   └── mks.py                  Multivariate KS test (Naaman 2021)
 │   ├── settings/
 │   │   └── plot_settings.py        Matplotlib rcParams defaults
 │   ├── tests/
