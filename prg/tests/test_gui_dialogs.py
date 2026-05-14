@@ -389,6 +389,29 @@ def test_ice_tab_unknown_init_falls_back_to_model(qapp):
     assert tab.get_cfg()["init"] == "model"
 
 
+def test_ice_tab_algorithm_default_is_ice(qapp):
+    """Default cfg surfaces the ICE estimator and disables the SEM seed."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    tab.load({})
+    cfg = tab.get_cfg()
+    assert cfg["algorithm"] == "ice"
+    assert not tab._spn_sem_seed.isEnabled()
+
+
+def test_ice_tab_round_trips_sem_settings(qapp):
+    """SEM algorithm + seed must survive a load/get_cfg round-trip."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    tab.load({"algorithm": "sem", "sem_seed": 555})
+    cfg = tab.get_cfg()
+    assert cfg["algorithm"] == "sem"
+    assert cfg["sem_seed"] == 555
+    assert tab._spn_sem_seed.isEnabled()
+
+
 # ---------------------------------------------------------------------------
 # A6: _PriorTab Symmetrize button
 # ---------------------------------------------------------------------------

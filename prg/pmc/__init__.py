@@ -25,14 +25,20 @@ PMCModel  : load/save/validate a PMC/HMC model from a TOML file.
 Variant   : enum of the 5 model variants (HMC-IN, HMC-IN2, HMC-DN, PMC-IN, PMC).
 simulate  : generate a synthetic (X, Y) sequence from a PMCModel.
 classify  : supervised MPM classification of an observation sequence.
+sample_posterior : Forward-Filter Backward-Sample draw  X̃ ~ P(X | Y).
 ice       : unsupervised ICE parameter estimation (A16 §4 + A23 §3 GICE).
+sem       : unsupervised Stochastic-EM parameter estimation (sister of ICE).
 """
 
 from prg.pmc.model         import PMCModel, Variant
 from prg.pmc.simulate      import simulate
 from prg.pmc.pmm           import simulate_pmm, classify_pmm
-from prg.pmc.inference     import classify, classify_image, forward, backward, smooth, mpm, error_rate
+from prg.pmc.inference     import (
+    classify, classify_image, forward, backward, smooth, mpm, error_rate,
+    sample_posterior,
+)
 from prg.pmc.ice           import ice, ice_image
+from prg.pmc.sem           import sem, sem_image
 from prg.pmc.peano         import (
     peano_path,
     image_to_signal,
@@ -60,9 +66,12 @@ __all__ = [
     "smooth",
     "mpm",
     "error_rate",
+    "sample_posterior",
     # unsupervised estimation
     "ice",
     "ice_image",
+    "sem",
+    "sem_image",
     # image ↔ signal transforms (Generalized Hilbert / "gilbert")
     "peano_path",
     "image_to_signal",

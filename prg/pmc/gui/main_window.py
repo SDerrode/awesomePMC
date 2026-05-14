@@ -1295,51 +1295,75 @@ class PMCMainWindow(QMainWindow):
             QMessageBox.critical(self, "Model Error", str(exc))
             return
 
-        Y       = self._last_Y
-        ice_cfg = self._tab_ice.get_cfg()
-        # ICE uses a determinate progress bar (we know max_iter ahead of time).
-        max_iter = int(ice_cfg.get("max_iter", 50))
+        Y         = self._last_Y
+        est_cfg   = self._tab_ice.get_cfg()
+        algorithm = str(est_cfg.get("algorithm", "ice"))
+        # Both ICE and SEM use a determinate progress bar — max_iter is
+        # known up-front for both.
+        max_iter = int(est_cfg.get("max_iter", 50))
         self._start_worker(
-            self._do_estimate, mdl, Y, ice_cfg,
+            self._do_estimate, mdl, Y, est_cfg,
             on_done=self._on_est_done,
             forward_progress=True,
             progress_max=max_iter,
-            progress_label="ICE",
+            progress_label=algorithm.upper(),
         )
 
     @staticmethod
-    def _do_estimate(mdl, Y, ice_cfg, *, progress_cb=None):
-        from prg.pmc.ice import IceResult, ice
-        fitted, trace = ice(mdl, Y, ice_cfg=ice_cfg, progress_cb=progress_cb)
-        # Pack everything the GUI needs into a single typed bundle: the
-        # initial model is needed for view J (γ before/after), and Y for
-        # views C, H, J.
-        return IceResult(
-            initial_model=mdl, fitted_model=fitted, Y=Y, trace=trace,
-        )
+    def _do_estimate(mdl, Y, est_cfg, *, progress_cb=None):
+        """Worker entry: dispatch to ICE or SEM based on ``est_cfg['algorithm']``.
+
+        Returns an :class:`IceResult` (ICE) or :class:`SemResult` (SEM); both
+        carry the same fields (``initial_model``, ``fitted_model``, ``Y``,
+        ``trace``) so downstream view code can stay agnostic.
+        """
+        algorithm = str(est_cfg.get("algorithm", "ice"))
+        # ``algorithm`` and ``sem_seed`` are GUI-only knobs (not consumed by
+        # the estimator config parsers). Strip them before forwarding.
+        forward_cfg = {k: v for k, v in est_cfg.items() if k != "algorithm"}
+        if algorithm == "sem":
+            from prg.pmc.sem import SemResult, sem
+            fitted, trace = sem(
+                mdl, Y, sem_cfg=forward_cfg, progress_cb=progress_cb,
+            )
+            return SemResult(
+                initial_model=mdl, fitted_model=fitted, Y=Y, trace=trace,
+            )
+        else:
+            from prg.pmc.ice import IceResult, ice
+            forward_cfg.pop("sem_seed", None)
+            fitted, trace = ice(
+                mdl, Y, ice_cfg=forward_cfg, progress_cb=progress_cb,
+            )
+            return IceResult(
+                initial_model=mdl, fitted_model=fitted, Y=Y, trace=trace,
+            )
 
     def _on_est_done(self, result):
-        # `result` is an :class:`IceResult` from the worker.
+        # `result` is an :class:`IceResult` or :class:`SemResult` from the
+        # worker — both expose the same diagnostic fields.
         self._model       = result.fitted_model
         self._init_model  = result.initial_model      # for view J
         self._ice_trace   = result.trace              # for views A–K
         self._ice_Y       = result.Y                  # for views C, H, J
         trace = result.trace
         self._sync_widgets_from_model()
-        # ICE returned a fresh model — that *is* a state change, but we
-        # treat it as the new clean baseline (the user will Save explicitly).
+        # The estimator returned a fresh model — that *is* a state change,
+        # but we treat it as the new clean baseline (Save is explicit).
         self._mark_clean()
         lls = trace.log_liks
         n_runs = 1 + len(trace.multistart_runs)
+        # Detect SEM vs ICE from the result type to pick the right label.
+        algo_label = "SEM" if type(result).__name__ == "SemResult" else "ICE"
         msg = (
-            f"ICE done  iters={len(lls)}  "
+            f"{algo_label} done  iters={len(lls)}  "
             f"LL: {lls[0]:.2f} → {lls[-1]:.2f}"
         )
         if n_runs > 1:
             msg += f"  (multistart: {n_runs} runs)"
         self._log_append(msg)
-        # Refresh the View selector (ICE views just became available) and
-        # auto-switch to the dashboard for an at-a-glance summary.
+        # Refresh the View selector (ICE/SEM views just became available)
+        # and auto-switch to the dashboard.
         self._populate_view_selector()
         self._switch_view(_ICE_VIEW_DASHBOARD)
 
