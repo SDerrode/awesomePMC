@@ -39,7 +39,7 @@ After ``pip install -e .``:
     pmc gui      [model.toml]      # PyQt6 GUI (extra: pip install copulasformm[gui])
 """
 
-__version__ = "0.5.0"
+__version__ = "0.8.0"
 
 
 def configure_logging(*args, **kwargs):

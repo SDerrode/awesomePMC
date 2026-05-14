@@ -1,4 +1,4 @@
-# copulasformm  ·  v0.7.0
+# copulasformm  ·  v0.8.0
 
 **Copula-based Markov models** for flexible, non-Gaussian transition kernels.
 
