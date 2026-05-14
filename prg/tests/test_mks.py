@@ -18,13 +18,28 @@ from prg.diagnostics import MKSResult, mks_1samp, mks_2samp, mks_test
 
 
 # ---------------------------------------------------------------------------
+# Tiny helpers — module-level CDFs so the test file does not assign lambdas
+# (ruff E731). Each helper takes a 1-D coordinate vector and returns a float.
+# ---------------------------------------------------------------------------
+
+def _norm_cdf_1d(t):
+    """Standard-normal CDF, scalar coord."""
+    return float(_ss.norm.cdf(t[0]))
+
+
+def _norm_cdf_2d_indep(t):
+    """Independent bivariate standard-normal CDF."""
+    return float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+
+
+# ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
 
 def test_alpha_out_of_range_raises():
     rng = np.random.default_rng(0)
     x   = rng.standard_normal(size=(100, 2))
-    cdf = lambda t: float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+    cdf = _norm_cdf_2d_indep
     with pytest.raises(ValueError, match=r"alpha must be in"):
         mks_1samp(x, cdf, alpha=1.5)
     with pytest.raises(ValueError, match=r"alpha must be in"):
@@ -34,7 +49,7 @@ def test_alpha_out_of_range_raises():
 def test_alpha_wrong_type_raises():
     rng = np.random.default_rng(0)
     x   = rng.standard_normal(size=(100, 2))
-    cdf = lambda t: float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+    cdf = _norm_cdf_2d_indep
     with pytest.raises(TypeError, match="alpha"):
         mks_1samp(x, cdf, alpha="0.05")
 
@@ -48,7 +63,7 @@ def test_two_sample_dim_mismatch_raises():
 
 
 def test_empty_sample_raises():
-    cdf = lambda t: float(_ss.norm.cdf(t[0]))
+    cdf = _norm_cdf_1d
     with pytest.raises(ValueError, match=r"empty"):
         mks_1samp(np.empty((0, 1)), cdf)
 
@@ -69,7 +84,7 @@ def test_dispatcher_requires_exactly_one_of_other_or_cdf():
 def test_returns_mks_result_with_expected_fields():
     rng = np.random.default_rng(0)
     x   = rng.standard_normal(size=(120, 2))
-    cdf = lambda t: float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+    cdf = _norm_cdf_2d_indep
     res = mks_1samp(x, cdf)
     assert isinstance(res, MKSResult)
     assert res.dim == 2
@@ -92,7 +107,7 @@ def test_type_one_error_under_H0_one_sample():
     alpha   = 0.05
     n_trial = 80
     N       = 200
-    cdf2d   = lambda t: float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+    cdf2d   = _norm_cdf_2d_indep
 
     rng = np.random.default_rng(42)
     rejects = 0
@@ -194,7 +209,7 @@ def test_3d_runs_and_returns_dim_three():
 def test_dispatcher_routes_one_sample():
     rng = np.random.default_rng(0)
     x   = rng.standard_normal(size=(200, 2))
-    cdf = lambda t: float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+    cdf = _norm_cdf_2d_indep
     res = mks_test(x, cdf=cdf)
     assert res.n_samples_y is None
     assert res.dim == 2
@@ -216,7 +231,7 @@ def test_dispatcher_routes_two_sample():
 def test_asymptotic_critical_value_is_smaller():
     rng = np.random.default_rng(0)
     x   = rng.standard_normal(size=(300, 2))
-    cdf = lambda t: float(_ss.norm.cdf(t[0]) * _ss.norm.cdf(t[1]))
+    cdf = _norm_cdf_2d_indep
     fin = mks_1samp(x, cdf, asymptotic=False)
     asy = mks_1samp(x, cdf, asymptotic=True)
     assert asy.critical_value < fin.critical_value
