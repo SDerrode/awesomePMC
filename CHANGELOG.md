@@ -9,7 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(no changes yet)
+### Added
+- **`prg.diagnostics` sub-package** with the **multivariate
+  Kolmogorov-Smirnov test** (`mks_1samp`, `mks_2samp`, `mks_test`
+  dispatcher, `MKSResult` typed result). Standalone goodness-of-fit
+  utility — independent of any specific model class. Default
+  critical value uses Naaman's finite-sample union bound (conservative,
+  safe); `asymptotic=True` switches to the tighter large-`N`
+  approximation.
+  - 16 new tests in `prg/tests/test_mks.py`: input validation, H0
+    calibration over many trials (Type-I error ≤ α + 0.03), H1 power on
+    contrast settings, univariate sanity vs `scipy.stats.ks_1samp` /
+    `ks_2samp`, 3-D smoke test, dispatcher routing, asymptotic-vs-
+    finite-sample critical-value ordering.
+
+### Origin
+Ported (rewritten in copulasformm style — typed result, NumPy docstrings,
+validation, logger) from the `markovchain_todelete` companion project
+(`prg/mks_test/`). Source-of-truth algorithm:
+[o-laurent/multivariate-ks-test](https://github.com/o-laurent/multivariate-ks-test).
 
 ---
 
