@@ -29,7 +29,7 @@ import numpy as np
 
 from PyQt6.QtCore    import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -425,10 +425,12 @@ class _IceTab(QWidget):
 
     Exposes every key parsed by :func:`prg.pmc.ice._parse_ice_cfg`:
     ``max_iter``, ``tol``, ``patience``, ``fit_margins``, ``candidates``,
-    ``n_starts``, ``multistart_seed``, ``multistart_jitter``.
+    ``init``, ``kmeans_seed``, ``n_starts``, ``multistart_seed``,
+    ``multistart_jitter``.
 
     The multistart-specific widgets (seed, jitter) are disabled when
-    ``n_starts == 1`` so it is visually clear they have no effect.
+    ``n_starts == 1``; the K-means seed widget is disabled when
+    ``init != "kmeans"`` — so it is visually clear they have no effect.
     """
 
     changed = pyqtSignal()
@@ -505,6 +507,25 @@ class _IceTab(QWidget):
                               (len(all_short) + n_cols - 1) // n_cols, 0,
                               1, n_cols)
 
+        # ── Initialisation strategy ───────────────────────────────────
+        self._combo_init = QComboBox()
+        self._combo_init.addItems(["model", "kmeans"])
+        self._combo_init.setToolTip(
+            "Initial ICE parameters. 'model' (default) uses the prior, "
+            "margins and copulas declared in the loaded model. 'kmeans' "
+            "first clusters Y with k-means, then derives a warm-start "
+            "model from the hard labels via a single supervised-style "
+            "M-step. Requires scikit-learn (pip install copulasformm[ml])."
+        )
+        self._combo_init.currentTextChanged.connect(self._on_init_changed)
+
+        self._spn_kmeans_seed = QSpinBox()
+        self._spn_kmeans_seed.setRange(0, 2_147_483_647)
+        self._spn_kmeans_seed.setValue(0)
+        self._spn_kmeans_seed.setToolTip(
+            "RNG seed forwarded to sklearn.cluster.KMeans."
+        )
+
         # ── Multistart ────────────────────────────────────────────────
         self._spn_n_starts = QSpinBox()
         self._spn_n_starts.setRange(1, 20)
@@ -549,21 +570,28 @@ class _IceTab(QWidget):
         lay.addRow("Patience (regressions):", self._spn_patience)
         lay.addRow("Fit margins:",            self._chk_margins)
         lay.addRow(self._cand_box)
+        lay.addRow(QLabel("<b>Initialisation</b>"))
+        lay.addRow("Init strategy:",          self._combo_init)
+        lay.addRow("K-means seed:",           self._spn_kmeans_seed)
         lay.addRow(QLabel("<b>Multistart</b>"))
         lay.addRow("n_starts:",               self._spn_n_starts)
         lay.addRow("Seed:",                   seed_box)
         lay.addRow("Jitter:",                 self._spn_ms_jitter)
 
-        # Disable multistart widgets initially (n_starts=1).
+        # Disable multistart widgets initially (n_starts=1) and the K-means
+        # seed (init=model).
         self._on_n_starts_changed(1)
+        self._on_init_changed(self._combo_init.currentText())
 
         # Wire change-tracking — every editable widget signals ``changed``.
         for w in (
             self._spn_maxiter, self._spn_tol, self._spn_patience,
             self._spn_n_starts, self._spn_ms_seed, self._spn_ms_jitter,
+            self._spn_kmeans_seed,
         ):
             w.valueChanged.connect(self.changed)
         self._chk_margins.toggled.connect(self.changed)
+        self._combo_init.currentTextChanged.connect(self.changed)
 
     # ------------------------------------------------------------------
     # Internal callbacks
@@ -574,6 +602,10 @@ class _IceTab(QWidget):
         self._spn_ms_seed.setEnabled(active)
         self._btn_seed_random.setEnabled(active)
         self._spn_ms_jitter.setEnabled(active)
+
+    def _on_init_changed(self, value: str):
+        """Enable the K-means seed widget only when init=='kmeans'."""
+        self._spn_kmeans_seed.setEnabled(value == "kmeans")
 
     def _on_random_seed_clicked(self):
         """Draw a fresh random seed and write it into the spin box."""
@@ -611,6 +643,13 @@ class _IceTab(QWidget):
                 "candidates", list(self._DEFAULT_CANDIDATES_CHECKED),
             ))
 
+            init_value = str(cfg.get("init", "model"))
+            if init_value not in ("model", "kmeans"):
+                init_value = "model"
+            self._combo_init.setCurrentText(init_value)
+            self._spn_kmeans_seed.setValue(int(cfg.get("kmeans_seed", 0)))
+            self._on_init_changed(self._combo_init.currentText())
+
             self._spn_n_starts.setValue(int(cfg.get("n_starts", 1)))
             self._spn_ms_seed.setValue(int(cfg.get("multistart_seed", 42)))
             self._spn_ms_jitter.setValue(float(cfg.get("multistart_jitter", 0.10)))
@@ -625,6 +664,8 @@ class _IceTab(QWidget):
             "tol":               self._spn_tol.value(),
             "patience":          self._spn_patience.value(),
             "candidates":        self._selected_candidates(),
+            "init":              self._combo_init.currentText(),
+            "kmeans_seed":       self._spn_kmeans_seed.value(),
             "n_starts":          self._spn_n_starts.value(),
             "multistart_seed":   self._spn_ms_seed.value(),
             "multistart_jitter": self._spn_ms_jitter.value(),

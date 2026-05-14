@@ -9,7 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(no changes yet)
+### Added
+- **K-means warm-start for ICE.** New TOML `[ice]` keys `init` (one of
+  `"model"` — default, backward-compatible — or `"kmeans"`) and
+  `kmeans_seed` (RNG seed forwarded to `sklearn.cluster.KMeans`). When
+  `init = "kmeans"`, `ice()` clusters `Y` with k-means++ and derives a
+  warm-start model from the hard labels via a single supervised-style
+  M-step (prior + copula τ always re-estimated; margins re-estimated
+  only if `fit_margins` is true). The variant, K, margin distribution
+  families and copula candidates are preserved. Multistart, when
+  enabled, perturbs the warm-started model.
+- **Optional `[ml]` extras** in `pyproject.toml` adding `scikit-learn` —
+  required only by the K-means warm-start. Install with
+  `pip install 'copulasformm[ml]'`.
+- **GUI `_IceTab`**: new "Initialisation" section with an `init` combobox
+  (`model` / `kmeans`) and a `K-means seed` spinbox. The seed widget is
+  disabled when `init = "model"`.
+
+### Changed
+- **Refactor (no behaviour change)**: the ICE M-step (prior / margins /
+  copulas update from posterior weights) is now a stand-alone
+  `_m_step()` helper, called both by the iteration loop and by the
+  K-means warm-start path. This also paves the way for PR2 (SEM).
+
+### Origin
+This change cherry-picks the K-means warm-start idea from the
+`markovchain_todelete` companion project (file `prg/PMC_Estim.py`,
+line 65, where `sklearn.cluster.k_means` was used to seed the initial
+hard assignment in both SEM and ICE).
 
 ---
 

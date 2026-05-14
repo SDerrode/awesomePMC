@@ -362,6 +362,33 @@ def test_ice_tab_disables_multistart_widgets_when_n_starts_is_one(qapp):
     assert tab._spn_ms_jitter.isEnabled()
 
 
+def test_ice_tab_exposes_init_strategy_and_kmeans_seed(qapp):
+    """K-means warm-start widgets round-trip through load()/get_cfg()."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    # Default: init='model' → K-means seed disabled.
+    tab.load({})
+    assert tab.get_cfg()["init"] == "model"
+    assert not tab._spn_kmeans_seed.isEnabled()
+
+    # Switch to k-means → seed widget enabled, value preserved.
+    tab.load({"init": "kmeans", "kmeans_seed": 123})
+    cfg = tab.get_cfg()
+    assert cfg["init"] == "kmeans"
+    assert cfg["kmeans_seed"] == 123
+    assert tab._spn_kmeans_seed.isEnabled()
+
+
+def test_ice_tab_unknown_init_falls_back_to_model(qapp):
+    """Defensive: malformed TOML / corrupted config → fall back silently to 'model'."""
+    from prg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    tab.load({"init": "garbage-value"})
+    assert tab.get_cfg()["init"] == "model"
+
+
 # ---------------------------------------------------------------------------
 # A6: _PriorTab Symmetrize button
 # ---------------------------------------------------------------------------

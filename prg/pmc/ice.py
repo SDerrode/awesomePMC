@@ -1097,6 +1097,154 @@ def _select_margin_family(
 # ICE configuration parser
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# M-step — extracted for reuse by both the ICE iteration loop and the K-means
+# warm-start path (see ``_warmstart_from_kmeans``).
+# ---------------------------------------------------------------------------
+
+def _m_step(
+    raw: dict,
+    current: PMCModel,
+    Y: np.ndarray,
+    xi: np.ndarray,
+    gamma: np.ndarray,
+    *,
+    fit_margins: bool,
+    candidates: list[str],
+    selection_criterion: str,
+    margin_selection_rule: str,
+) -> None:
+    """ICE M-step — update ``raw`` in place from posterior weights.
+
+    Parameters
+    ----------
+    raw   : mutable ``dict`` — the model's raw TOML representation; this
+            function mutates ``raw["prior"]``, ``raw["margins"]``, and
+            ``raw["copulas"]`` (depending on the variant and ``fit_margins``).
+    current : :class:`PMCModel` — the model snapshot whose margins are used
+            as marginal CDFs for the copula pseudo-observations. Must be
+            consistent with the *current* iteration's parameters (i.e. the
+            model that produced ``xi`` / ``gamma`` via forward-backward).
+    Y     : ``np.ndarray`` shape ``(N,)`` or ``(N, d)`` — observation sequence.
+    xi    : ``np.ndarray`` shape ``(N-1, K, K)`` — joint posteriors
+            ``ξ_n(i, j) = P(X_n=i, X_{n+1}=j | Y)``.
+    gamma : ``np.ndarray`` shape ``(N, K)`` — marginal posteriors
+            ``γ_n(i) = P(X_n=i | Y)``.
+    fit_margins, candidates, selection_criterion, margin_selection_rule :
+            forwarded from the ICE config; see :func:`_parse_ice_cfg`.
+
+    Behaviour
+    ---------
+    1. **Prior**: ``p̂[i,j]`` from ξ̄ (symmetrised under SR-PMC, then either
+       stored as joint ``p`` or converted to row-stochastic ``A`` for HMC
+       variants).
+    2. **Margins** (only when ``fit_margins`` is truthy): per-state weighted
+       MLE / GICE family selection via :func:`_select_margin_family`.
+    3. **Copulas** (only for variants that use them): per-pair (i, j)
+       weighted family selection + τ fit via :func:`_select_and_fit_copula`.
+       Pseudo-observations ``(F_i(y_n), F_j(y_{n+1}))`` are computed from
+       ``current``'s margins.
+    """
+    var = current.variant
+    K   = current.K
+    N   = len(Y)
+
+    # 1. Update prior distribution.
+    # The raw average of ξ_n is asymmetric by O(1/√N) finite-sample noise;
+    # under SR-PMC (the framework this package commits to) the true joint
+    # ``p[i,j]`` is *exactly* symmetric. We therefore symmetrise ξ̄
+    # before further processing — this both eliminates noise in p_hat
+    # and prevents the SR-symmetry warning in PMCModel from firing
+    # at every ICE iteration on PMC variants.
+    p_hat = xi.sum(axis=0) / max(N - 1, 1)
+    p_hat = 0.5 * (p_hat + p_hat.T)            # SR-PMC: enforce p[i,j] = p[j,i]
+    p_hat = np.clip(p_hat, 0.0, None)
+    total = p_hat.sum()
+    if total > MIN_POSITIVE:
+        p_hat /= total
+    else:
+        p_hat = np.full((K, K), 1.0 / (K * K))
+
+    if var in (Variant.HMC_IN, Variant.HMC_IN2, Variant.HMC_DN):
+        # Convert joint → row-stochastic A
+        pi_hat = p_hat.sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            A_hat = np.where(pi_hat[:, None] > 0, p_hat / pi_hat[:, None], 1.0 / K)
+        # Normalize rows
+        row_s = A_hat.sum(axis=1, keepdims=True)
+        A_hat = np.where(row_s > 0, A_hat / row_s, 1.0 / K)
+        raw["prior"]["A"] = A_hat.tolist()
+    else:
+        raw["prior"]["p"] = p_hat.tolist()
+
+    # 2. Update margins (optional). Under SR-PMC there are exactly K
+    #    state-indexed densities, regardless of variant; the family
+    #    declared in each block is preserved, only the params are
+    #    re-estimated by weighted MLE.
+    #
+    #    The weight on Y[k] for state i is the *full* posterior of being
+    #    in state i at time k:
+    #
+    #        w_i[k] = γ_k(i) = P(X_k = i | Y)
+    #
+    #    Equivalently in terms of joint posteriors:
+    #
+    #        w_i[k] = Σ_j ξ[k, i, j]      (k = 0…N-2; "first-view" sum)
+    #               = Σ_j ξ[k-1, j, i]    (k = 1…N-1; "second-view" sum)
+    #               = γ_k(i)              (forward-backward marginal)
+    #
+    #    Pooling over j is the SR-PMC consistent estimator: K MLE per
+    #    M-step instead of K² (one per (i, j) block) — eliminating the
+    #    redundant K-fold replication of each f_i.
+    #
+    #    Reference: SR-PMC reversibility — Derrode-Pieczynski (CSDA 2013),
+    #    Eq. (14).
+    if fit_margins:
+        margins_raw = raw.get("margins", [])
+        for blk in margins_raw:
+            i_idx = int(blk["i"])
+            w_n   = gamma[:, i_idx]            # P(X_n=i | Y)
+            # GICE: if the block declares a ``candidates`` list, also
+            # select the family at this M-step (SP-2016 §3); otherwise
+            # the helper falls through to the v0.5 single-family fit.
+            blk.update(_select_margin_family(
+                blk, Y, w_n, rule=margin_selection_rule,
+            ))
+
+    # 3. Update copulas (only for variants that use copulas)
+    if var.uses_copula:
+        copulas_raw = raw.get("copulas", [])
+
+        # Pre-compute marginal CDFs once per state (K cdf vectors,
+        # not K²) — under SR-PMC, F_{ij} = F_i regardless of j.
+        f_cdf_state = np.zeros((N, K))
+        for kk in range(K):
+            f_cdf_state[:, kk] = current.margin(kk).cdf_vec(Y)
+        np.clip(f_cdf_state, EPS, ONE_MINUS_EPS, out=f_cdf_state)
+
+        for blk in copulas_raw:
+            ii = int(blk["i"])
+            jj = int(blk["j"])
+
+            # Weighted pseudo-observations
+            weights_pair = xi[:, ii, jj]          # shape (N-1,)
+            total_w = weights_pair.sum()
+            if total_w < 1e-12:
+                logger.debug("  (i=%d,j=%d): negligible weight, skip.", ii, jj)
+                continue
+
+            # Pseudo-obs of pair (i, j): u = F_i(Y_n), v = F_j(Y_{n+1}).
+            u_arr = f_cdf_state[: N - 1, ii]
+            v_arr = f_cdf_state[1:,      jj]
+
+            logger.debug("  fitting copula (i=%d, j=%d)  Σw=%.4f", ii, jj, total_w)
+            best_blk = _select_and_fit_copula(
+                candidates, u_arr, v_arr, weights_pair,
+                criterion=selection_criterion,
+            )
+            blk.update(best_blk)
+
+
 def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     """Merge TOML [ice] section with defaults.
 
@@ -1136,6 +1284,24 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
                                                   (``"mle"`` /
                                                   ``"kolmogorov"`` /
                                                   ``"aic"`` / ``"bic"``).
+    * ``init``             (str,  default "model") — initial parameter
+                                                  values for ICE. One of:
+                                                  ``"model"`` (use the
+                                                  parameters declared in the
+                                                  input :class:`PMCModel`)
+                                                  or ``"kmeans"`` (cluster
+                                                  ``Y`` with K-means, then
+                                                  derive a hard-labelled
+                                                  warm-start model via a
+                                                  single supervised-style
+                                                  M-step). The ``"kmeans"``
+                                                  option requires
+                                                  ``scikit-learn``
+                                                  (``pip install
+                                                  copulasformm[ml]``).
+    * ``kmeans_seed``      (int,  default 0)     — RNG seed for the K-means
+                                                  initialisation (only used
+                                                  when ``init == "kmeans"``).
     """
     defaults: dict = {
         "fit_margins":            False,
@@ -1148,12 +1314,30 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
         "multistart_jitter":      0.10,
         "selection_criterion":    DEFAULT_SELECTION_CRITERION,
         "margin_selection_rule":  DEFAULT_MARGIN_SELECTION_RULE,
+        "init":                   "model",
+        "kmeans_seed":            0,
     }
     toml_ice = model.ice_config()
     cfg = {**defaults, **toml_ice}
     if ice_cfg:
         cfg.update(ice_cfg)
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Valid values for the ``init`` config key (and a helper guard).
+# ---------------------------------------------------------------------------
+
+INIT_STRATEGIES: tuple[str, ...] = ("model", "kmeans")
+
+
+def _check_init_strategy(value: str) -> str:
+    """Normalise & validate the ``init`` config key."""
+    if value not in INIT_STRATEGIES:
+        raise ValueError(
+            f"Unknown init strategy {value!r}. Valid: {list(INIT_STRATEGIES)}"
+        )
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -1240,6 +1424,94 @@ def _perturb_initial_model(
 
 
 # ---------------------------------------------------------------------------
+# K-means warm-start (alternative to model-based initialisation)
+# ---------------------------------------------------------------------------
+
+def _kmeans_label_assignment(
+    Y: np.ndarray,
+    K: int,
+    *,
+    random_state: int,
+) -> np.ndarray:
+    """Cluster observations ``Y`` into ``K`` groups with k-means++.
+
+    Returns a hard label per observation, shape ``(N,)``, dtype ``int``.
+
+    Univariate ``Y`` is reshaped to ``(N, 1)`` automatically. Requires
+    ``scikit-learn`` — installed via ``pip install copulasformm[ml]``.
+    Raises :class:`ImportError` with an explicit install hint otherwise.
+    """
+    try:
+        from sklearn.cluster import KMeans
+    except ImportError as exc:                                     # pragma: no cover
+        raise ImportError(
+            "ICE init='kmeans' requires scikit-learn. "
+            "Install with: pip install 'copulasformm[ml]'"
+        ) from exc
+
+    Y_2d = Y.reshape(-1, 1) if Y.ndim == 1 else Y
+    km = KMeans(n_clusters=int(K), n_init=10, random_state=int(random_state))
+    km.fit(Y_2d)
+    return km.labels_.astype(int)
+
+
+def _warmstart_from_kmeans(
+    model: PMCModel,
+    Y: np.ndarray,
+    *,
+    random_state: int,
+    fit_margins: bool,
+    candidates: list[str],
+    selection_criterion: str,
+    margin_selection_rule: str,
+) -> PMCModel:
+    """Build a starting PMCModel from a hard K-means clustering of ``Y``.
+
+    The variant, K, margin distribution families, and copula candidate
+    declarations of the input ``model`` are preserved. Its *values* —
+    the prior matrix and, when applicable, margin parameters and copula
+    τ — are replaced by their hard-labelled estimates derived from a
+    single supervised-style M-step on the K-means clustering of ``Y``.
+
+    Parameters
+    ----------
+    model        : :class:`PMCModel` — initial model; defines variant, K,
+                    margin families, copula candidates.
+    Y            : ``np.ndarray`` shape ``(N,)`` or ``(N, d)`` — observations.
+    random_state : ``int`` — RNG seed forwarded to ``sklearn.cluster.KMeans``.
+    fit_margins, candidates, selection_criterion, margin_selection_rule :
+                    same semantics as in :func:`_parse_ice_cfg`.
+
+    Returns
+    -------
+    PMCModel — the warm-started model. Safe to feed directly into the
+        regular ICE loop / multistart.
+    """
+    K = model.K
+    N = len(Y)
+    labels = _kmeans_label_assignment(Y, K, random_state=random_state)
+
+    # One-hot encode the hard labels as ξ̄ / γ posteriors.
+    gamma = np.zeros((N, K), dtype=float)
+    gamma[np.arange(N), labels] = 1.0
+    xi = np.zeros((N - 1, K, K), dtype=float)
+    xi[np.arange(N - 1), labels[:-1], labels[1:]] = 1.0
+
+    # Reuse the M-step on these hard posteriors. ``raw`` returned by
+    # ``model.raw`` is already a deep copy → safe to mutate in place.
+    raw = model.raw
+    current = PMCModel.from_dict(raw)
+    _m_step(
+        raw, current, Y, xi, gamma,
+        fit_margins=fit_margins,
+        candidates=candidates,
+        selection_criterion=selection_criterion,
+        margin_selection_rule=margin_selection_rule,
+    )
+    return PMCModel.from_dict(raw)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -1279,6 +1551,31 @@ def ice(
     """
     cfg       = _parse_ice_cfg(model, ice_cfg)
     n_starts  = max(1, int(cfg.get("n_starts", 1)))
+
+    # Optional K-means warm-start: replace the user's initial parameters
+    # by a single-shot supervised-style M-step on the K-means clustering
+    # of Y. The variant, K, margin families and copula candidates are
+    # preserved. Multistart (if enabled) then perturbs *this* warm-started
+    # model. See ``_warmstart_from_kmeans`` for details.
+    init_strategy = _check_init_strategy(str(cfg.get("init", "model")))
+    if init_strategy == "kmeans":
+        logger.info(
+            "ICE init='kmeans': clustering Y (N=%d, K=%d, seed=%d) "
+            "before estimation.",
+            len(Y), model.K, int(cfg.get("kmeans_seed", 0)),
+        )
+        model = _warmstart_from_kmeans(
+            model, Y,
+            random_state=int(cfg.get("kmeans_seed", 0)),
+            fit_margins=bool(cfg.get("fit_margins", False)),
+            candidates=list(cfg.get("candidates", _DEFAULT_CANDIDATES)),
+            selection_criterion=str(cfg.get(
+                "selection_criterion", DEFAULT_SELECTION_CRITERION,
+            )),
+            margin_selection_rule=str(cfg.get(
+                "margin_selection_rule", DEFAULT_MARGIN_SELECTION_RULE,
+            )),
+        )
 
     if n_starts == 1:
         return _ice_single_run(model, Y, cfg, progress_cb=progress_cb)
@@ -1487,98 +1784,13 @@ def _ice_single_run(
                 break
 
         # ── M-step ───────────────────────────────────────────────────────
-
-        # 1. Update prior distribution.
-        # The raw average of ξ_n is asymmetric by O(1/√N) finite-sample noise;
-        # under SR-PMC (the framework this package commits to) the true joint
-        # ``p[i,j]`` is *exactly* symmetric. We therefore symmetrise ξ̄
-        # before further processing — this both eliminates noise in p_hat
-        # and prevents the SR-symmetry warning in PMCModel from firing
-        # at every ICE iteration on PMC variants.
-        p_hat = xi.sum(axis=0) / (N - 1)
-        p_hat = 0.5 * (p_hat + p_hat.T)            # SR-PMC: enforce p[i,j] = p[j,i]
-        p_hat = np.clip(p_hat, 0.0, None)
-        p_hat /= p_hat.sum()
-
-        if var in (Variant.HMC_IN, Variant.HMC_IN2, Variant.HMC_DN):
-            # Convert joint → row-stochastic A
-            pi_hat = p_hat.sum(axis=1)
-            with np.errstate(invalid="ignore", divide="ignore"):
-                A_hat = np.where(pi_hat[:, None] > 0, p_hat / pi_hat[:, None], 1.0 / K)
-            # Normalize rows
-            row_s = A_hat.sum(axis=1, keepdims=True)
-            A_hat = np.where(row_s > 0, A_hat / row_s, 1.0 / K)
-            raw["prior"]["A"] = A_hat.tolist()
-        else:
-            raw["prior"]["p"] = p_hat.tolist()
-
-        # 2. Update margins (optional). Under SR-PMC there are exactly K
-        #    state-indexed densities, regardless of variant; the family
-        #    declared in each block is preserved, only the params are
-        #    re-estimated by weighted MLE.
-        #
-        #    The weight on Y[k] for state i is the *full* posterior of being
-        #    in state i at time k:
-        #
-        #        w_i[k] = γ_k(i) = P(X_k = i | Y)
-        #
-        #    Equivalently in terms of joint posteriors:
-        #
-        #        w_i[k] = Σ_j ξ[k, i, j]      (k = 0…N-2; "first-view" sum)
-        #               = Σ_j ξ[k-1, j, i]    (k = 1…N-1; "second-view" sum)
-        #               = γ_k(i)              (forward-backward marginal)
-        #
-        #    Pooling over j is the SR-PMC consistent estimator: K MLE per
-        #    M-step instead of K² (one per (i, j) block) — eliminating the
-        #    redundant K-fold replication of each f_i.
-        #
-        #    Reference: SR-PMC reversibility — Derrode-Pieczynski (CSDA 2013),
-        #    Eq. (14).
-        if fit_margins:
-            margins_raw = raw.get("margins", [])
-            for blk in margins_raw:
-                i_idx = int(blk["i"])
-                w_n   = gamma[:, i_idx]            # P(X_n=i | Y)
-                # GICE: if the block declares a ``candidates`` list, also
-                # select the family at this M-step (SP-2016 §3); otherwise
-                # the helper falls through to the v0.5 single-family fit.
-                blk.update(_select_margin_family(
-                    blk, Y, w_n, rule=margin_selection_rule,
-                ))
-
-        # 3. Update copulas (only for variants that use copulas)
-        if var.uses_copula:
-            copulas_raw = raw.get("copulas", [])
-
-            # Pre-compute marginal CDFs once per state (K cdf vectors,
-            # not K²) — under SR-PMC, F_{ij} = F_i regardless of j.
-            f_cdf_state = np.zeros((N, K))
-            for kk in range(K):
-                f_cdf_state[:, kk] = current.margin(kk).cdf_vec(Y)
-            np.clip(f_cdf_state, EPS, ONE_MINUS_EPS, out=f_cdf_state)
-
-            for blk in copulas_raw:
-                ii = int(blk["i"])
-                jj = int(blk["j"])
-
-                # Weighted pseudo-observations
-                weights_pair = xi[:, ii, jj]          # shape (N-1,)
-                total_w = weights_pair.sum()
-                if total_w < 1e-12:
-                    logger.debug("  (i=%d,j=%d): negligible weight, skip.", ii, jj)
-                    continue
-
-                # Pseudo-obs of pair (i, j): u = F_i(Y_n), v = F_j(Y_{n+1}).
-                u_arr = f_cdf_state[: N - 1, ii]
-                v_arr = f_cdf_state[1:,      jj]
-
-                logger.debug("  fitting copula (i=%d, j=%d)  Σw=%.4f", ii, jj, total_w)
-                best_blk = _select_and_fit_copula(
-                    candidates, u_arr, v_arr, weights_pair,
-                    criterion=selection_criterion,
-                )
-                blk.update(best_blk)
-
+        _m_step(
+            raw, current, Y, xi, gamma,
+            fit_margins=fit_margins,
+            candidates=candidates,
+            selection_criterion=selection_criterion,
+            margin_selection_rule=margin_selection_rule,
+        )
         # Rebuild the model with updated raw dict
         current = PMCModel.from_dict(raw)
 
