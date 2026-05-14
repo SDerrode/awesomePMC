@@ -46,12 +46,18 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "Pillow>=9.0",
+    "scikit-learn>=1.3",
 ]
 gui = [
     "PyQt6>=6.4",
 ]
 image = [
     "Pillow>=9.0",
+]
+ml = [
+    # Optional ML extras used by ICE init='kmeans' (and future SEM init).
+    # Kept out of the runtime dependencies to keep the package light.
+    "scikit-learn>=1.3",
 ]
 
 [project.scripts]

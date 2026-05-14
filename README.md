@@ -242,7 +242,16 @@ fit_margins = false
 max_iter    = 50
 tol         = 1e-4
 candidates  = ["Gauss", "Clayton", "GH", "Frank", "Joe"]
+init        = "model"    # "model" (default) | "kmeans"
+# kmeans_seed = 0        # RNG seed for sklearn.cluster.KMeans (init="kmeans")
 ```
+
+> **K-means warm-start.** Setting `init = "kmeans"` clusters `Y` with k-means++
+> and derives a hard-labelled warm-start model via a single supervised-style
+> M-step (prior + copula τ always re-estimated; margins re-estimated only if
+> `fit_margins = true`). Useful when the model's declared initial parameters
+> are far from the data — e.g. when the user has no good prior guess. Requires
+> `scikit-learn` (`pip install 'copulasformm[ml]'`).
 
 > **Legacy K²-format**. Older TOMLs declared K² margin blocks indexed by `(i, j)`. They are still loaded for back-compat: tied entries collapse silently to K state-margins (with an `INFO` log noting the legacy format), and untied entries trigger a `WARNING` listing each conflicting `(i, j)` — the `(i, 0)` anchor is kept as the canonical density. New files should use the K-format above.
 
