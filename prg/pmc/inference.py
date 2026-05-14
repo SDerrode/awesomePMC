@@ -11,6 +11,8 @@ backward(model, Y, W=None) -> beta_hat
 smooth(alpha_hat, beta_hat) -> gamma
 mpm(gamma) -> X_hat
 precompute_weights(model, Y) -> (W, f_pdf)
+sample_posterior(model, Y, rng) -> X_sample
+    Forward-Filter Backward-Sample (FFBS) draw  X̃ ~ P(X | Y).
 
 Algorithm
 ---------
@@ -306,6 +308,97 @@ def smooth(
     row_sums = gamma.sum(axis=1, keepdims=True)
     row_sums = np.where(row_sums > 0, row_sums, 1.0)
     return gamma / row_sums
+
+
+# ---------------------------------------------------------------------------
+# Forward-Filter Backward-Sample  (FFBS — posterior draw of X | Y)
+# ---------------------------------------------------------------------------
+
+def sample_posterior(
+    model: PMCModel,
+    Y: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    W: np.ndarray | None = None,
+    f_pdf: np.ndarray | None = None,
+    alpha_hat: np.ndarray | None = None,
+) -> np.ndarray:
+    """Draw one realisation of the state sequence  X̃ ~ P(X | Y).
+
+    Implements **Forward-Filter Backward-Sample (FFBS)** — the standard
+    posterior sampler for state-space models.
+
+    1. *Filter*: compute (or accept pre-computed) ``α̂_n(j) = P(X_n=j | Y_{1:n})``.
+    2. *Sample* ``X̃_{N-1} ~ α̂_{N-1}`` (the last filtered posterior is the
+       smoothed posterior because there is no future observation).
+    3. *Backward-sample*, for ``n = N-2, …, 0``::
+
+           P(X_n=i | X̃_{n+1}, Y_{1:N}) ∝ α̂_n(i) · W[n, i, X̃_{n+1}]
+
+       Conditional independence of ``X_n`` and ``Y_{n+2:N}`` given
+       ``X_{n+1}`` is what makes this sampler exact.
+
+    Used by SEM (Stochastic EM) to obtain the hard pseudo-labels on
+    which the M-step is then run.
+
+    Parameters
+    ----------
+    model     : PMCModel
+    Y         : np.ndarray, shape (N,) or (N, d).
+    rng       : :class:`numpy.random.Generator` — source of randomness.
+    W, f_pdf, alpha_hat : optional pre-computed tensors (skip re-computation).
+
+    Returns
+    -------
+    X_sample  : np.ndarray, shape (N,), dtype int — one draw from P(X | Y).
+    """
+    N = len(Y)
+    K = model.K
+    if N < 2:
+        raise ValueError(
+            f"sample_posterior requires N ≥ 2 observations, got N={N}."
+        )
+
+    if W is None or f_pdf is None:
+        W, f_pdf = precompute_weights(model, Y)
+    if alpha_hat is None:
+        alpha_hat, _ = forward(model, Y, W=W, f_pdf=f_pdf)
+
+    X = np.empty(N, dtype=int)
+
+    # ── Step 1: draw X[N-1] ~ α̂_{N-1} ────────────────────────────────────
+    p_last = alpha_hat[N - 1].astype(float, copy=True)
+    s = p_last.sum()
+    if not np.isfinite(s) or s <= 0.0:
+        p_last = np.full(K, 1.0 / K)
+    else:
+        p_last /= s
+    X[N - 1] = int(rng.choice(K, p=p_last))
+
+    # ── Step 2: backward sample ───────────────────────────────────────────
+    # P(X_n = i | X_{n+1}, Y_{1:N}) ∝ α̂_n(i) · W[n, i, X_{n+1}].
+    for n in range(N - 2, -1, -1):
+        weights = alpha_hat[n] * W[n, :, X[n + 1]]
+        s = float(weights.sum())
+        if not np.isfinite(s) or s <= 0.0:
+            # Degenerate step (numerical underflow): fall back to the
+            # filtered marginal — still a valid draw from a proper
+            # distribution, just not the exact backward kernel.
+            logger.debug(
+                "sample_posterior: degenerate backward step at n=%d "
+                "(weight sum=%.3e); falling back to α̂_n.", n, s,
+            )
+            weights = alpha_hat[n].astype(float, copy=True)
+            s = float(weights.sum())
+            if not np.isfinite(s) or s <= 0.0:
+                weights = np.full(K, 1.0 / K)
+            else:
+                weights = weights / s
+        else:
+            weights = weights / s
+        X[n] = int(rng.choice(K, p=weights))
+
+    return X
 
 
 # ---------------------------------------------------------------------------

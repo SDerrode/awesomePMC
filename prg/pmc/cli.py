@@ -176,9 +176,10 @@ def cmd_classify(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_estimate(args: argparse.Namespace) -> int:
-    from prg.pmc.model     import PMCModel
     from prg.pmc.ice       import ice
     from prg.pmc.inference import classify, error_rate
+    from prg.pmc.model     import PMCModel
+    from prg.pmc.sem       import sem
 
     mdl = PMCModel(args.model)
 
@@ -188,7 +189,7 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    # Build ICE config from CLI overrides
+    # Build estimator config from CLI overrides
     cfg: dict = {}
     if args.max_iter is not None:
         cfg["max_iter"] = args.max_iter
@@ -196,9 +197,16 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         cfg["candidates"] = args.candidates.split(",")
     if args.fit_margins:
         cfg["fit_margins"] = True
+    if getattr(args, "sem_seed", None) is not None:
+        cfg["sem_seed"] = args.sem_seed
 
-    print(f"Running ICE on {mdl.name}  ({mdl.variant.value}, K={mdl.K}, N={len(Y)}) …")
-    fitted, trace = ice(mdl, Y, ice_cfg=cfg)
+    algorithm = getattr(args, "algorithm", "ice")
+    label     = algorithm.upper()
+    print(f"Running {label} on {mdl.name}  ({mdl.variant.value}, K={mdl.K}, N={len(Y)}) …")
+    if algorithm == "sem":
+        fitted, trace = sem(mdl, Y, sem_cfg=cfg)
+    else:
+        fitted, trace = ice(mdl, Y, ice_cfg=cfg)
     lls = trace.log_liks
 
     print(f"  Iterations    : {len(lls)}")
@@ -264,10 +272,11 @@ def cmd_classify_image(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_estimate_image(args: argparse.Namespace) -> int:
-    from prg.pmc.model     import PMCModel
     from prg.pmc.ice       import ice_image
     from prg.pmc.inference import classify_image, error_rate
-    from prg.pmc.peano     import load_grayscale, load_color
+    from prg.pmc.model     import PMCModel
+    from prg.pmc.peano     import load_color, load_grayscale
+    from prg.pmc.sem       import sem_image
 
     mdl = PMCModel(args.model)
     if mdl.d > 1 or args.color:
@@ -283,12 +292,19 @@ def cmd_estimate_image(args: argparse.Namespace) -> int:
         cfg["candidates"] = args.candidates.split(",")
     if args.fit_margins:
         cfg["fit_margins"] = True
+    if getattr(args, "sem_seed", None) is not None:
+        cfg["sem_seed"] = args.sem_seed
 
+    algorithm = getattr(args, "algorithm", "ice")
+    label     = algorithm.upper()
     print(
-        f"Running ICE on image {args.image} ({H}×{W}) "
+        f"Running {label} on image {args.image} ({H}×{W}) "
         f"with {mdl.name} ({mdl.variant.value}, K={mdl.K}) …"
     )
-    fitted, trace = ice_image(mdl, img, ice_cfg=cfg)
+    if algorithm == "sem":
+        fitted, trace = sem_image(mdl, img, sem_cfg=cfg)
+    else:
+        fitted, trace = ice_image(mdl, img, ice_cfg=cfg)
     lls = trace.log_liks
 
     print(f"  Iterations    : {len(lls)}")
@@ -378,14 +394,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_cls.set_defaults(func=cmd_classify)
 
-    # ── estimate (ICE) ────────────────────────────────────────────────────
+    # ── estimate (ICE / SEM) ──────────────────────────────────────────────
     p_est = sub.add_parser(
         "estimate",
-        help="Unsupervised ICE parameter estimation from an observation sequence.",
+        help="Unsupervised parameter estimation from an observation sequence "
+             "(ICE — deterministic — or SEM — stochastic).",
     )
     p_est.add_argument(
         "--model", "-m", required=True, metavar="INIT.toml",
-        help="Path to the initial TOML model file (starting point for ICE).",
+        help="Path to the initial TOML model file (starting point).",
     )
     p_est.add_argument(
         "--data", "-d", required=True, metavar="DATA.csv",
@@ -396,8 +413,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output TOML path for the fitted model (default: fitted.toml).",
     )
     p_est.add_argument(
+        "--algorithm", choices=("ice", "sem"), default="ice",
+        help="Estimation algorithm. 'ice' (default, deterministic) or 'sem' "
+             "(Stochastic EM — draws X̃ ~ P(X|Y) at each iteration).",
+    )
+    p_est.add_argument(
         "--max-iter", dest="max_iter", type=int, default=None, metavar="N",
-        help="Maximum ICE iterations (overrides TOML [ice] section).",
+        help="Maximum iterations (overrides TOML [ice]/[sem] section).",
     )
     p_est.add_argument(
         "--candidates", default=None, metavar="C1,C2,...",
@@ -405,7 +427,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_est.add_argument(
         "--fit-margins", dest="fit_margins", action="store_true",
-        help="Also re-estimate margin parameters (Gaussian only).",
+        help="Also re-estimate margin parameters.",
+    )
+    p_est.add_argument(
+        "--sem-seed", dest="sem_seed", type=int, default=None, metavar="N",
+        help="RNG seed for SEM's stochastic completion (ignored when --algorithm=ice).",
     )
     p_est.add_argument(
         "--ref", default="X", metavar="COL",
@@ -441,14 +467,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_clsi.set_defaults(func=cmd_classify_image)
 
-    # ── estimate-image (ICE on image) ─────────────────────────────────────
+    # ── estimate-image (ICE / SEM on image) ───────────────────────────────
     p_esti = sub.add_parser(
         "estimate-image",
-        help="Unsupervised ICE estimation directly from a 2D image.",
+        help="Unsupervised estimation directly from a 2D image (ICE or SEM).",
     )
     p_esti.add_argument(
         "--model", "-m", required=True, metavar="INIT.toml",
-        help="Path to the initial TOML model file (starting point for ICE).",
+        help="Path to the initial TOML model file (starting point).",
     )
     p_esti.add_argument(
         "--image", "-i", required=True, metavar="IMG",
@@ -459,8 +485,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output TOML path for the fitted model (default: fitted.toml).",
     )
     p_esti.add_argument(
+        "--algorithm", choices=("ice", "sem"), default="ice",
+        help="Estimation algorithm. 'ice' (default) or 'sem' (Stochastic EM).",
+    )
+    p_esti.add_argument(
         "--max-iter", dest="max_iter", type=int, default=None, metavar="N",
-        help="Maximum ICE iterations (overrides TOML [ice] section).",
+        help="Maximum iterations (overrides TOML [ice]/[sem] section).",
     )
     p_esti.add_argument(
         "--candidates", default=None, metavar="C1,C2,...",
@@ -468,7 +498,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_esti.add_argument(
         "--fit-margins", dest="fit_margins", action="store_true",
-        help="Also re-estimate margin parameters (Gaussian only).",
+        help="Also re-estimate margin parameters.",
+    )
+    p_esti.add_argument(
+        "--sem-seed", dest="sem_seed", type=int, default=None, metavar="N",
+        help="RNG seed for SEM's stochastic completion (ignored when --algorithm=ice).",
     )
     p_esti.add_argument(
         "--ref-image", default=None, metavar="REF",

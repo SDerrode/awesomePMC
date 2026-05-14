@@ -421,12 +421,14 @@ class _CopulaTab(_BlockGridTab):
 
 
 class _IceTab(QWidget):
-    """ICE configuration panel.
+    """ICE / SEM estimator configuration panel.
 
-    Exposes every key parsed by :func:`prg.pmc.ice._parse_ice_cfg`:
-    ``max_iter``, ``tol``, ``patience``, ``fit_margins``, ``candidates``,
+    Exposes every key parsed by :func:`prg.pmc.ice._parse_ice_cfg`
+    (``max_iter``, ``tol``, ``patience``, ``fit_margins``, ``candidates``,
     ``init``, ``kmeans_seed``, ``n_starts``, ``multistart_seed``,
-    ``multistart_jitter``.
+    ``multistart_jitter``) and adds the algorithm switch ``algorithm`` plus
+    its companion ``sem_seed`` for the SEM stochastic completion (see
+    :func:`prg.pmc.sem._parse_sem_cfg`).
 
     The multistart-specific widgets (seed, jitter) are disabled when
     ``n_starts == 1``; the K-means seed widget is disabled when
@@ -442,6 +444,25 @@ class _IceTab(QWidget):
     def __init__(self):
         super().__init__()
         lay = QFormLayout(self)
+
+        # ── Algorithm switch ──────────────────────────────────────────
+        self._combo_algorithm = QComboBox()
+        self._combo_algorithm.addItems(["ice", "sem"])
+        self._combo_algorithm.setToolTip(
+            "Estimation algorithm. 'ice' (default, deterministic) iterates "
+            "soft-posterior M-steps until convergence; 'sem' draws X̃ ~ "
+            "P(X|Y) at every iteration and runs a supervised-style M-step "
+            "on it (stochastic — log-lik fluctuates around the stationary "
+            "regime)."
+        )
+        self._combo_algorithm.currentTextChanged.connect(self._on_algorithm_changed)
+
+        self._spn_sem_seed = QSpinBox()
+        self._spn_sem_seed.setRange(0, 2_147_483_647)
+        self._spn_sem_seed.setValue(0)
+        self._spn_sem_seed.setToolTip(
+            "RNG seed for SEM's per-iteration FFBS draw."
+        )
 
         # ── Convergence controls ──────────────────────────────────────
         self._spn_maxiter = QSpinBox()
@@ -565,6 +586,9 @@ class _IceTab(QWidget):
         )
 
         # ── Layout ────────────────────────────────────────────────────
+        lay.addRow(QLabel("<b>Algorithm</b>"))
+        lay.addRow("Estimator:",              self._combo_algorithm)
+        lay.addRow("SEM seed:",               self._spn_sem_seed)
         lay.addRow("Max iterations:",         self._spn_maxiter)
         lay.addRow("Convergence tol:",        self._spn_tol)
         lay.addRow("Patience (regressions):", self._spn_patience)
@@ -579,19 +603,22 @@ class _IceTab(QWidget):
         lay.addRow("Jitter:",                 self._spn_ms_jitter)
 
         # Disable multistart widgets initially (n_starts=1) and the K-means
-        # seed (init=model).
+        # seed (init=model). The SEM seed defaults to disabled too — only
+        # SEM uses it.
         self._on_n_starts_changed(1)
         self._on_init_changed(self._combo_init.currentText())
+        self._on_algorithm_changed(self._combo_algorithm.currentText())
 
         # Wire change-tracking — every editable widget signals ``changed``.
         for w in (
             self._spn_maxiter, self._spn_tol, self._spn_patience,
             self._spn_n_starts, self._spn_ms_seed, self._spn_ms_jitter,
-            self._spn_kmeans_seed,
+            self._spn_kmeans_seed, self._spn_sem_seed,
         ):
             w.valueChanged.connect(self.changed)
         self._chk_margins.toggled.connect(self.changed)
         self._combo_init.currentTextChanged.connect(self.changed)
+        self._combo_algorithm.currentTextChanged.connect(self.changed)
 
     # ------------------------------------------------------------------
     # Internal callbacks
@@ -606,6 +633,22 @@ class _IceTab(QWidget):
     def _on_init_changed(self, value: str):
         """Enable the K-means seed widget only when init=='kmeans'."""
         self._spn_kmeans_seed.setEnabled(value == "kmeans")
+
+    def _on_algorithm_changed(self, value: str):
+        """Enable the SEM seed widget (and the ``patience`` spinbox) according
+        to the selected estimator. SEM has no early-stop, so ``patience`` is
+        not consumed there — we leave the spinbox enabled for clarity but
+        annotate it via tooltip."""
+        is_sem = (value == "sem")
+        self._spn_sem_seed.setEnabled(is_sem)
+        # SEM has no ``tol`` early-stop. Keep the widget enabled (the value
+        # is harmless for SEM) but make the tooltip explicit.
+        self._spn_tol.setToolTip(
+            "Relative log-likelihood convergence threshold. "
+            "Used by ICE only — SEM does not converge deterministically."
+            if is_sem else
+            "Relative log-likelihood convergence threshold."
+        )
 
     def _on_random_seed_clicked(self):
         """Draw a fresh random seed and write it into the spin box."""
@@ -650,6 +693,13 @@ class _IceTab(QWidget):
             self._spn_kmeans_seed.setValue(int(cfg.get("kmeans_seed", 0)))
             self._on_init_changed(self._combo_init.currentText())
 
+            algo_value = str(cfg.get("algorithm", "ice"))
+            if algo_value not in ("ice", "sem"):
+                algo_value = "ice"
+            self._combo_algorithm.setCurrentText(algo_value)
+            self._spn_sem_seed.setValue(int(cfg.get("sem_seed", 0)))
+            self._on_algorithm_changed(self._combo_algorithm.currentText())
+
             self._spn_n_starts.setValue(int(cfg.get("n_starts", 1)))
             self._spn_ms_seed.setValue(int(cfg.get("multistart_seed", 42)))
             self._spn_ms_jitter.setValue(float(cfg.get("multistart_jitter", 0.10)))
@@ -659,6 +709,8 @@ class _IceTab(QWidget):
 
     def get_cfg(self) -> dict:
         return {
+            "algorithm":         self._combo_algorithm.currentText(),
+            "sem_seed":          self._spn_sem_seed.value(),
             "fit_margins":       self._chk_margins.isChecked(),
             "max_iter":          self._spn_maxiter.value(),
             "tol":               self._spn_tol.value(),

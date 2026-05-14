@@ -9,34 +9,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(no changes yet)
+
+---
+
+## [0.7.0] - 2026-05-14
+
+This release adds **SEM (Stochastic EM)** as a sister estimator to ICE
+and introduces a **K-means warm-start** option shared by both
+algorithms — both ideas cherry-picked and rewritten from the
+`markovchain_todelete` companion project (files `prg/PMC_Estim.py` and
+`prg/tools/probaPMC.py::simulRealisationAP`).
+
 ### Added
-- **K-means warm-start for ICE.** New TOML `[ice]` keys `init` (one of
-  `"model"` — default, backward-compatible — or `"kmeans"`) and
-  `kmeans_seed` (RNG seed forwarded to `sklearn.cluster.KMeans`). When
-  `init = "kmeans"`, `ice()` clusters `Y` with k-means++ and derives a
-  warm-start model from the hard labels via a single supervised-style
-  M-step (prior + copula τ always re-estimated; margins re-estimated
-  only if `fit_margins` is true). The variant, K, margin distribution
-  families and copula candidates are preserved. Multistart, when
-  enabled, perturbs the warm-started model.
+
+- **SEM — Stochastic EM estimator** in the new `prg/pmc/sem.py` module.
+  Public API: `sem(model, Y, sem_cfg=None) -> (PMCModel, SemTrace)` and
+  the image wrapper `sem_image(model, img, sem_cfg=None)`. SEM differs
+  from ICE by drawing a single posterior realisation
+  `X̃ ~ P(X | Y)` at every iteration (Forward-Filter Backward-Sample)
+  and running the same supervised-style M-step on these hard labels.
+  Shares the M-step (`_m_step`) and the K-means warm-start
+  (`_warmstart_from_kmeans`) with ICE, so the two estimators stay
+  exactly aligned on the parameter-update logic.
+  - `SemTrace` mirrors `IceTrace` (same fields plus
+    `sampled_X_history` capturing the per-iteration FFBS draws).
+  - `SemResult` mirrors `IceResult` for GUI/diagnostics layers.
+  - New config keys: `max_iter` (default 30), `sem_seed` (RNG seed for
+    the FFBS draws). Other keys (`fit_margins`, `candidates`,
+    `selection_criterion`, `margin_selection_rule`, `init`,
+    `kmeans_seed`, `n_starts`, `multistart_seed`, `multistart_jitter`)
+    are reused from ICE's config namespace.
+  - `[sem]` TOML section recognised (falls back to `[ice]` for shared
+    keys).
+- **`sample_posterior(model, Y, rng)`** in `prg/pmc/inference.py` —
+  Forward-Filter Backward-Sample (FFBS) draw of `X | Y`. Standalone
+  utility, also used by SEM internally. Pre-computed `W`/`alpha_hat`
+  can be passed in to avoid recomputation.
+- **CLI `--algorithm {ice,sem}` flag** on both `estimate` and
+  `estimate-image` (default `ice` — backward-compatible). Companion
+  flag `--sem-seed` controls SEM's stochastic completion seed. Example:
+  `python -m prg.pmc estimate --model M.toml --data Y.csv
+  --algorithm sem --max-iter 30 --sem-seed 0 --fit-margins`.
+- **GUI `_IceTab`** (ICE config panel) renamed conceptually to the
+  "estimator" panel: new top "Algorithm" section with an `Estimator`
+  combobox (`ice` / `sem`) and a `SEM seed` spinbox (auto-disabled
+  when `ice` is selected). The worker (`_do_estimate`) dispatches to
+  `ice()` or `sem()` based on the combobox value; the result-handling
+  code is identical because `SemResult` and `IceResult` expose the
+  same diagnostic fields.
+- **K-means warm-start for ICE & SEM.** New TOML `[ice]` keys `init`
+  (one of `"model"` — default, backward-compatible — or `"kmeans"`)
+  and `kmeans_seed` (RNG seed forwarded to `sklearn.cluster.KMeans`).
+  When `init = "kmeans"`, the estimator clusters `Y` with k-means++ and
+  derives a warm-start model from the hard labels via a single
+  supervised-style M-step (prior + copula τ always re-estimated;
+  margins re-estimated only if `fit_margins` is true). The variant,
+  K, margin distribution families and copula candidates are preserved.
+  Multistart, when enabled, perturbs the warm-started model.
 - **Optional `[ml]` extras** in `pyproject.toml` adding `scikit-learn` —
   required only by the K-means warm-start. Install with
   `pip install 'copulasformm[ml]'`.
-- **GUI `_IceTab`**: new "Initialisation" section with an `init` combobox
-  (`model` / `kmeans`) and a `K-means seed` spinbox. The seed widget is
-  disabled when `init = "model"`.
 
 ### Changed
+
 - **Refactor (no behaviour change)**: the ICE M-step (prior / margins /
   copulas update from posterior weights) is now a stand-alone
-  `_m_step()` helper, called both by the iteration loop and by the
-  K-means warm-start path. This also paves the way for PR2 (SEM).
+  `_m_step()` helper, called by both the ICE iteration loop, the SEM
+  iteration loop, and the K-means warm-start path. This eliminates
+  the duplication that was about to appear between ICE and SEM.
+
+### Tests
+
+- 16 new tests for the K-means warm-start (`test_ice_kmeans_init.py`).
+- 8 new tests for the FFBS posterior sampler (`test_posterior_sampling.py`),
+  including a Monte-Carlo check that the empirical marginal of many FFBS
+  draws converges to the smoothed posterior γ_n(j).
+- 11 new tests for SEM (`test_sem.py`): config plumbing, trace shapes,
+  reproducibility under fixed `sem_seed`, stochastic variance across
+  seeds, LL improvement from an adversarial init, end-to-end recovery
+  with K-means warm-start, multistart, PMC variant smoke test, image
+  wrapper smoke test.
+- 4 new GUI tests (`_IceTab`): `init` / `kmeans_seed` widgets and the
+  new `algorithm` / `sem_seed` widgets.
 
 ### Origin
-This change cherry-picks the K-means warm-start idea from the
-`markovchain_todelete` companion project (file `prg/PMC_Estim.py`,
-line 65, where `sklearn.cluster.k_means` was used to seed the initial
-hard assignment in both SEM and ICE).
+
+The SEM and K-means warm-start ideas are cherry-picked from the
+`markovchain_todelete` companion project (`prg/PMC_Estim.py:65` for
+K-means; `prg/tools/probaPMC.py::simulRealisationAP` for FFBS-based
+stochastic completion).
 
 ---
 

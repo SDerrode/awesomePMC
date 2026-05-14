@@ -1,4 +1,4 @@
-# copulasformm  ·  v0.4.0
+# copulasformm  ·  v0.7.0
 
 **Copula-based Markov models** for flexible, non-Gaussian transition kernels.
 
@@ -237,21 +237,36 @@ name = "Gauss"           # SHORT_NAME from the copula table above
 tau  = 0.6
 # df = 4.0               # optional extra param for Student copula
 
-[ice]                    # optional — ICE estimator defaults
+[ice]                    # optional — ICE estimator defaults (also consumed
+                         # by SEM for the keys they share)
 fit_margins = false
 max_iter    = 50
 tol         = 1e-4
 candidates  = ["Gauss", "Clayton", "GH", "Frank", "Joe"]
 init        = "model"    # "model" (default) | "kmeans"
 # kmeans_seed = 0        # RNG seed for sklearn.cluster.KMeans (init="kmeans")
+
+# [sem]                  # optional — SEM-specific overrides
+# max_iter = 30          # SEM does not converge; defaults to fewer iterations
+# sem_seed = 0           # RNG seed for the per-iteration FFBS draw
 ```
 
+> **ICE vs SEM.** Both estimators share the same M-step and config keys. ICE
+> (`algorithm = "ice"`, default) uses *soft* posteriors from forward-backward
+> and converges deterministically. SEM (`algorithm = "sem"`) draws a single
+> realisation `X̃ ~ P(X | Y)` at every iteration via Forward-Filter
+> Backward-Sample, then runs the same M-step on the hard labels — the
+> log-likelihood fluctuates around its stationary regime instead of
+> converging. CLI: `python -m prg.pmc estimate --algorithm sem
+> --sem-seed 0 …`. GUI: the **Estimator** combobox in the ICE-config tab.
+>
 > **K-means warm-start.** Setting `init = "kmeans"` clusters `Y` with k-means++
 > and derives a hard-labelled warm-start model via a single supervised-style
 > M-step (prior + copula τ always re-estimated; margins re-estimated only if
 > `fit_margins = true`). Useful when the model's declared initial parameters
 > are far from the data — e.g. when the user has no good prior guess. Requires
-> `scikit-learn` (`pip install 'copulasformm[ml]'`).
+> `scikit-learn` (`pip install 'copulasformm[ml]'`). Works for both ICE
+> and SEM.
 
 > **Legacy K²-format**. Older TOMLs declared K² margin blocks indexed by `(i, j)`. They are still loaded for back-compat: tied entries collapse silently to K state-margins (with an `INFO` log noting the legacy format), and untied entries trigger a `WARNING` listing each conflicting `(i, j)` — the `(i, 0)` anchor is kept as the canonical density. New files should use the K-format above.
 
