@@ -83,6 +83,25 @@ jupyter notebook examples/quickstart.ipynb
 
 The notebook is also re-run as a regression test (`pytest -m slow`).
 
+### Real-data example — UCI HAR smartphone accelerometer
+
+`examples/uci_har_smartphone.ipynb` runs the full ICE + SEM pipeline on a real
+3-D accelerometer recording from the *Human Activity Recognition Using
+Smartphones* dataset (UCI ID 240). The dataset is downloaded on first run and
+cached in `data/uci_har/` (gitignored). If the download fails or is declined,
+the notebook transparently falls back to a synthetic 3-D signal simulated from
+the bundled `hmc_in_mvn_k2_d3.toml` fixture — every subsequent cell runs
+unchanged.
+
+The notebook ties together the four migration PRs:
+
+| PR | Feature exercised |
+|---|---|
+| 1 | K-means warm-start (`init = "kmeans"`) |
+| 2 | SEM estimator (`from prg.pmc import sem`) |
+| 3 | Multivariate KS goodness-of-fit (`from prg.diagnostics import mks_2samp`) |
+| 4 | Real-data benchmark — *this notebook* |
+
 ---
 
 ## Copula toolkit

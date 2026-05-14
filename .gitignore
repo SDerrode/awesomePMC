@@ -12,6 +12,10 @@ data/historyTracker/*
 data/Plots/*
 !data/*/.gitkeep
 
+# UCI HAR cache (downloaded by examples/uci_har_smartphone.ipynb on demand)
+data/uci_har/*
+!data/uci_har/README.md
+
 # Logs générés par les scripts
 logs/
 

@@ -22,12 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     contrast settings, univariate sanity vs `scipy.stats.ks_1samp` /
     `ks_2samp`, 3-D smoke test, dispatcher routing, asymptotic-vs-
     finite-sample critical-value ordering.
+- **Real-data benchmark notebook** at
+  `examples/uci_har_smartphone.ipynb` exercising ICE + SEM + MKS on the
+  *UCI Human Activity Recognition Using Smartphones* dataset (3-D
+  accelerometer, 50 Hz, walking vs laying). Dataset downloaded on first
+  run and cached in `data/uci_har/` (gitignored); the notebook falls
+  back transparently to a synthetic 3-D signal simulated from the
+  `hmc_in_mvn_k2_d3.toml` fixture if the download is unavailable. The
+  `data/uci_har/README.md` cache pointer (with source / license /
+  citation) **is** committed.
+  - 1 new slow regression test (`prg/tests/test_uci_har_notebook.py`)
+    that patches the notebook to force the offline fallback and executes
+    every cell with a fresh Jupyter kernel.
 
 ### Origin
 Ported (rewritten in copulasformm style — typed result, NumPy docstrings,
 validation, logger) from the `markovchain_todelete` companion project
 (`prg/mks_test/`). Source-of-truth algorithm:
 [o-laurent/multivariate-ks-test](https://github.com/o-laurent/multivariate-ks-test).
+The UCI HAR benchmark notebook generalises the smartphone-data pipeline
+of `markovchain_todelete/prg/pipeline_SmartphoneData.py`.
 
 ---
 
