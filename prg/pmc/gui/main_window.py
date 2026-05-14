@@ -1711,7 +1711,7 @@ class PMCMainWindow(QMainWindow):
 
         ax_seg = fig.add_subplot(1, ncols, 2)
         cmap_name = "tab10" if K <= 10 else "viridis"
-        im = ax_seg.imshow(
+        ax_seg.imshow(
             seg, cmap=plt.get_cmap(cmap_name),
             vmin=0, vmax=max(K - 1, 1), interpolation="nearest",
         )

@@ -160,7 +160,7 @@ def test_ice_image_runs():
 # ---------------------------------------------------------------------------
 
 def test_load_save_roundtrip_through_png(tmp_path):
-    PIL = pytest.importorskip("PIL")
+    pytest.importorskip("PIL")
     from PIL import Image
     from prg.pmc.peano import load_grayscale, load_labels, save_segmentation
 

@@ -239,7 +239,7 @@ def test_classify_image_rejects_dimensionality_mismatch():
 def test_fit_multivariate_gaussian_weighted_recovers_mean_cov():
     """Closed-form weighted MLE returns the analytical (μ, Σ)."""
     rng = np.random.default_rng(0)
-    N, d = 5000, 3
+    N = 5000
     mu_true  = np.array([1.0, -2.0, 0.5])
     cov_true = np.array([[2.0, 0.5, 0.3],
                          [0.5, 1.0, 0.2],
