@@ -65,7 +65,6 @@ import numpy as np
 from prg.pmc.ice import (
     DEFAULT_MARGIN_SELECTION_RULE,
     DEFAULT_SELECTION_CRITERION,
-    INIT_STRATEGIES,
     _DEFAULT_CANDIDATES,
     _check_init_strategy,
     _m_step,

@@ -15,7 +15,6 @@ import pytest
 from prg.pmc.inference import classify, error_rate
 from prg.pmc.model     import PMCModel
 from prg.pmc.sem       import (
-    SemResult,
     SemTrace,
     _parse_sem_cfg,
     sem,
