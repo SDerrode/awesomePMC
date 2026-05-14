@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(no changes yet)
+
+---
+
+## [0.8.0] - 2026-05-14
+
+This release closes the four-PR migration from the `markovchain_todelete`
+companion project by adding a standalone **multivariate goodness-of-fit
+test** (PR3) and a **real-data benchmark notebook** (PR4) on top of the
+v0.7.0 SEM / K-means changes.
+
 ### Added
+
 - **`prg.diagnostics` sub-package** with the **multivariate
   Kolmogorov-Smirnov test** (`mks_1samp`, `mks_2samp`, `mks_test`
   dispatcher, `MKSResult` typed result). Standalone goodness-of-fit

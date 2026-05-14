@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "copulasformm"
-version = "0.7.0"
+version = "0.8.0"
 description = "Copula-based Markov models for flexible non-Gaussian transition kernels"
 readme = "README.md"
 license = { file = "LICENSE" }
