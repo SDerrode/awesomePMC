@@ -56,6 +56,14 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+__all__ = [
+    "MKSResult",
+    "mks_1samp",
+    "mks_2samp",
+    "mks_test",
+]
+
+
 # ---------------------------------------------------------------------------
 # Result type
 # ---------------------------------------------------------------------------
@@ -119,12 +127,47 @@ def _as_2d(sample: np.ndarray, name: str) -> np.ndarray:
     return arr
 
 
-def _mecdf(sample: np.ndarray, point: np.ndarray) -> float:
-    """Multivariate empirical CDF of ``sample`` at the single point ``point``.
+def _mecdf_batch(sample: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """Vectorised multivariate empirical CDF at every row of ``points``.
 
-    Returns ``mean_i [ sample_i ≤ point  coordinate-wise ]``.
+    Parameters
+    ----------
+    sample : (N, d) — observations.
+    points : (M, d) — query points.
+
+    Returns
+    -------
+    np.ndarray of shape (M,) — F̂_emp evaluated at each query point.
+
+    The intermediate boolean tensor has shape (M, N, d); peak memory is
+    therefore ``M * N * d`` bytes (≈ N²·d for the MKS corner grid). For
+    typical MKS workloads (N ≲ a few thousand, d ≲ 10) this is well under
+    100 MB; callers needing bigger samples can chunk ``points``.
     """
-    return float(np.mean(np.all(sample <= point, axis=1)))
+    sample = np.asarray(sample, dtype=float)
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[1] != sample.shape[1]:
+        raise ValueError(
+            "_mecdf_batch: sample/points dims must agree; got "
+            f"{sample.shape} vs {points.shape}."
+        )
+    le = np.all(sample[None, :, :] <= points[:, None, :], axis=2)   # (M, N)
+    return le.mean(axis=1)
+
+
+def _eval_cdf_grid(cdf: Callable[[np.ndarray], float],
+                   points: np.ndarray) -> np.ndarray:
+    """Evaluate a user-supplied scalar ``cdf`` callable at every row of ``points``.
+
+    The callable signature is one-point-in / scalar-out (per the public API),
+    so we cannot vectorise the call itself — but we can hoist the Python-level
+    loop out of the statistic-computation routine to keep that path tidy.
+    """
+    return np.fromiter(
+        (float(cdf(points[i])) for i in range(points.shape[0])),
+        dtype=float,
+        count=points.shape[0],
+    )
 
 
 def _corner_grid(sample: np.ndarray) -> np.ndarray:
@@ -227,19 +270,19 @@ def mks_1samp(
 
     # Maximum |F̂_emp(z) − F_cdf(z)| over the corner grid, restricted by
     # the Naaman "tightness" indicator (round(N · F̂) == N − i).
-    diff = np.zeros((N, dim))
+    diff      = np.zeros((N, dim))
+    idx_gate  = (N - np.arange(N))                          # (N,)
     for h in range(dim):
-        for i in range(N):
-            point     = z[i, :, h]
-            f_emp     = _mecdf(sample, point)
-            f_ref     = float(cdf(point))
-            indicator = (round(N * f_emp) == N - i)
-            diff[i, h] = abs(f_emp - f_ref) * indicator
-            if h == 0:
-                # Also consider the deviation at the data points themselves.
-                f_emp_xi = _mecdf(sample, sample[i, :])
-                f_ref_xi = float(cdf(sample[i, :]))
-                diff[i, h] = max(diff[i, h], abs(f_emp_xi - f_ref_xi))
+        corners_h = z[:, :, h]                              # (N, d)
+        f_emp_h   = _mecdf_batch(sample, corners_h)         # (N,)
+        f_ref_h   = _eval_cdf_grid(cdf, corners_h)          # (N,)
+        indicator = (np.rint(N * f_emp_h).astype(np.int64) == idx_gate)
+        diff[:, h] = np.abs(f_emp_h - f_ref_h) * indicator
+
+    # h=0 column also considers the deviation at the data points themselves.
+    f_emp_xi   = _mecdf_batch(sample, sample)
+    f_ref_xi   = _eval_cdf_grid(cdf, sample)
+    diff[:, 0] = np.maximum(diff[:, 0], np.abs(f_emp_xi - f_ref_xi))
 
     stat   = float(diff.max())
     crit   = _critical_1samp(N, dim, alpha, asymptotic=asymptotic)
@@ -299,18 +342,19 @@ def mks_2samp(
 
     z = _corner_grid(sample_a)
 
-    diff = np.zeros((N_a, dim))
+    diff     = np.zeros((N_a, dim))
+    idx_gate = (N_a - np.arange(N_a))                                # (N_a,)
     for h in range(dim):
-        for i in range(N_a):
-            point     = z[i, :, h]
-            f_emp_a   = _mecdf(sample_a, point)
-            f_emp_b   = _mecdf(sample_b, point)
-            indicator = (round(N_a * f_emp_a) == N_a - i)
-            diff[i, h] = abs(f_emp_a - f_emp_b) * indicator
-            if h == 0:
-                f_emp_a_xi = _mecdf(sample_a, sample_a[i, :])
-                f_emp_b_xi = _mecdf(sample_b, sample_a[i, :])
-                diff[i, h] = max(diff[i, h], abs(f_emp_a_xi - f_emp_b_xi))
+        corners_h = z[:, :, h]                                       # (N_a, d)
+        f_emp_a_h = _mecdf_batch(sample_a, corners_h)                # (N_a,)
+        f_emp_b_h = _mecdf_batch(sample_b, corners_h)                # (N_a,)
+        indicator = (np.rint(N_a * f_emp_a_h).astype(np.int64) == idx_gate)
+        diff[:, h] = np.abs(f_emp_a_h - f_emp_b_h) * indicator
+
+    # h=0 column also considers the deviation at the data points of sample_a.
+    f_emp_a_xi = _mecdf_batch(sample_a, sample_a)
+    f_emp_b_xi = _mecdf_batch(sample_b, sample_a)
+    diff[:, 0] = np.maximum(diff[:, 0], np.abs(f_emp_a_xi - f_emp_b_xi))
 
     stat   = float(diff.max())
     crit   = _critical_2samp(N_a, N_b, dim, alpha, asymptotic=asymptotic)

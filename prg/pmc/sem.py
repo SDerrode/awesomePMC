@@ -28,8 +28,8 @@ Given an initial model θ⁽⁰⁾ and observations Y = y_{1:N}, SEM alternates:
 
   M-step  (supervised-style)
     Update prior, margins (optional), copula τ from the hard posteriors —
-    delegated to :func:`prg.pmc.ice._m_step` so the implementation stays
-    identical to ICE's M-step body.
+    delegated to :func:`prg.pmc._estim_common.m_step` so the implementation
+    stays identical to ICE's M-step body.
 
 Where SEM differs from ICE
 --------------------------
@@ -42,7 +42,7 @@ Where SEM differs from ICE
   ``patience`` / ``tol`` early-stop). For inference, prefer averaging
   the post burn-in estimates externally (the full trace is exposed).
 * **Multistart and K-means warm-start** are supported with the same
-  semantics as ICE — see :func:`prg.pmc.ice._warmstart_from_kmeans`.
+  semantics as ICE — see :func:`prg.pmc._estim_common.warmstart_from_kmeans`.
 
 Reference
 ---------
@@ -50,9 +50,9 @@ The SEM idea is borrowed from the companion project ``markovchain_todelete``
 (``prg/PMC_Estim.py`` + ``prg/tools/probaPMC.py``, function
 ``simulRealisationAP``), itself going back to Celeux & Diebolt's classical
 Stochastic-EM literature for finite mixture and Markov models. The
-copulasformm implementation is a from-scratch rewrite that reuses ICE's
-:func:`_m_step` and :func:`_warmstart_from_kmeans` to avoid duplicating the
-update logic.
+copulasformm implementation is a from-scratch rewrite that reuses the
+shared M-step / warm-start helpers in :mod:`prg.pmc._estim_common` to
+avoid duplicating the update logic.
 """
 
 from __future__ import annotations
@@ -62,22 +62,31 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from prg.pmc.ice import (
+from prg.pmc._estim_common import (
+    DEFAULT_CANDIDATES,
     DEFAULT_MARGIN_SELECTION_RULE,
     DEFAULT_SELECTION_CRITERION,
-    _DEFAULT_CANDIDATES,
-    _check_init_strategy,
-    _m_step,
-    _perturb_initial_model,
-    _snapshot_margins,
-    _snapshot_prior_p,
-    _snapshot_tau_family,
-    _warmstart_from_kmeans,
+    check_init_strategy,
+    m_step,
+    perturb_initial_model,
+    shared_estim_defaults,
+    snapshot_margins,
+    snapshot_prior_p,
+    snapshot_tau_family,
+    warmstart_from_kmeans,
 )
 from prg.pmc.inference import forward, precompute_weights, sample_posterior
 from prg.pmc.model     import PMCModel
 
 logger = logging.getLogger(__name__)
+
+
+__all__ = [
+    "SemResult",
+    "SemTrace",
+    "sem",
+    "sem_image",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -167,18 +176,16 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
       3. TOML ``[ice]`` section (fallback — keeps the common keys shared)
       4. caller-supplied ``sem_cfg`` (highest priority)
     """
+    # Shared defaults come from a single source of truth so that ICE and
+    # SEM cannot silently drift apart on common keys (see audit: "cfg
+    # leaks"). Only SEM-specific additions are declared inline here.
     defaults: dict = {
-        "fit_margins":            False,
-        "max_iter":               30,
-        "candidates":             _DEFAULT_CANDIDATES,
-        "selection_criterion":    DEFAULT_SELECTION_CRITERION,
-        "margin_selection_rule":  DEFAULT_MARGIN_SELECTION_RULE,
-        "init":                   "model",
-        "kmeans_seed":            0,
-        "sem_seed":               0,
-        "n_starts":               1,
-        "multistart_seed":        0,
-        "multistart_jitter":      0.10,
+        **shared_estim_defaults(),
+        # SEM-specific keys.
+        "max_iter":  30,                  # smaller default than ICE — SEM
+                                          # does not converge in the
+                                          # deterministic sense.
+        "sem_seed":  0,                   # base RNG seed for the FFBS draws.
     }
     # TOML [ice] section is the fallback for keys not duplicated under [sem].
     cfg = {**defaults, **model.ice_config()}
@@ -227,18 +234,18 @@ def sem(
     n_starts  = max(1, int(cfg.get("n_starts", 1)))
 
     # Optional K-means warm-start (shared with ICE).
-    init_strategy = _check_init_strategy(str(cfg.get("init", "model")))
+    init_strategy = check_init_strategy(str(cfg.get("init", "model")))
     if init_strategy == "kmeans":
         logger.info(
             "SEM init='kmeans': clustering Y (N=%d, K=%d, seed=%d) "
             "before estimation.",
             len(Y), model.K, int(cfg.get("kmeans_seed", 0)),
         )
-        model = _warmstart_from_kmeans(
+        model = warmstart_from_kmeans(
             model, Y,
             random_state=int(cfg.get("kmeans_seed", 0)),
             fit_margins=bool(cfg.get("fit_margins", False)),
-            candidates=list(cfg.get("candidates", _DEFAULT_CANDIDATES)),
+            candidates=list(cfg.get("candidates", DEFAULT_CANDIDATES)),
             selection_criterion=str(cfg.get(
                 "selection_criterion", DEFAULT_SELECTION_CRITERION,
             )),
@@ -261,7 +268,7 @@ def sem(
             init_mdl = model
             tag = "unperturbed"
         else:
-            init_mdl = _perturb_initial_model(model, rng_ms, jitter=jitter)
+            init_mdl = perturb_initial_model(model, rng_ms, jitter=jitter)
             tag = f"perturbed-{s}"
         try:
             fitted_s, trace_s = _sem_single_run(
@@ -371,11 +378,11 @@ def _sem_single_run(
 
         log_liks.append(log_lik)
         # Snapshot of current model state, matching IceTrace semantics.
-        tau_kk, fam_kk = _snapshot_tau_family(current)
+        tau_kk, fam_kk = snapshot_tau_family(current)
         tau_buf.append(tau_kk)
         fam_buf.append(fam_kk)
-        p_buf.append(_snapshot_prior_p(current))
-        margin_buf.append(_snapshot_margins(current))
+        p_buf.append(snapshot_prior_p(current))
+        margin_buf.append(snapshot_margins(current))
 
         logger.info("%s iter %d: log-lik = %.4f", log_prefix, it, log_lik)
         if progress_cb is not None:
@@ -398,7 +405,7 @@ def _sem_single_run(
         xi[np.arange(N - 1), X_tilde[:-1], X_tilde[1:]] = 1.0
 
         # ── M-step ───────────────────────────────────────────────────────
-        _m_step(
+        m_step(
             raw, current, Y, xi, gamma,
             fit_margins=fit_margins,
             candidates=candidates,

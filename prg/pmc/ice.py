@@ -59,6 +59,24 @@ from prg.numerics import EPS, ONE_MINUS_EPS, MIN_POSITIVE
 logger = logging.getLogger(__name__)
 
 
+__all__ = [
+    # canonical public API
+    "IceTrace",
+    "IceResult",
+    "ice",
+    "ice_image",
+    # public configuration surface (consumed by GUI / tests)
+    "EXTRA_PARAM_BOUNDS",
+    "INIT_STRATEGIES",
+    "SELECTION_CRITERIA",
+    "DEFAULT_SELECTION_CRITERION",
+    "MARGIN_SELECTION_RULES",
+    "DEFAULT_MARGIN_SELECTION_RULE",
+    "GICE_KNOWN_FAMILIES",
+    "SP2016_DEFAULT_CANDIDATES",
+]
+
+
 # ---------------------------------------------------------------------------
 # IceTrace — captured per-iteration diagnostics
 # ---------------------------------------------------------------------------
@@ -204,9 +222,6 @@ EXTRA_PARAM_BOUNDS: dict[str, dict[str, tuple[float, float, float]]] = {
     "CopulaBB1":     {"delta": (1.0,   10.0,  1.5)},
     "CopulaStudent": {"df":    (2.0,  100.0,  4.0)},
 }
-# Backward-compatibility shim — the underscore-prefixed name was used
-# internally before ``EXTRA_PARAM_BOUNDS`` was promoted to public API.
-_EXTRA_PARAM_BOUNDS = EXTRA_PARAM_BOUNDS
 
 
 # ---------------------------------------------------------------------------
@@ -388,14 +403,14 @@ def _fit_copula_params(
 
     For 1-parameter families this is just τ̂ (delegated to ``_weighted_mle_tau``).
     For multi-parameter families (BB1, Student) it runs a joint L-BFGS-B
-    optimisation over (τ, *extras) using the bounds in ``_EXTRA_PARAM_BOUNDS``.
+    optimisation over (τ, *extras) using the bounds in ``EXTRA_PARAM_BOUNDS``.
 
     Returns
     -------
     dict — keyword arguments suitable for ``cls(**dict)``.  Always contains
     ``tau_k`` and any extra parameters declared in the registry.
     """
-    extras = _EXTRA_PARAM_BOUNDS.get(cls.__name__, {})
+    extras = EXTRA_PARAM_BOUNDS.get(cls.__name__, {})
 
     # Data-aware initial value: weighted Kendall's τ, clipped to the
     # family's valid τ range. This is the natural concordance measure
@@ -863,14 +878,6 @@ def _fit_margin_weighted_numerical(
         return {}
 
 
-# Back-compat alias — previously-public name; preserves the old return shape
-# (with a redundant "dist" key) so any external caller still works.
-def _fit_gaussian_margin_weighted(y: np.ndarray, weights: np.ndarray) -> dict:
-    """Deprecated shim — call :func:`_fit_margin_weighted` instead."""
-    out = _fit_margin_weighted({"dist": "norm"}, y, weights)
-    return {"dist": "norm", **out}
-
-
 # ---------------------------------------------------------------------------
 # Generalized ICE — automatic margin family selection (SP-2016 GICE)
 # ---------------------------------------------------------------------------
@@ -1303,19 +1310,18 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
                                                   initialisation (only used
                                                   when ``init == "kmeans"``).
     """
+    # Shared defaults come from a single source of truth so that ICE and
+    # SEM cannot silently drift apart on common keys (see audit:
+    # "cfg leaks"). Local imports avoid a circular import — _estim_common
+    # itself re-exports symbols defined later in this module.
+    from prg.pmc._estim_common import shared_estim_defaults
     defaults: dict = {
-        "fit_margins":            False,
+        **shared_estim_defaults(),
+        # ICE-only convergence-control keys (SEM is stochastic and has no
+        # deterministic convergence criterion).
         "max_iter":               50,
         "tol":                    1e-4,
-        "candidates":             _DEFAULT_CANDIDATES,
         "patience":               3,
-        "n_starts":               1,
-        "multistart_seed":        0,
-        "multistart_jitter":      0.10,
-        "selection_criterion":    DEFAULT_SELECTION_CRITERION,
-        "margin_selection_rule":  DEFAULT_MARGIN_SELECTION_RULE,
-        "init":                   "model",
-        "kmeans_seed":            0,
     }
     toml_ice = model.ice_config()
     cfg = {**defaults, **toml_ice}
@@ -1415,7 +1421,7 @@ def _perturb_initial_model(
         # Perturb extra parameters of multi-parameter copulas
         # (currently: BB1.delta, Student.df).
         cls_name = entry.value.CLASS_NAME
-        for ekey, (xlo, xhi, _) in _EXTRA_PARAM_BOUNDS.get(cls_name, {}).items():
+        for ekey, (xlo, xhi, _) in EXTRA_PARAM_BOUNDS.get(cls_name, {}).items():
             if ekey in blk:
                 v = float(blk[ekey]) * float(np.exp(jitter * rng.standard_normal()))
                 blk[ekey] = float(np.clip(v, xlo, xhi))

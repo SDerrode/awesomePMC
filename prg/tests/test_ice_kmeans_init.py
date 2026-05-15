@@ -24,14 +24,13 @@ pytest.importorskip(
     reason="ICE init='kmeans' requires scikit-learn (pip install copulasformm[ml]).",
 )
 
-from prg.pmc.ice import (
+from prg.pmc._estim_common import (
     INIT_STRATEGIES,
-    _check_init_strategy,
-    _kmeans_label_assignment,
-    _parse_ice_cfg,
-    _warmstart_from_kmeans,
-    ice,
+    check_init_strategy,
+    kmeans_label_assignment,
+    warmstart_from_kmeans,
 )
+from prg.pmc.ice       import _parse_ice_cfg, ice
 from prg.pmc.inference import classify, error_rate
 from prg.pmc.model     import PMCModel
 from prg.pmc.simulate  import simulate
@@ -59,9 +58,9 @@ def test_default_init_is_model():
     assert cfg["kmeans_seed"] == 0
 
 
-def test_check_init_strategy_rejects_unknown():
+def testcheck_init_strategy_rejects_unknown():
     with pytest.raises(ValueError, match="Unknown init strategy"):
-        _check_init_strategy("kmeansplusplus")
+        check_init_strategy("kmeansplusplus")
 
 
 def test_ice_cfg_override_threads_through():
@@ -72,7 +71,7 @@ def test_ice_cfg_override_threads_through():
 
 
 # ---------------------------------------------------------------------------
-# _kmeans_label_assignment — basic sanity
+# kmeans_label_assignment — basic sanity
 # ---------------------------------------------------------------------------
 
 def test_kmeans_labels_range_and_shape():
@@ -81,7 +80,7 @@ def test_kmeans_labels_range_and_shape():
         rng.normal(loc=-3, scale=0.5, size=300),
         rng.normal(loc=+3, scale=0.5, size=300),
     ])
-    labels = _kmeans_label_assignment(Y, K=2, random_state=0)
+    labels = kmeans_label_assignment(Y, K=2, random_state=0)
     assert labels.shape == (600,)
     assert labels.dtype.kind == "i"
     assert set(np.unique(labels).tolist()) == {0, 1}
@@ -90,8 +89,8 @@ def test_kmeans_labels_range_and_shape():
 def test_kmeans_labels_reproducible():
     rng = np.random.default_rng(123)
     Y = rng.normal(size=400)
-    a = _kmeans_label_assignment(Y, K=3, random_state=42)
-    b = _kmeans_label_assignment(Y, K=3, random_state=42)
+    a = kmeans_label_assignment(Y, K=3, random_state=42)
+    b = kmeans_label_assignment(Y, K=3, random_state=42)
     np.testing.assert_array_equal(a, b)
 
 
@@ -103,7 +102,7 @@ def test_kmeans_labels_separated_clusters_match_ground_truth():
         rng.normal(loc=-10, scale=0.3, size=300),
         rng.normal(loc=+10, scale=0.3, size=300),
     ])
-    labels = _kmeans_label_assignment(Y, K=2, random_state=0)
+    labels = kmeans_label_assignment(Y, K=2, random_state=0)
     # Accept either label permutation.
     err = min(
         np.mean(labels != X_true),
@@ -113,7 +112,7 @@ def test_kmeans_labels_separated_clusters_match_ground_truth():
 
 
 # ---------------------------------------------------------------------------
-# _warmstart_from_kmeans — invariants
+# warmstart_from_kmeans — invariants
 # ---------------------------------------------------------------------------
 
 def _simulate_separated_hmc_in_k2(N: int = 800, seed: int = 0):
@@ -125,7 +124,7 @@ def _simulate_separated_hmc_in_k2(N: int = 800, seed: int = 0):
 
 def test_warmstart_returns_valid_pmc_model():
     mdl, _, Y = _simulate_separated_hmc_in_k2()
-    warm = _warmstart_from_kmeans(
+    warm = warmstart_from_kmeans(
         mdl, Y,
         random_state=0,
         fit_margins=True,
@@ -141,12 +140,12 @@ def test_warmstart_returns_valid_pmc_model():
 
 def test_warmstart_reproducible_same_seed():
     mdl, _, Y = _simulate_separated_hmc_in_k2()
-    a = _warmstart_from_kmeans(
+    a = warmstart_from_kmeans(
         mdl, Y,
         random_state=42, fit_margins=True,
         candidates=[], selection_criterion="mle", margin_selection_rule="mle",
     )
-    b = _warmstart_from_kmeans(
+    b = warmstart_from_kmeans(
         mdl, Y,
         random_state=42, fit_margins=True,
         candidates=[], selection_criterion="mle", margin_selection_rule="mle",
@@ -162,7 +161,7 @@ def test_warmstart_fit_margins_false_preserves_margin_params():
     mdl, _, Y = _simulate_separated_hmc_in_k2()
     original_margins = [dict(blk["params"]) for blk in mdl.raw.get("margins", [])]
 
-    warm = _warmstart_from_kmeans(
+    warm = warmstart_from_kmeans(
         mdl, Y,
         random_state=0,
         fit_margins=False,
@@ -184,7 +183,7 @@ def test_warmstart_fit_margins_true_recovers_means():
         rng.normal(loc=+3, scale=1.0, size=500),
     ])
     mdl = PMCModel(HMC_IN_K2)
-    warm = _warmstart_from_kmeans(
+    warm = warmstart_from_kmeans(
         mdl, Y,
         random_state=0,
         fit_margins=True,

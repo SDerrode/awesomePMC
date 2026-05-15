@@ -9,7 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(no changes yet)
+### Changed (hygiene — post-v0.8.0 audit follow-up)
+
+- **New internal module `prg/pmc/_estim_common.py`** — single source of
+  truth for the M-step / warm-start infrastructure shared between ICE
+  and SEM (snapshots, `m_step`, `warmstart_from_kmeans`,
+  `perturb_initial_model`, `kmeans_label_assignment`,
+  `check_init_strategy`, shared selection-criteria constants, and a new
+  `shared_estim_defaults()` helper). `sem.py` no longer reaches into
+  `prg.pmc.ice._xxx` underscore-private symbols; the dependency
+  direction is now explicit and documented.
+- **Cfg consolidation.** `_parse_ice_cfg` and `_parse_sem_cfg` both
+  build their defaults on top of `shared_estim_defaults()`, eliminating
+  the duplicated shared-key list and preventing silent default-drift
+  between the two estimators.
+- **`mks_1samp` / `mks_2samp` vectorised.** Replaced the inner double
+  for-loop over corner-grid points with a batch empirical-CDF helper
+  (`_mecdf_batch`) that uses NumPy broadcasting. `prg/tests/test_mks.py`
+  is ~25 % faster as a side effect.
+- **Explicit `__all__`** added to `prg/pmc/ice.py`, `prg/pmc/sem.py`,
+  `prg/pmc/_estim_common.py`, and `prg/diagnostics/mks.py` — pins the
+  public surface and stops `from … import *` from leaking internals.
+- **Tests updated** to import the shared estimator helpers from
+  `_estim_common` rather than reaching into `prg.pmc.ice`'s
+  underscore-private namespace (`test_ice_kmeans_init.py`). Tests that
+  target genuine ICE-internals (`test_gice_margins.py`,
+  `test_multivariate.py`) keep their private imports — those helpers
+  are deliberately not part of the shared surface.
+- **Dead code removed**: the deprecated `_fit_gaussian_margin_weighted`
+  shim, the `_EXTRA_PARAM_BOUNDS` back-compat alias, and the unused
+  `_mecdf` (superseded by `_mecdf_batch`).
+
+No behaviour change. 685 tests pass, ruff clean.
 
 ---
 
