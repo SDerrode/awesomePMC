@@ -1084,8 +1084,10 @@ def error_rate(X_true: np.ndarray, X_hat: np.ndarray) -> float:
         # of a degenerate ICE solution. The Hungarian still picks an optimal
         # partial relabeling.
         logger.warning(
-            "error_rate: X_hat uses %d classes, the reference %d. "
-            "The fitted model likely collapsed to a degenerate solution.",
+            "error_rate: X_hat uses %d classes, the reference %d. The fitted "
+            "model likely collapsed to a degenerate solution; the returned "
+            "error rate is still the optimal-relabeling value (correct as a "
+            "metric), but a fit worth trusting should use every class.",
             n_hat, n_true,
         )
     elif n_hat > n_true:
@@ -1094,7 +1096,8 @@ def error_rate(X_true: np.ndarray, X_hat: np.ndarray) -> float:
         # predicted classes unmatched (counted as errors).
         logger.warning(
             "error_rate: X_hat uses %d classes, the reference only %d; the "
-            "extra classes count as errors — consider whether K was specified "
+            "extra classes count as errors in the returned rate (this is not "
+            "a bug in the metric) — consider whether K was specified "
             "correctly.",
             n_hat, n_true,
         )
