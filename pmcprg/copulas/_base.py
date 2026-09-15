@@ -123,6 +123,7 @@ class CopulaEnum(CopulaDataMixin, Enum):
     BB1              = 15, "BB1",      "BB1 (Joe-Clayton)",       "CopulaBB1",      True,  ["tau_k", "delta"], [0.0 + EPS, 1.0],              "pmcprg.copulas.archimedean.bb1"
     AMH              = 16, "AMH",      "Ali-Mikhail-Haq",         "CopulaAMH",      True,  ["tau_k"],          [_AMH_TAU_MIN, _AMH_TAU_MAX],  "pmcprg.copulas.archimedean.amh"
     PLACKETT         = 17, "Plackett", "Plackett",                "CopulaPlackett", True,  ["tau_k"],          [EPS_MINUS_ONE, ONE_MINUS_EPS], "pmcprg.copulas.explicit.plackett"
+    GALAMBOS         = 18, "Galambos", "Galambos",                "CopulaGalambos", True,  ["tau_k"],          [0.0 + EPS, 1.0],              "pmcprg.copulas.extreme_value.galambos"
 
     def describe(self):
         return self.name, self.value

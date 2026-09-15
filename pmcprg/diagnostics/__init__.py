@@ -32,6 +32,14 @@ ice_pair_comparisons              tests with a HAC variance, all pairs of a
     declared), and the same for every pair of states after an ICE run
     (audit FR-6). Opt-in; see ``pmcprg.diagnostics.model_selection`` for the
     caveats (estimated pseudo-observations, Chen & Fan 2006).
+RadialSymmetryResult,           : screening test for radial symmetry (Genest &
+radial_symmetry_statistic,        Nešlehová 2014, audit FR-10) — rejecting it
+radial_symmetry_test              at once excludes Gauss, Student, Frank, FGM
+    and Plackett as candidate families before the per-family fits. A
+    Cramér-von Mises statistic on the empirical copula and its radial
+    reflection, calibrated by a parametric (Gaussian-surrogate) bootstrap.
+    Unweighted only — see the module docstring on why ξ-weighting has no
+    defensible form for this statistic.
 margin_cdfs, copula_pseudo_obs, : pseudo-observations and margin samples of a
 margin_pit_dual, margin_keys,     fitted chain, for state margins f_i and for
 margin_of, margin_sample          the pair margins f_ij of a general PMC
@@ -70,6 +78,11 @@ from pmcprg.diagnostics.pseudo import (
     margin_pit_dual,
     margin_sample,
 )
+from pmcprg.diagnostics.radial_symmetry import (
+    RadialSymmetryResult,
+    radial_symmetry_statistic,
+    radial_symmetry_test,
+)
 from pmcprg.diagnostics.smooth import (
     COMPONENT_NAMES,
     NeymanResult,
@@ -103,4 +116,7 @@ __all__ = [
     "mks_1samp",
     "mks_2samp",
     "mks_test",
+    "RadialSymmetryResult",
+    "radial_symmetry_statistic",
+    "radial_symmetry_test",
 ]

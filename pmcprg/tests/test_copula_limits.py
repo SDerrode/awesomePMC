@@ -112,11 +112,18 @@ def _survival(base):
     return lambda u, v, th, de: u + v - _ONE + base(_ONE - u, _ONE - v, th, de)
 
 
+def _c_galambos(u, v, th, _):
+    w, z = -u.ln(), -v.ln()
+    s = _pw(_pw(w, -th) + _pw(z, -th), -_ONE / th)
+    return u * v * s.exp()
+
+
 _REF_C = {
     "Clayton": _c_clayton, "GH": _c_gh, "Joe": _c_joe, "Frank": _c_frank,
     "AMH": _c_amh, "Plackett": _c_plackett, "FGM": _c_fgm, "A12": _c_a12,
     "A14": _c_a14, "BB1": _c_bb1, "SClayton": _survival(_c_clayton),
     "SGH": _survival(_c_gh), "SJoe": _survival(_c_joe),
+    "Galambos": _c_galambos,
 }
 
 
@@ -202,6 +209,7 @@ _TAIL_TAUS = {
     "AMH": (-0.15, 0.2, 0.3), "FGM": (-0.2, 0.2),
     "A12": (0.4, 0.7, 0.9), "A14": (0.4, 0.7, 0.9), "BB1": (0.4, 0.7, 0.9),
     "Gauss": (-0.7, 0.3, 0.9), "Student": (-0.7, 0.3, 0.95),
+    "Galambos": (0.3, 0.7, 0.95),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -210,6 +218,7 @@ _INDEP_TAUS = {
     "Frank": (-1e-8, 1e-12, 1e-4), "Plackett": (-1e-8, 1e-12, 1e-4),
     "AMH": (-1e-8, 1e-12, 1e-4), "FGM": (-1e-8, 1e-12, 1e-4),
     "Gauss": (-1e-8, 1e-12, 1e-4),
+    "Galambos": (1e-12, 1e-8, 1e-4),
 }
 
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)

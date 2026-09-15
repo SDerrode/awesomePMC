@@ -9,6 +9,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — standard errors of a copula τ fitted inside ICE, pilot (FR-4, "Reste")
+
+- **Oakes' (1999) observed information inside ICE.** `pmcprg.pmc._oakes.ice_oakes_tau_se(model, Y, pairs=None)`
+  gives the standard error of a per-pair copula τ fitted as part of ICE's
+  M-step, where the naive `pmcprg.copulas._stderr` sandwich applied to the
+  final posteriors ξ̂_n(i, j) understates the uncertainty because those
+  weights are themselves an estimate over a latent state sequence. Computes
+  `I(τ̂) = −∂²Q(θ|θ̂)/∂θ² − ∂²Q(θ|θ')/∂θ∂θ'` (Oakes 1999,
+  doi:10.1111/1467-9868.00188) with Q the expected complete-data
+  log-likelihood of the pair's copula, both terms central finite differences
+  in the working coordinate ψ (2·atanh τ for Gauss, logit τ for Clayton, same
+  `H_PSI = 1e-4` convention as `_stderr.py`); the mixed term re-runs one
+  E-step (forward-backward + joint posteriors) at τ perturbed by ±H_PSI in ψ,
+  everything else held at the ICE fit. Pilot scope only: Gauss and Clayton,
+  K = 2, one pair at a time, margins fixed (`fit_margins=False`) — the
+  audit's cheapest-first option; Godambe (IFM) and Lystig–Hughes are not
+  attempted.
+  Monte-Carlo validation (K = 2 HMC-DN, N = 600, R = 400, margins known):
+  Gauss τ = 0.6 — SE ratio (RMS reported / empirical SD) 0.974 (Oakes) vs
+  0.792 (naive), 95 % coverage 0.938 vs 0.880, 90 % coverage 0.877 vs 0.797;
+  Clayton τ = 0.5 — ratio 0.993 vs 0.894, 95 % coverage 0.958 vs 0.930, 90 %
+  coverage 0.907 vs 0.863. The naive sandwich under-covers by 5–9 points at
+  both levels in both families; Oakes' correction (always negative — it
+  *reduces* the naive complete-data information, Louis 1982) brings the ratio
+  within a few percent of 1 and the coverage within 1–2 sampling SEs of
+  nominal. See `pmcprg/tests/test_fr4_ice_oakes.py`. Not yet: BB1/Student,
+  margins re-estimated inside ICE, gap variants, joint covariance of several
+  pairs — a fast follow if this pilot is extended.
+
+### Added — radial symmetry screening test (FR-10)
+
+- **Radial symmetry screening test** (`pmcprg.diagnostics.radial_symmetry`,
+  audit FR-10): a Cramér–von Mises statistic
+  `T_n = n·Σᵢ[Cₙ(ûᵢ,v̂ᵢ) − ûᵢ − v̂ᵢ + 1 − Cₙ(1−ûᵢ,1−v̂ᵢ)]²` comparing the
+  empirical copula to its radial reflection (Genest & Nešlehová 2014,
+  doi:10.1007/s00362-013-0556-4, adapted — see the module docstring for what
+  is a defensible simplification rather than a verified reproduction of the
+  paper's exact statistic and multiplier bootstrap), calibrated by a
+  parametric bootstrap from a Gaussian copula matched on Kendall's τ.
+  Rejecting radial symmetry excludes Gauss, Student, Frank, FGM and Plackett
+  at once, pruning the family-selection search before the per-family fits.
+  Unweighted only: ξ-weighting has no defensible form for this statistic
+  (it is a joint functional of the whole sample, not a U-statistic with a
+  known weighted extension), so `radial_symmetry_test` raises
+  `NotImplementedError` on a `weights` argument rather than guess.
+  Validated by simulation (N_reps=300, B=150 per test): empirical rejection
+  rate at nominal 5%/10% stays within 0.03–0.07 / 0.07–0.12 for Gauss, Frank
+  and Plackett at τ=0.3 and 0.6, N=200; power against Clayton, Gumbel and Joe
+  at τ∈{0.2,0.4,0.6}, N∈{100,300} ranges from 0.08 (Clayton, τ=0.2, N=100 —
+  genuinely weak asymmetry) to 1.00 (Joe, τ≥0.4, N=300), rejecting more often
+  as τ or N grow, in every family tested.
+
+### Added — Galambos copula, first extreme-value family (FR-9 pilot)
+
+- **`CopulaGalambos`** (`pmcprg.copulas.extreme_value.galambos`, `SHORT_NAME`
+  "Galambos"), the simplest of the extreme-value families audited as missing
+  (Galambos, Hüsler–Reiss, Tawn, t-EV — FR-9), implemented as a template for
+  the other three. Single parameter θ > 0, Pickands function
+  A(t) = 1 − (t^{−θ} + (1−t)^{−θ})^{−1/θ}; CDF, pdf and h-function derived
+  from scratch (`sympy`) rather than transcribed from a secondary source,
+  and checked against an independent 50-digit `mpmath` ground truth: pdf,
+  cdf and h agree to relative error ≤ 1.5·10⁻¹³ across (u, v, θ) spanning
+  u, v ∈ [10⁻¹², 1 − 10⁻¹²] and τ ∈ [10⁻¹², 0.95], after fixing a
+  catastrophic-cancellation bug the ground truth caught during development
+  (θ = 19.3, u = 0.3, v = 10⁻¹²: the naive h-bracket returned exactly 0.0
+  against a true density ≈ 3.3·10⁻²⁶ — fixed with a `softplus`/`expm1`
+  reformulation, see the module docstring).
+- **Kendall's τ has no closed form.** The value τ = 1/(θ+2) sometimes quoted
+  without derivation is wrong — it decreases with θ, the opposite direction
+  from λ_U = 2^{−1/θ}, which must increase with it. τ(θ) is computed by
+  adaptive quadrature of the Genest & MacKay (1986) Pickands-function
+  identity, verified against the same identity applied to Gumbel's Pickands
+  function (reproduces τ = 1 − 1/θ to 1e-12) and against a 200,000-pair
+  Monte-Carlo Kendall's τ at θ = 1, 2, 5 (agreement within Monte-Carlo
+  standard error). Registered τ range [0 + ε, 1) — extreme-value copulas
+  have no negative dependence; reachable up to τ ≈ 1 − 1e-6 (θ capped at
+  1e6), beyond which the package stores the τ that θ realises (RB-10
+  convention, as Frank/Plackett).
+- `inv_h` has no closed form either (Gumbel's monotone-Newton trick does
+  not carry over) and uses `CopulaVirt`'s Brent-bracketed default — noted
+  as a follow-up for a shared extreme-value/Pickands scaffold once
+  Hüsler–Reiss, Tawn or t-EV are added.
+- New `pmcprg/tests/test_galambos.py` (37 cases: boundary rejection, τ(θ)
+  against the quadrature and a simulated τ, h/h⁻¹ round-trip, sampling's
+  marginal uniformity and realised τ, `fit` recovery by both methods) and
+  6 new (θ, δ) entries in `test_copula_limits.py`'s high-precision reference
+  file (216 grid rows); every pre-existing family's cached reference is
+  byte-for-byte unchanged.
+
 ## [1.0.0] - 2026-09-15
 
 First public release, under the new name **awesomePMC** (PyPI `awesomepmc`,

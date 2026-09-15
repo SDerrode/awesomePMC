@@ -67,9 +67,13 @@ def test_frank_constructible_range_is_the_reachable_range():
     assert FRANK.reachable_tau(0.9) == 0.9
 
 
-# Plackett declares its own bounds since G2 (test_plackett_reachable_tau.py).
+# Plackett declares its own bounds since G2 (test_plackett_reachable_tau.py);
+# Galambos declares its own since FR-9 (test_galambos.py) — θ is capped at 1e6,
+# so τ = 1.0 (a registered bound refused by the constructor, RB-6, but still
+# checked here) reaches only ≈ 1 − 1e-6, not itself.
 @pytest.mark.parametrize("entry", [e for e in CopulaEnum if e.value.AVAILABLE and e is not FRANK
-                                   and e is not CopulaEnum.PLACKETT],
+                                   and e is not CopulaEnum.PLACKETT
+                                   and e is not CopulaEnum.GALAMBOS],
                          ids=lambda e: e.value.SHORT_NAME)
 def test_other_families_are_unchanged(entry):
     assert entry.klass.reachable_tau_abs is None
