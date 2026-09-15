@@ -1,0 +1,10 @@
+i,j,true_name,true_tau,hits/runs,mean_tau
+0,0,Student,0.250,99/100,0.243
+0,1,CubSec,0.100,22/100,0.117
+1,0,CubSec,0.100,22/100,0.119
+1,1,Clayton,0.200,100/100,0.194
+
+sup_err_mean (%),10.52
+sup_err_std (%),0.98
+unsup_err_mean (%),10.64
+unsup_err_std (%),1.00

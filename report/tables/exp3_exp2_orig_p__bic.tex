@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$), criterion: BIC.}
+  \label{tab:exp3-exp2_orig_p__bic}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 100/100 & 0.248 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 8/100 & 0.157 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 4/100 & 0.156 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 97/100 & 0.191 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 21.72\% ($\pm$ 1.62). Unsupervised: 21.95\% ($\pm$ 1.59).
+\end{table}

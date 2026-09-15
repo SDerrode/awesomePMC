@@ -1,0 +1,745 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black,
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=flexible,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{black!40},
+}
+
+\newcommand{\porig}{p_{\text{orig}}}
+\newcommand{\pbal}{p_{\text{bal}}}
+
+\title{Reproducing the experiments of \\
+       Derrode and Pieczynski (CSDA, 2013) \\
+       \vspace{2pt}\large with the \texttt{awesomePMC} package}
+\author{Reproducibility report --- general PMC with pair-indexed margins}
+\date{14 September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We reproduce the simulation experiments of sections~3.2, 3.3 and~4.3 of
+Derrode and Pieczynski~\cite{derrode2013} with the open-source
+\texttt{awesomePMC} package. Three findings shape the reproduction.
+\emph{(i)}~The model of the paper is the general pairwise Markov chain whose
+margins $f_{ij}$ are indexed by the \emph{pair} of states (Eqs.~12--14 of the
+paper); earlier versions of the package collapsed them to one margin per
+state, which by the Proposition of the paper's §2.1 turns the PMC into a
+hidden Markov chain and put the diagonal error rates 7 to 19 points above the paper's on
+average.
+\emph{(ii)}~The second parameter of the Gaussian margins of the paper's
+Table~1 is a variance: only that reading makes the printed Gamma parameters
+consistent. \emph{(iii)}~The unsupervised experiment needs several ICE starts:
+with Gaussian margins, a single start ends on a copula layout of markedly lower
+likelihood.
+With the general PMC, Tables~2(a), 2(b), 3(b) and~4(a) are reproduced to within
+half a point on average over their 49 cells; with a multistart ICE, the
+diagonal copulas of Tables~6--7 are recovered in 97--100\,\% of runs and the
+unsupervised error comes within half a point of the supervised one. We document the gaps that
+remain: Table~3(a) (Gaussian margins, $\tau=0.70$) and the PMM Tables~4(b)
+and~5(b).
+\end{abstract}
+
+% =================================================================
+\section{Introduction}\label{sec:intro}
+
+The CSDA-2013 paper introduces an unsupervised classification method for
+sequences modelled by a \emph{stationary and reversible pairwise Markov
+chain} (SR-PMC) whose bivariate observation densities are built from
+copulas. Three sets of experiments illustrate, in order:
+\begin{enumerate}
+  \item the influence of the copula \emph{shape} on supervised restoration,
+        when the simulation copula and the restoration copula vary
+        independently (paper~§3.2, Tables~2--3; our Section~\ref{sec:exp1});
+  \item the same study with the i.i.d.\ \emph{pairwise mixture model} (PMM),
+        which isolates the effect of Markovianity (paper~§3.3, Tables~4--5;
+        Section~\ref{sec:exp2});
+  \item the recovery of the copula families and parameters by ICE with
+        automatic copula selection (paper~§4.3, Tables~6--7;
+        Section~\ref{sec:exp3}).
+\end{enumerate}
+Section~\ref{sec:exp4} adds a comparison of six selection criteria that is
+not in the paper. The radar-image segmentation of the paper's §5 is not
+reproduced.
+
+This report replaces an earlier version whose numbers were produced with one
+margin per state and a single ICE start. Section~\ref{sec:setup} explains
+why both choices were wrong and how the reproduction was corrected; the
+earlier results are kept in the repository and are quoted where the
+comparison is informative.
+
+% =================================================================
+\section{Setup and notation}\label{sec:setup}
+
+\subsection{The general PMC with copulas}\label{sec:model}
+
+A PMC is a Markov chain $Z_n=(X_n,Y_n)$ with hidden states $X_n\in\{1,\dots,K\}$
+and observations $Y_n$. In the stationary and reversible case considered by
+the paper, its law is given by the joint probabilities $p_{ij}=p(x_n=i,
+x_{n+1}=j)$, $p_{ij}=p_{ji}$, and by the density of a pair of consecutive
+observations given the pair of states (paper, Eq.~12):
+\begin{equation}\label{eq:pair}
+  f(y_n,y_{n+1}\mid x_n=i,\,x_{n+1}=j)
+   = f_{ij}(y_n)\,f_{ji}(y_{n+1})\,
+     c_{ij}\bigl(F_{ij}(y_n),\,F_{ji}(y_{n+1})\bigr),
+\end{equation}
+where $f_{ij}$ is the law of $y_n$ given $(x_n,x_{n+1})=(i,j)$, $F_{ij}$ its
+CDF and $c_{ij}$ a copula density. Reversibility only makes the right margin
+of the pair $(i,j)$ the left margin of the pair $(j,i)$ --- the index
+inversion $f_{ji}$ in Eq.~\eqref{eq:pair}. The transitions follow
+(paper, Eqs.~13--14):
+\begin{gather}
+  p(x_{n+1}=j\mid x_n=i,\,y_n)\;\propto\;p_{ij}\,f_{ij}(y_n),\\
+  p(y_{n+1}\mid x_n=i,\,x_{n+1}=j,\,y_n)=f_{ji}(y_{n+1})\,c_{ij}\bigl(F_{ij}(y_n),\,F_{ji}(y_{n+1})\bigr).
+\end{gather}
+
+\paragraph{State margins make $X$ Markov.} The Proposition of the paper's
+§2.1 states that, for an SR-PMC, $X$ is a Markov chain if and only if
+$p(y_2\mid x_1,x_2)=p(y_2\mid x_2)$, i.e.\ if and only if $f_{ij}=f_i$ does not
+depend on~$j$. Versions~0.5.0 to~0.8 of the package imposed $f_{ij}=f_i$,
+attributing it to reversibility. The model called ``PMC'' was then a
+stationary reversible HMC with correlated noise, not the model of the paper.
+The package now keeps both structures, selected by
+\texttt{[model].margin\_structure}: \texttt{"state"} ($K$ margins $f_i$) and
+\texttt{"pair"} ($K^2$ margins $f_{ij}$, the general PMC).
+
+\subsection{Margins of the paper's Table~1}\label{sec:margins}
+
+Table~1 of the paper gives four margins for $K=2$: Gaussian
+$\mathcal N(\mu,s)$ with $(\mu,s)=(0,1)$, $(0.3,1.6)$, $(1.1,1.4)$, $(1.5,1)$
+for $f_{11},f_{12},f_{21},f_{22}$, and Gamma margins
+$\mathcal G(\lambda,\alpha,\theta)$ ``chosen so that their standard deviations
+are identical to those of Gaussian distributions''.
+
+\paragraph{The second Gaussian parameter is a variance.} The printed Gamma
+parameters are consistent with the caption only if $\lambda$ is the location
+of the \emph{centred} Gamma variable (the mean $\mu$ being added afterwards),
+$\theta$ is the square of the scale, and $s$ is a \emph{variance}. For a Gamma
+margin of shape $\alpha$ and standard deviation~$\sigma$ these quantities are
+$\lambda=-\sqrt\alpha\,\sigma$ and $\theta=\sigma^2/\alpha$.
+Table~\ref{tab:table1} compares the printed values with the two readings of
+$s$: reading $s$ as a variance reproduces $f_{11}$, $f_{21}$ and $f_{22}$ up
+to the rounding of the printed values and $f_{12}$ to $0.12$ on $\lambda$, whereas reading it as a standard
+deviation misses $f_{12}$ and $f_{21}$ entirely.
+
+\begin{table}[htbp]
+  \centering\small
+  \caption{Gamma parameters of Table~1: printed, and implied by each reading
+           of the Gaussian parameter~$s$ ($\lambda=-\sqrt\alpha\,\sigma$,
+           $\theta=\sigma^2/\alpha$, with $\sigma=s$ or $\sigma=\sqrt s$).}
+  \label{tab:table1}
+  \input{tables/synthesis/table1_reading.tex}
+\end{table}
+
+The supervised restorations agree: with pair margins, reading $s$ as a
+variance brings the diagonal cells of Tables~2(a), 2(b) and~3(b) within
+$0.5$~point of the paper on average, against about $1.2$ points with the
+standard deviation (30 replications per cell). All results below use pair margins
+with $s$ read as a variance; the Gamma margins use the printed shapes
+$\alpha$ with location and scale matched to $(\mu,\sqrt s)$.
+
+\subsection{Reading the paper's tables}\label{sec:orientation}
+
+In Tables~2--5 of the paper, rows are the \emph{tested} (restoration) copula
+and columns the \emph{true} (simulation) copula --- ``when the true copula is
+$c^3$ and the tested copula is $c^5$, we get an error of $14.11\,\%$'' --- and
+the minimum of each column, i.e.\ the best restoration copula for each true
+copula, is highlighted. Our tables follow the same orientation. (The earlier
+version of this report printed the transpose.)
+
+\subsection{Copulas under test}
+
+The copula codes $c^0,\dots,c^8$ are recalled in Appendix~\ref{app:copulas}.
+The eligible sets of the supervised experiments contain the copulas that
+admit the target Kendall's $\tau$ (Table~\ref{tab:copula-sets}).
+
+\begin{table}[htbp]
+  \centering
+  \caption{Eligible-copula sets for the two correlation regimes.}
+  \label{tab:copula-sets}
+  \begin{tabular}{cl}
+    \toprule
+    Regime & Set\\
+    \midrule
+    $\tau^{(1)}=0.16$ &
+       $\Pi^{(1)} = \{c^{0}, c^{1}, c^{2}, c^{3}, c^{4}, c^{5}, c^{6}\}$ \\
+    $\tau^{(2)}=0.70$ &
+       $\Pi^{(2)} = \{c^{0}, c^{1}, c^{2}, c^{3}, c^{6}, c^{7}, c^{8}\}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% =================================================================
+\section{Reproducibility}\label{sec:reproducibility}
+
+The results come from the script \nolinkurl{report/reproduce_csda2013.py} and
+every table from \nolinkurl{report/csda2013_tables.py}, which reads the CSV
+results and the values of the paper
+(\nolinkurl{report/data/csda2013_tables2to5.csv}). The diagnostics of
+Sections~\ref{sec:margins} and~\ref{sec:exp3-basin} come from the scripts
+kept with the working notes (\nolinkurl{report/out/csda_compare/}, not
+versioned). The runs
+reported here are:
+\begin{lstlisting}
+# Experiments 1-2 (Tables 2-5): 30 replications per cell, N = 2000
+python report/reproduce_csda2013.py --exp1 --exp2 --reps 30 --margins pair
+# Experiment 3 (Tables 6-7), single ICE start: 100 runs
+python report/reproduce_csda2013.py --exp3 --runs 100 --margins pair
+# Experiment 3, multistart ICE: 30 runs
+python report/reproduce_csda2013.py --exp3 --runs 30 --margins pair --exp3-starts multi
+# Tables of this report
+python report/csda2013_tables.py
+\end{lstlisting}
+\texttt{--margins pair} reads $s$ as a variance by default
+(\texttt{--table1-sigma}); \texttt{--margins state} reproduces the earlier
+one-margin-per-state results. The paper used 300 replications per
+cell and 10 ICE runs. Every experiment uses explicit seeds. With five worker processes on a laptop,
+Experiments~1--2 take a few minutes, the
+single-start Experiment~3 about 40 minutes and the multistart one about
+3.5~hours.
+
+% =================================================================
+\section{Experiment~1 --- Supervised PMC restoration\\
+        \emph{(CSDA Tables~2 and~3)}}\label{sec:exp1}
+
+\subsection{Setup}
+
+$K=2$, $N=2000$ observations per sequence, and the prior
+$p(1,1)=0.50$, $p(1,2)=p(2,1)=0.05$, $p(2,2)=0.40$. For each copula of
+$\Pi^{(\bullet)}$ we simulate $(X_{1:N},Y_{1:N})$ with that copula on all four
+transitions, restore $X$ by the MPM classifier with each copula of the same
+set (again on all four transitions, every other parameter being the true
+one), and record the error rate. Each cell averages 30 replications; the
+empirical standard deviation is given in parentheses.
+
+\subsection{Results}
+
+\input{tables/margins_pair/exp1_low_tau_gauss.tex}
+\input{tables/margins_pair/exp1_low_tau_gamma.tex}
+\input{tables/margins_pair/exp1_high_tau_gauss.tex}
+\input{tables/margins_pair/exp1_high_tau_gamma.tex}
+
+\subsection{Discussion}
+
+The qualitative findings of the paper are recovered:
+\begin{itemize}
+  \item For every true copula, the best restoration copula is the true one
+        (27 columns out of 28; in the last one, $c^4$ at $\tau=0.16$ with
+        Gaussian margins, $c^1$ does better by $0.01$~point).
+  \item At $\tau=0.16$ the copulas are nearly interchangeable: a wrong
+        choice raises the error rate by at most $10\,\%$ of its value.
+  \item At $\tau=0.70$ the choice matters: restoring Clayton data ($c^6$)
+        with a Gumbel copula ($c^3$) raises the error from $10.4\,\%$ to
+        $36.0\,\%$ with Gaussian margins, and restoring independent data
+        with a Clayton copula multiplies it by $4.3$ (Gaussian) and $5.7$
+        (Gamma).
+\end{itemize}
+The agreement with the paper's numbers is quantified in
+Section~\ref{sec:agreement}.
+
+% =================================================================
+\section{Experiment~2 --- Pairwise mixture model\\
+        \emph{(CSDA Tables~4 and~5)}}\label{sec:exp2}
+
+\subsection{Setup}
+
+In the PMM, the pairs $(y_1,y_2),(y_3,y_4),\dots$ are independent. We draw
+$N/2=1000$ pairs, the first observation from $f_{ij}$ and the second from
+$f_{ji}$ with copula $c_{ij}$, and classify each pair with the posterior
+\begin{equation}
+   p(x_{1}=i \mid y_{1},y_{2}) \propto
+     \sum_{j=1}^{K} p_{ij}\,f_{ij}(y_1)\,f_{ji}(y_2)\,
+     c_{ij}\bigl(F_{ij}(y_1),F_{ji}(y_2)\bigr).
+\end{equation}
+The (simulation, restoration) combinations are those of
+Experiment~1.
+
+\subsection{Results}
+
+\input{tables/margins_pair/exp2_low_tau_gauss.tex}
+\input{tables/margins_pair/exp2_low_tau_gamma.tex}
+\input{tables/margins_pair/exp2_high_tau_gauss.tex}
+\input{tables/margins_pair/exp2_high_tau_gamma.tex}
+
+\subsection{Discussion}
+
+Markovianity lowers the error of the correct restoration (diagonal cells)
+in every configuration. At $\tau=0.16$ the PMC error is $32$--$40\,\%$ lower
+than the PMM one with Gaussian margins and $36$--$42\,\%$ lower with Gamma
+margins, in line with the paper. At $\tau=0.70$ the gain depends on the
+copula: with Gaussian margins it is $40$--$48\,\%$ for the product and
+Clayton copulas but only $6$--$21\,\%$ for $c^1$, $c^2$, $c^3$, $c^7$ and
+$c^8$; with Gamma margins it is $17$--$49\,\%$. The small gains with Gaussian margins at
+$\tau=0.70$ come from the PMC side, where our errors exceed the paper's
+(Table~3(a), Section~\ref{sec:agreement}).
+
+% =================================================================
+\section{Agreement with Tables~2--5}\label{sec:agreement}
+
+Table~\ref{tab:agreement} compares the 49 cells of each table with the paper,
+for the earlier one-margin-per-state model (``state'') and for the general PMC
+(``pair'').
+
+\begin{table}[htbp]
+  \centering\small
+  \caption{Difference with CSDA Tables~2--5 (our error minus the paper's, in
+           points) and cell-by-cell correlation. ``state'': $f_{ij}=f_{i1}$,
+           $s$ read as a standard deviation (earlier reproduction, 300
+           replications); ``pair'': the four margins of Table~1, $s$ read as a
+           variance (30 replications).}
+  \label{tab:agreement}
+  \input{tables/synthesis/tables2to5_vs_paper.tex}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{The general PMC reproduces the paper.} Tables~2(a), 2(b),
+        3(b) and~4(a) are matched to within $0.3$--$0.5$~point on average
+        and a cell correlation of $0.988$ or more. With one margin per state
+        the errors were $7$ to $12$~points too high on average on the
+        diagonal: the earlier reproduction simulated a different model.
+  \item \textbf{Table~3(a) keeps a bias of $+4.7$ points} on the diagonal
+        (PMC, Gaussian margins, $\tau=0.70$), although the same design with
+        Gamma margins, Table~3(b), is reproduced to $+0.1$~point. The
+        supervised error of the unsupervised experiment with Gaussian
+        margins shows the same excess (Section~\ref{sec:exp3-remaining}).
+        We could not identify the cause (see below).
+  \item \textbf{Tables~4(b) and~5(b)} (PMM, Gamma margins) remain off by
+        $-2.4$ and $+6.5$ points on the diagonal. The printed Table~5(b) is
+        hard to reconcile with Table~5(a) and with Table~4(b): its errors
+        with strong dependence ($10.1$--$12.0\,\%$) are well below its own
+        product-copula column ($17.0\,\%$), whereas the paper's Tables~4(a),
+        4(b) and~5(a) all show dependence \emph{raising} the error of a
+        pair-wise classifier.
+\end{itemize}
+
+\paragraph{What the Table~3(a) gap is not.} The excess is confined to the
+PMC with Gaussian margins at $\tau=0.70$ and to copula-aware restorations:
+restoring the same data with the product copula (row $c^0$) matches the
+paper to within $1$--$1.7$~points, and the PMM of Table~5(a), which uses the
+same pair density~\eqref{eq:pair} without the chain dynamics, matches to
+$+1.1$~points on the diagonal. We tested seven explanations on the diagonal
+cells (20--30 replications), requiring each to fix Table~3(a) without
+breaking the tables that already agree:
+\begin{itemize}
+  \item reading $s$ as a standard deviation: Table~3(a) $+3.3$ on average,
+        Table~2(a) degraded to $-1.1$;
+  \item exchanging $f_{12}$ and $f_{21}$, with either reading of $s$:
+        Table~3(a) $-0.8$ and $-0.7$, but Tables~2(a), 2(b) and~3(b) move
+        by $-2.7$ to $-5.2$ points;
+  \item simulating $X$ as a Markov chain (Eq.~13 ignoring $y_n$): Table~3(a)
+        $+9.1$;
+  \item Eq.~13 evaluated with $f_{ji}(y_n)$ instead of $f_{ij}(y_n)$:
+        Table~3(a) $-0.3$, but Tables~2(a), 2(b) and~3(b) move to $-2.5$,
+        $-2.7$ and $-3.7$, and the product-copula cell to $9.4$ against
+        $11.06\,\%$;
+  \item reading $s$ as a variance in Eq.~13 and as a standard deviation in
+        Eq.~14 and the copula arguments, or the reverse: Table~3(a) $+3.7$
+        and $+3.4$.
+\end{itemize}
+Three independent implementations of the exact model --- the package, a
+stand-alone simulator and a separately written forward--backward --- give the
+same error rates. The gap is therefore not a coding error in the model as
+the paper states it; the 2013 computation of Table~3(a) presumably differed
+in a way the paper does not describe. It remains open.
+
+% =================================================================
+\section{Experiment~3 --- Unsupervised copula selection by ICE\\
+        \emph{(CSDA Tables~6 and~7)}}\label{sec:exp3}
+
+\subsection{Setup}
+
+$N=2500$, $K=2$, $Q=30$ ICE iterations, margins known (their parameters are
+not re-estimated, whereas §4.3 of the paper re-estimates them). Two designs, each with the original prior $\porig$ and a
+balanced prior $\pbal$ ($p_{ii}=0.35$, $p_{12}=p_{21}=0.15$):
+\begin{itemize}
+  \item exp.~1: candidates $\{c^1,c^3,c^6\}$ (Gauss, Gumbel, Clayton), true
+        copulas $c_{11}=c^1$ ($\tau=0.7$), $c_{12}=c_{21}=c^3$ ($\tau=0.4$),
+        $c_{22}=c^6$ ($\tau=0.7$), Gaussian margins;
+  \item exp.~2: candidates $\{c^2,c^3,c^5,c^6\}$ (Student, Gumbel, cubic
+        section, Clayton), true copulas $c_{11}=c^2$ ($\tau=0.25$),
+        $c_{12}=c_{21}=c^5$ ($\tau=0.10$), $c_{22}=c^6$ ($\tau=0.20$),
+        Gamma margins.
+\end{itemize}
+At every M-step, ICE re-selects the family of each copula among the
+candidates and estimates its~$\tau$. The package's ICE estimates copulas by
+weighted pseudo-likelihood under the pair posteriors $\xi_n(i,j)$; the paper
+(§4.2, Eqs.~22--24) estimates them on the hard sub-samples of a single
+posterior draw ($L=1$). The two coincide only when the posterior is
+concentrated. The paper selects the families with the Bayesian criterion of
+Huard, \'Evin and Favre~\cite{huard2006} (its Eq.~20); we report that
+criterion here and compare six criteria in Section~\ref{sec:exp4}.
+
+\subsection{A single ICE start ends in the wrong basin}\label{sec:exp3-basin}
+
+The first reproduction started ICE from every copula on the first candidate
+with $\tau=0$. With Gaussian margins it rarely recovers the diagonal
+copulas: $c_{11}$ in $2\,\%$ of runs with $\porig$, $c_{11}$ and $c_{22}$ in
+$0\,\%$ with $\pbal$ (Table~\ref{tab:exp3}). Three checks locate the cause in
+the convergence of ICE rather than in the selection criterion:
+\begin{enumerate}
+  \item \emph{With the true parameters}, the M-step (MLE criterion) selects
+        the true diagonal families in 10 seeds out of 10 in all four
+        settings, whether it is fed the true labels, the posterior $\xi$ or
+        one posterior draw.
+  \item \emph{Started at the true model}, ICE (MLE criterion, exp.~1) keeps
+        the true families (diagonal 10/10) and ends with a log-likelihood
+        higher than the single start by a median of $30$~nat ($\porig$) and
+        $58$~nat ($\pbal$) over 10 seeds. Its unsupervised error with $\porig$ is
+        $13.7\,\%$, the paper's $13.74\,\%$.
+  \item \emph{The k-means warm start of the package} was no remedy: it
+        numbered the states arbitrarily and, with known margins, estimated
+        the prior and copulas on permuted labels in about half the starts.
+        This defect is fixed (clusters are now matched to the declared state
+        laws).
+\end{enumerate}
+The family of a start decides the basin. The package's own multistart, which
+only perturbs the parameters of a start, keeps its families and cannot leave
+that basin.
+
+\subsection{Multistart ICE}
+
+The multistart runs ICE from the single start above, from the corrected
+k-means start, and from every combination of candidate families on the two
+diagonal copulas ($\tau=0.5$; off-diagonal copulas on the first candidate,
+$\tau=0.3$), and keeps the run of highest final log-likelihood. No start uses
+the truth. Table~\ref{tab:exp3} compares it with the single start and with
+the paper.
+
+\begin{table}[htbp]
+  \centering\small
+  \caption{Right copula family chosen (\%) and mean error rate (\%), Huard
+           criterion, pair margins. Paper: Tables~6--7 (10 runs) and the
+           error rates of its §4.3 (given for $\porig$ only).}
+  \label{tab:exp3}
+  \input{tables/synthesis/exp3_vs_paper_huard.tex}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Diagonal copulas are recovered} in $97$--$100\,\%$ of runs in
+        all four settings (paper: $80$--$100\,\%$). With Gaussian margins the
+        winning start is a diagonal sweep in every run (Huard criterion).
+  \item \textbf{The unsupervised error comes within $0.5$~point of the
+        supervised one} ($14.7$ vs $14.4\,\%$, $10.3$ vs $10.2\,\%$, $20.9$ vs
+        $20.4\,\%$, $20.7$ vs $20.4\,\%$): estimation costs almost nothing once
+        ICE starts in the right basin. From a single start, the loss with
+        Gaussian margins was $3.4$ and $10.8$ points.
+  \item \textbf{Off-diagonal copulas stay mostly below the paper}:
+        $43$--$83\,\%$ against $70$--$100\,\%$ (only $c_{21}$ of exp.~1,
+        $\porig$, exceeds the paper's 7 out of 10). These blocks receive about $125$ ($\porig$)
+        to $375$ ($\pbal$) effective observations. Even with the true labels
+        and parameters, the cubic-section copula of exp.~2, $\porig$, is
+        selected in only 6 seeds out of 10 (MLE criterion). In a pilot study
+        on exp.~2, $\porig$, of the earlier one-margin-per-state benchmark,
+        weighted Vuong tests~\cite{vuong1989} declared these choices
+        statistically tied with the runner-up in $75$--$100\,\%$ of the runs,
+        the true family always belonging to the set of families not
+        significantly worse than the selected one. The paper's
+        9--10 out of 10 rest on ten runs.
+\end{itemize}
+
+\subsection{What remains}\label{sec:exp3-remaining}
+
+With Gaussian margins and $\porig$, the \emph{supervised} error of our
+simulations is $14.4\,\%$ against $12.16\,\%$ in the paper. This excess does
+not involve ICE and has the same sign as the bias of Table~3(a); with Gamma
+margins our supervised error is lower than the paper's ($10.2$ vs
+$11.35\,\%$). Neither is explained by the hypotheses of
+Section~\ref{sec:agreement}.
+
+% =================================================================
+\section{Experiment~4 --- Comparison of selection criteria}\label{sec:exp4}
+
+\subsection{Criteria}
+
+\begin{description}
+  \item[MLE] $\arg\max_r \log L_r(\hat\tau_r)$, the weighted log-likelihood
+    at the fitted parameter.
+  \item[AIC] $\arg\max_r 2\log L_r - 2k_r$.
+  \item[BIC] $\arg\max_r 2\log L_r - k_r\log n_{\text{eff}}$, with
+    $n_{\text{eff}}=\sum_n\xi_n(i,j)$.
+  \item[Huard] $\arg\max_r \frac{1}{\tau_M^r-\tau_m^r}
+    \int_{\tau_m^r}^{\tau_M^r}\!\prod_n c_r(u_n,v_n;\tau)^{\xi_n}\,d\tau$
+    (paper, Eq.~20): Bayesian evidence under a uniform prior on each
+    family's admissible $\tau$-range, computed by adaptive quadrature.
+  \item[CvM] $\arg\min_r S_n(c_r)$, the weighted Cram\'er--von Mises distance
+    between empirical and fitted copula CDFs.
+  \item[xv-CIC] cross-validated copula information criterion: out-of-sample
+    log-likelihood on contiguous, purged folds.
+\end{description}
+
+\subsection{With pair margins and multistart}
+
+Table~\ref{tab:exp4-multi} summarises the six criteria on the reproduction of
+Section~\ref{sec:exp3} ($D$: diagonal recovery, $O$: off-diagonal recovery,
+$\bar e$: unsupervised error; 30 runs).
+
+{\setlength{\tabcolsep}{2.2pt}\input{tables/synthesis/exp4_criterion_summary_multistart.tex}}
+
+MLE, AIC, BIC, Huard and xv-CIC all recover the diagonal copulas in
+$97$--$100\,\%$ of runs and reach the same error to within $0.1$~point. They
+differ off-diagonal only, where Huard is the best likelihood-based criterion
+in every setting ($78$, $57$, $53$ and $70\,\%$ against $53$, $35$, $45$ and
+$53\,\%$ for MLE). CvM is the only criterion that fails on the diagonal
+($35$--$85\,\%$) and it has the highest error with Gaussian margins.
+
+\subsection{The earlier benchmark: one margin per state, single start}
+
+The rest of this section analyses the earlier design --- one margin per state
+and a single ICE start, 100 runs --- in which the criteria were first compared
+and in which the prior-width effect behind Huard's off-diagonal advantage
+was isolated. That design is not the paper's model and its error rates are
+inflated by the wrong ICE basin, but it is a controlled benchmark for
+comparing criteria on identical data, and its conclusions on the criteria
+stand. Its summary is Table~\ref{tab:exp4-summary}; each rate pools 200
+Bernoulli trials and the runs are paired across criteria (run~$r$ uses seed
+$3000+r$), so comparisons use McNemar's exact test on per-run outcomes.
+
+{\setlength{\tabcolsep}{2.2pt}\input{tables/exp4_criterion_summary.tex}}
+
+\paragraph{(1) The likelihood-based criteria agree with one another.} MLE,
+AIC and BIC return identical recovery rates on both exp.~1 settings and are
+within $1.5$~points on exp.~2, $\porig$. They part company on exp.~2, $\pbal$,
+where AIC reaches $O=16\,\%$ against MLE's $8\,\%$ (McNemar $20{:}5$,
+$p=0.004$) and BIC $D=98\,\%$ against $90\,\%$ ($16{:}0$,
+$p=3.1\times10^{-5}$). At these sample sizes the penalties only arbitrate
+near-ties. Every one of them recovers the two-parameter Student copula of
+exp.~2 in $100\,\%$ of runs.
+
+\paragraph{(2) Huard dominates off-diagonal.} Huard matches MLE on the
+diagonal ($56.5/98/50/91\,\%$ against $57/97/50/90\,\%$), although BIC and
+AIC do better there on exp.~2, $\pbal$ ($98$ and $94.5\,\%$; BIC against
+Huard $14{:}0$, $p=1.2\times10^{-4}$). Off-diagonal, Huard is higher than MLE
+in all four settings: $35$ vs $27\,\%$ (exp.~1, $\porig$), $41$ vs $7\,\%$
+(exp.~2, $\porig$), $17.5$ vs $11.5\,\%$ (exp.~1, $\pbal$) and $38.5$ vs
+$8\,\%$ (exp.~2, $\pbal$). All four gaps are significant
+against MLE: $19{:}3$ ($p=8.6\times10^{-4}$), $68{:}0$
+($p=6.8\times10^{-21}$), $12{:}0$ ($p=4.9\times10^{-4}$) and $61{:}0$
+($p=8.7\times10^{-19}$).
+
+Sparsity alone does not explain it. Both experiments share the off-diagonal
+sparsity of $\porig$, but the size of Huard's edge depends on the true
+family (Table~\ref{tab:huard-cells}): $+4$ to $+12$~points when it is Gumbel,
+whose $\tau$-range $[0,1]$ has width~1, and $+30$ to $+36$~points when it is
+the cubic-section copula, whose range $[0,0.165]$ is six times narrower.
+Eq.~(20) places a uniform prior on each family's own range, so a narrow range
+concentrates prior mass.
+
+\begin{table}[htbp]
+  \centering\small
+  \caption{Off-diagonal recovery by cell, Huard vs MLE (earlier benchmark),
+           and McNemar discordance (Huard only : MLE only).}
+  \label{tab:huard-cells}
+  \input{tables/synthesis/huard_offdiag_cells_state.tex}
+\end{table}
+
+\emph{An isolation experiment settles it.} The \texttt{huard\_common}
+criterion is the same evidence integrated over one \emph{shared} support ---
+the intersection of the candidates' declared ranges --- so that no family is
+rewarded for declaring a narrow one. Same data, truth, candidates and seeds;
+only the prior support changes (Table~\ref{tab:prior-width}).
+
+\begin{table}[htbp]
+  \centering\small
+  \caption{Off-diagonal recovery with Huard's own supports and with a common
+           support. ``Edge retained'': share of Huard's advantage over MLE
+           that survives the common support. Discordance: Huard only : common
+           only.}
+  \label{tab:prior-width}
+  \setlength{\tabcolsep}{3.5pt}
+  \input{tables/synthesis/prior_width_isolation_state.tex}
+\end{table}
+
+With a common support, Huard's advantage disappears in three settings (a
+retained share of $3$, $0$ and $-3\,\%$) and $38\,\%$ of it --- $+3.0$
+points, $p=0.03$ --- survives in the fourth. \textbf{Huard's off-diagonal
+superiority in this benchmark is almost entirely an effect of the families'
+declared $\tau$-ranges, not of averaging the likelihood over~$\tau$.} It is
+genuine Bayesian behaviour --- a narrower prior that contains the truth
+\emph{ought} to win --- but it is a property of the candidate set, and it will
+not transfer to candidate sets whose ranges are comparable. A methodological
+note developing this point is in preparation.
+
+\paragraph{(3) The prior of the chain matters more than the criterion.}
+Within a setting, the unsupervised errors of the six criteria span about
+$1$ to $3$~points; between settings they range from $22.0\,\%$ (exp.~2,
+$\porig$, BIC) to $33.5\,\%$ (exp.~2, $\pbal$, CvM). Going from $\porig$ to
+$\pbal$ raises the error by $1.6$ to $10.6$ points depending on the criterion and the
+design: balanced priors switch states more often and weaken the Markov
+contrast the classifier relies on.
+
+\paragraph{(4) Cram\'er--von Mises trades diagonal for off-diagonal.} CvM
+has the lowest error on both exp.~1 settings ($27.1\,\%$ and $28.8\,\%$) and
+the highest off-diagonal recovery of the benchmark ($O=48\,\%$ on exp.~1,
+$\pbal$, beating Huard by $74$ cells to $13$, $p=1.6\times10^{-11}$), but its
+diagonal recovery collapses to $14$ and $17\,\%$ on exp.~2, where it almost
+never selects the Student copula. The $L^2$ distance weights every deviation
+equally, including where the density is small: a liability when two families
+differ in the tails, an asset on sparse blocks where a likelihood overfits.
+The multistart reproduction confirms its diagonal weakness
+(Table~\ref{tab:exp4-multi}).
+
+\paragraph{(5) xv-CIC: better founded, not better performing.} It tracks
+AIC and BIC on the diagonal ($58/97/50/94\,\%$) and lies between MLE and
+Huard off-diagonal in three settings, but it is the worst of the six
+off-diagonal on exp.~2, $\porig$ ($O=4\,\%$), where Huard beats it by $74$
+cells to~$0$ ($p=1.1\times10^{-22}$). Cross-validation lets the effective
+penalty adapt to the family, which suits plug-in margins and posterior
+weights better than a fixed penalty; at these sample sizes the fixed penalty
+is good enough, and xv-CIC cost about $5.6$ times an MLE evaluation per block
+on a synthetic benchmark.
+
+\paragraph{On statistical power.} The conclusions on Huard rest on
+discordances as one-sided as $68{:}0$, $61{:}0$ and $12{:}0$. Two
+comparisons are inconclusive and reported as such: Huard vs CvM off-diagonal
+on exp.~2 ($p=0.52$ and $p=0.66$) and Huard vs xv-CIC on exp.~1, $\porig$
+($p=0.22$).
+
+\paragraph{Practical recommendation.}
+\begin{itemize}
+  \item \textbf{Start ICE several times}, varying the copula families of the
+        starts; the criterion matters far less than the basin.
+  \item \textbf{For copula identification, Huard} is as good as MLE on the
+        diagonal and better off-diagonal, but its edge comes from the declared
+        $\tau$-ranges. Use it when a candidate's plausible range is genuinely
+        narrow; do not expect it when the ranges are comparable.
+  \item \textbf{MLE, AIC and BIC} are sound defaults when the goal is
+        classification; they agree except on near-ties.
+  \item \textbf{CvM} is a specialist for suspect likelihoods or rare
+        transitions, never a default: it cannot identify the Student copula.
+  \item \textbf{xv-CIC} is a diagnostic rather than a default.
+  \item Off-diagonal choices on a hundred observations are often
+        statistical ties; test them (Vuong) before interpreting them.
+\end{itemize}
+
+\paragraph{Revision notes.} \emph{(a)} An earlier version of this section was
+computed with the weighted log-likelihood returned as a per-observation mean
+while the AIC and BIC penalties are calibrated on a sum; the penalty was
+$n_{\text{eff}}$ times too strong and the Huard integral was flattened. Its
+conclusions (AIC/BIC excluding the Student copula, Huard trading diagonal for
+off-diagonal recovery) did not survive the correction. \emph{(b)} The numbers
+of the earlier benchmark were regenerated after the numerical corrections of
+the copula kernels and of the Huard quadrature; 27 of the 9600 per-cell
+decisions changed. \emph{(c)} The present version adds the general PMC, the
+variance reading of Table~1, the paper's table orientation and the multistart
+ICE.
+
+% =================================================================
+\section{Conclusion}\label{sec:conclusion}
+
+\begin{enumerate}
+  \item \textbf{The model matters first.} With pair-indexed margins --- the
+        general PMC of the paper --- and the variance reading of Table~1,
+        four of the eight supervised tables are reproduced to within half a
+        point on average; with one margin per state, which is a hidden Markov
+        chain, every table was 7 to 18 points off on average.
+  \item \textbf{The qualitative conclusions of the paper hold.} The true
+        copula is the best restoration copula (27 columns out of 28); the copula shape matters at
+        $\tau=0.70$, where a wrong copula can multiply the error by $3.5$ to
+        $5.7$; Markovianity lowers the error by $32$--$42\,\%$ at
+        $\tau=0.16$.
+  \item \textbf{ICE with automatic copula selection works once it starts in
+        the right basin.} A multistart over the diagonal copula families
+        recovers the diagonal copulas in $97$--$100\,\%$ of runs and loses at
+        most about half a point of error with respect to the supervised
+        restoration. Off-diagonal copulas estimated on about a hundred
+        observations are often statistically undecidable.
+  \item \textbf{Open gaps}: Table~3(a) and the supervised error with Gaussian
+        margins (about $+2$ to $+5$ points), unexplained by seven tested
+        hypotheses on the margins and the simulator, and the PMM
+        Tables~4(b) and~5(b).
+\end{enumerate}
+
+% =================================================================
+\appendix
+\section{Copula registry}\label{app:copulas}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Copulas of this report, matching CSDA~Table~A.11. The Student
+           copula has $\nu=4$ in Experiments~1--2; in Experiments~3--4 ICE
+           estimates $\nu$ as well.}
+  \label{tab:copula-registry}
+  \begin{tabular}{clll}
+    \toprule
+    Code & Family & Package class & Admissible $\tau$ \\
+    \midrule
+    $c^{0}$ & Product             & \texttt{CopulaProduct}  & $\{0\}$ \\
+    $c^{1}$ & Gauss (elliptical)  & \texttt{CopulaGaussian} & $[-1,\,1]$ \\
+    $c^{2}$ & Student-t           & \texttt{CopulaStudent}  & $[-1,\,1]$ \\
+    $c^{3}$ & Gumbel--Hougaard    & \texttt{CopulaGH}       & $[0,\,1]$ \\
+    $c^{4}$ & FGM                 & \texttt{CopulaFGM}      & $[-2/9,\,2/9]$ \\
+    $c^{5}$ & Cubic section       & \texttt{CopulaCubSec}   & $[0,\,33/200]$ \\
+    $c^{6}$ & Clayton             & \texttt{CopulaClayton}  & $(0,\,1]$ \\
+    $c^{7}$ & Archimedean~12      & \texttt{CopulaA12}      & $[1/3,\,1)$ \\
+    $c^{8}$ & Archimedean~14      & \texttt{CopulaA14}      & $[1/3,\,1)$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Result files}\label{app:repro}
+
+\begin{itemize}
+  \item \texttt{report/results/margins\_pair/} --- Experiments~1--3, pair
+        margins, single ICE start (the tables of Sections~\ref{sec:exp1},
+        \ref{sec:exp2} and the single-start rows of
+        Table~\ref{tab:exp3});
+  \item \texttt{report/results/exp3\_multistart/margins\_pair/} ---
+        Experiment~3 with multistart ICE;
+  \item \texttt{report/results/} --- the earlier one-margin-per-state results
+        (Section~\ref{sec:exp4}, earlier benchmark) and the prior-width
+        isolation (\texttt{prior\_width\_isolation*.csv});
+  \item \texttt{report/tables/} --- the corresponding \LaTeX{} tables;
+        \texttt{report/tables/synthesis/} --- the comparison tables of this
+        report.
+\end{itemize}
+Compile with \texttt{cd report \&\& latexmk -pdf csda2013\_reproduction.tex}.
+
+% =================================================================
+\begin{thebibliography}{1}
+
+\bibitem{derrode2013}
+S.~Derrode and W.~Pieczynski.
+\newblock Unsupervised data classification using pairwise {M}arkov chains
+  with automatic copulas selection.
+\newblock \emph{Computational Statistics \& Data Analysis}, 63:81--98, 2013.
+\newblock doi:10.1016/j.csda.2013.01.027.
+
+\bibitem{huard2006}
+D.~Huard, G.~\'Evin and A.-C.~Favre.
+\newblock Bayesian copula selection.
+\newblock \emph{Computational Statistics \& Data Analysis}, 51(2):809--822,
+  2006.
+\newblock doi:10.1016/j.csda.2005.08.010.
+
+\bibitem{vuong1989}
+Q.~H.~Vuong.
+\newblock Likelihood ratio tests for model selection and non-nested
+  hypotheses.
+\newblock \emph{Econometrica}, 57(2):307--333, 1989.
+\newblock doi:10.2307/1912557.
+
+\end{thebibliography}
+
+\end{document}

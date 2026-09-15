@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 with balanced prior $p_{\text{bal}}$, criterion: MLE (max log-likelihood). Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp2_bal_p__mle}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 30/30 & 0.245 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 20/30 & 0.114 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 12/30 & 0.133 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 29/30 & 0.184 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 20.39\% ($\pm$ 1.05). Unsupervised: 20.64\% ($\pm$ 1.11).
+\end{table}

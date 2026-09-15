@@ -1,0 +1,56 @@
+{
+ "date": "2026-09-15 12:16",
+ "quick": false,
+ "jobs": 3,
+ "python": "3.14.7",
+ "numpy": "2.5.3",
+ "pandas": "3.0.5",
+ "pmcprg": "0.8.0",
+ "machine": "arm64",
+ "data": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/data/timeseries",
+ "this_invocation_wall_s": {
+  "phase1_s": 0.04610116700132494,
+  "phase2_s": 0.11276437500055181,
+  "phase3_s": 1.5697732499975245,
+  "total_s": 1.7305321249987173
+ },
+ "sum_task_wall_s": 4496.3879457100265,
+ "settings": {
+  "COPULA_CANDIDATES": [
+   "Gauss",
+   "Clayton",
+   "GH",
+   "Frank"
+  ],
+  "GICE_CANDIDATES": [
+   "norm",
+   "gamma",
+   "invgamma",
+   "betaprime"
+  ],
+  "GICE_RULE": "bic",
+  "START_JITTER": 0.25,
+  "START_SEED": 2026,
+  "ICE_MAX_ITER": 50,
+  "ICE_TOL": 0.0001,
+  "SEM_MAX_ITER": 30,
+  "IMPUTE_DRAWS": 200,
+  "PAMAP2_WINDOW": 50,
+  "PAMAP2_MIN_MISSING": 5,
+  "PAMAP2_MCAR_RATE": 0.1,
+  "PAMAP2_MCAR_BLOCK": 20,
+  "DEQUANT_SEED": 11
+ },
+ "cv": {
+  "rates": [
+   0.05,
+   0.2
+  ],
+  "blocks": [
+   1,
+   6,
+   48
+  ],
+  "seeds": 5
+ }
+}

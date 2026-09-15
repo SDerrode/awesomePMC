@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$), criterion: xvcic. Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp2_orig_p__xvcic}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 30/30 & 0.241 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 15/30 & 0.113 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 7/30 & 0.132 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 29/30 & 0.191 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 10.19\% ($\pm$ 1.08). Unsupervised: 10.35\% ($\pm$ 1.10).
+\end{table}

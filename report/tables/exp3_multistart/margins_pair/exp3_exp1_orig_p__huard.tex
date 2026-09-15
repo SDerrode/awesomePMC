@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 1 (\{Gauss, GH, Clayton\}, $p_{\text{orig}}$), criterion: Huard et al.\ 2006 (CSDA-2013 Eq.\ 20). Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp1_orig_p__huard}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Gauss} & 0.70 & 30/30 & 0.701 \\
+    (0, 1) & \texttt{GH} & 0.40 & 22/30 & 0.420 \\
+    (1, 0) & \texttt{GH} & 0.40 & 25/30 & 0.416 \\
+    (1, 1) & \texttt{Clayton} & 0.70 & 30/30 & 0.698 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 14.45\% ($\pm$ 1.89). Unsupervised: 14.67\% ($\pm$ 1.93).
+\end{table}

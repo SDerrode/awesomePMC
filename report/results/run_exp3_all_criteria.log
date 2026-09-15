@@ -1,0 +1,194 @@
+2026-05-04 21:13:46,689 csda2013 INFO | Exp #3 / exp1_orig_p__mle : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:13:53,792 csda2013 INFO |   run 1/5  elapsed=7.1s
+2026-05-04 21:14:02,317 csda2013 INFO |   run 2/5  elapsed=15.6s
+2026-05-04 21:14:10,769 csda2013 INFO |   run 3/5  elapsed=24.1s
+2026-05-04 21:14:16,136 csda2013 INFO |   run 4/5  elapsed=29.4s
+2026-05-04 21:14:26,971 csda2013 INFO |   run 5/5  elapsed=40.3s
+2026-05-04 21:14:26,971 csda2013 INFO | Exp #3 / exp1_orig_p__aic : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:14:33,803 csda2013 INFO |   run 1/5  elapsed=6.8s
+2026-05-04 21:14:42,956 csda2013 INFO |   run 2/5  elapsed=16.0s
+2026-05-04 21:14:52,029 csda2013 INFO |   run 3/5  elapsed=25.1s
+2026-05-04 21:14:57,819 csda2013 INFO |   run 4/5  elapsed=30.8s
+2026-05-04 21:15:09,354 csda2013 INFO |   run 5/5  elapsed=42.4s
+2026-05-04 21:15:09,355 csda2013 INFO | Exp #3 / exp1_orig_p__bic : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:15:16,298 csda2013 INFO |   run 1/5  elapsed=6.9s
+2026-05-04 21:15:25,658 csda2013 INFO |   run 2/5  elapsed=16.3s
+2026-05-04 21:15:34,754 csda2013 INFO |   run 3/5  elapsed=25.4s
+2026-05-04 21:15:40,757 csda2013 INFO |   run 4/5  elapsed=31.4s
+2026-05-04 21:15:51,960 csda2013 INFO |   run 5/5  elapsed=42.6s
+2026-05-04 21:15:51,961 csda2013 INFO | Exp #3 / exp1_orig_p__huard : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:15:58,484 csda2013 INFO |   run 1/5  elapsed=6.5s
+2026-05-04 21:16:07,085 csda2013 INFO |   run 2/5  elapsed=15.1s
+2026-05-04 21:16:16,284 csda2013 INFO |   run 3/5  elapsed=24.3s
+2026-05-04 21:16:21,835 prg.pmc.ice WARNING | ICE iter 4: log-lik regressed by 5.4953e+00 (streak=1/3).
+2026-05-04 21:16:23,200 csda2013 INFO |   run 4/5  elapsed=31.2s
+2026-05-04 21:16:33,448 csda2013 INFO |   run 5/5  elapsed=41.5s
+2026-05-04 21:16:33,448 csda2013 INFO | Exp #3 / exp1_orig_p__cvm : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:16:43,961 csda2013 INFO |   run 1/5  elapsed=10.5s
+2026-05-04 21:16:54,290 csda2013 INFO |   run 2/5  elapsed=20.8s
+2026-05-04 21:17:03,353 csda2013 INFO |   run 3/5  elapsed=29.9s
+2026-05-04 21:17:13,651 csda2013 INFO |   run 4/5  elapsed=40.2s
+2026-05-04 21:17:25,214 csda2013 INFO |   run 5/5  elapsed=51.8s
+2026-05-04 21:17:25,214 csda2013 INFO | Exp #3 / exp2_orig_p__mle : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:17:34,227 csda2013 INFO |   run 1/5  elapsed=9.0s
+2026-05-04 21:17:41,177 csda2013 INFO |   run 2/5  elapsed=16.0s
+2026-05-04 21:17:52,321 csda2013 INFO |   run 3/5  elapsed=27.1s
+2026-05-04 21:17:59,310 csda2013 INFO |   run 4/5  elapsed=34.1s
+2026-05-04 21:18:10,572 csda2013 INFO |   run 5/5  elapsed=45.4s
+2026-05-04 21:18:10,573 csda2013 INFO | Exp #3 / exp2_orig_p__aic : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:18:22,176 csda2013 INFO |   run 1/5  elapsed=11.6s
+2026-05-04 21:18:31,266 csda2013 INFO |   run 2/5  elapsed=20.7s
+2026-05-04 21:18:47,155 csda2013 INFO |   run 3/5  elapsed=36.6s
+2026-05-04 21:18:56,165 csda2013 INFO |   run 4/5  elapsed=45.6s
+2026-05-04 21:19:13,195 csda2013 INFO |   run 5/5  elapsed=62.6s
+2026-05-04 21:19:13,195 csda2013 INFO | Exp #3 / exp2_orig_p__bic : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:19:24,947 csda2013 INFO |   run 1/5  elapsed=11.8s
+2026-05-04 21:19:34,336 csda2013 INFO |   run 2/5  elapsed=21.1s
+2026-05-04 21:19:50,099 csda2013 INFO |   run 3/5  elapsed=36.9s
+2026-05-04 21:19:58,906 csda2013 INFO |   run 4/5  elapsed=45.7s
+2026-05-04 21:20:16,146 csda2013 INFO |   run 5/5  elapsed=62.9s
+2026-05-04 21:20:16,146 csda2013 INFO | Exp #3 / exp2_orig_p__huard : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:20:28,223 csda2013 INFO |   run 1/5  elapsed=12.1s
+2026-05-04 21:20:40,149 csda2013 INFO |   run 2/5  elapsed=24.0s
+2026-05-04 21:20:51,466 csda2013 INFO |   run 3/5  elapsed=35.3s
+2026-05-04 21:21:00,754 csda2013 INFO |   run 4/5  elapsed=44.6s
+2026-05-04 21:21:15,046 csda2013 INFO |   run 5/5  elapsed=58.9s
+2026-05-04 21:21:15,046 csda2013 INFO | Exp #3 / exp2_orig_p__cvm : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:21:24,792 csda2013 INFO |   run 1/5  elapsed=9.7s
+2026-05-04 21:21:34,628 prg.pmc.ice WARNING | ICE iter 4: log-lik regressed by 1.2775e+01 (streak=1/3).
+2026-05-04 21:21:39,161 prg.pmc.ice WARNING | ICE iter 6: log-lik regressed by 1.3369e+01 (streak=1/3).
+2026-05-04 21:21:43,630 prg.pmc.ice WARNING | ICE iter 8: log-lik regressed by 1.3408e+01 (streak=1/3).
+2026-05-04 21:21:48,030 prg.pmc.ice WARNING | ICE iter 10: log-lik regressed by 1.3447e+01 (streak=1/3).
+2026-05-04 21:21:52,491 prg.pmc.ice WARNING | ICE iter 12: log-lik regressed by 1.3486e+01 (streak=1/3).
+2026-05-04 21:21:57,135 prg.pmc.ice WARNING | ICE iter 14: log-lik regressed by 1.3525e+01 (streak=1/3).
+2026-05-04 21:22:01,710 prg.pmc.ice WARNING | ICE iter 16: log-lik regressed by 1.3561e+01 (streak=1/3).
+2026-05-04 21:22:06,189 prg.pmc.ice WARNING | ICE iter 18: log-lik regressed by 1.3593e+01 (streak=1/3).
+2026-05-04 21:22:10,810 prg.pmc.ice WARNING | ICE iter 20: log-lik regressed by 1.3622e+01 (streak=1/3).
+2026-05-04 21:22:15,295 prg.pmc.ice WARNING | ICE iter 22: log-lik regressed by 1.3647e+01 (streak=1/3).
+2026-05-04 21:22:19,938 prg.pmc.ice WARNING | ICE iter 24: log-lik regressed by 1.3669e+01 (streak=1/3).
+2026-05-04 21:22:24,760 prg.pmc.ice WARNING | ICE iter 26: log-lik regressed by 1.3688e+01 (streak=1/3).
+2026-05-04 21:22:29,584 prg.pmc.ice WARNING | ICE iter 28: log-lik regressed by 1.3704e+01 (streak=1/3).
+2026-05-04 21:22:34,389 csda2013 INFO |   run 2/5  elapsed=79.3s
+2026-05-04 21:22:53,655 csda2013 INFO |   run 3/5  elapsed=98.6s
+2026-05-04 21:23:01,379 prg.pmc.ice WARNING | ICE iter 3: log-lik regressed by 1.9623e+01 (streak=1/3).
+2026-05-04 21:23:05,919 prg.pmc.ice WARNING | ICE iter 5: log-lik regressed by 2.0705e+01 (streak=1/3).
+2026-05-04 21:23:10,299 prg.pmc.ice WARNING | ICE iter 7: log-lik regressed by 2.0738e+01 (streak=1/3).
+2026-05-04 21:23:14,907 prg.pmc.ice WARNING | ICE iter 9: log-lik regressed by 2.0734e+01 (streak=1/3).
+2026-05-04 21:23:19,500 prg.pmc.ice WARNING | ICE iter 11: log-lik regressed by 2.0731e+01 (streak=1/3).
+2026-05-04 21:23:24,109 csda2013 INFO |   run 4/5  elapsed=129.1s
+2026-05-04 21:23:42,842 csda2013 INFO |   run 5/5  elapsed=147.8s
+2026-05-04 21:23:42,843 csda2013 INFO | Exp #3 / exp1_bal_p__mle : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:23:52,208 csda2013 INFO |   run 1/5  elapsed=9.4s
+2026-05-04 21:24:03,651 csda2013 INFO |   run 2/5  elapsed=20.8s
+2026-05-04 21:24:15,110 csda2013 INFO |   run 3/5  elapsed=32.3s
+2026-05-04 21:24:28,850 csda2013 INFO |   run 4/5  elapsed=46.0s
+2026-05-04 21:24:47,386 csda2013 INFO |   run 5/5  elapsed=64.5s
+2026-05-04 21:24:47,386 csda2013 INFO | Exp #3 / exp1_bal_p__aic : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:24:56,659 csda2013 INFO |   run 1/5  elapsed=9.3s
+2026-05-04 21:25:08,079 csda2013 INFO |   run 2/5  elapsed=20.7s
+2026-05-04 21:25:19,472 csda2013 INFO |   run 3/5  elapsed=32.1s
+2026-05-04 21:25:32,953 csda2013 INFO |   run 4/5  elapsed=45.6s
+2026-05-04 21:25:50,916 csda2013 INFO |   run 5/5  elapsed=63.5s
+2026-05-04 21:25:50,916 csda2013 INFO | Exp #3 / exp1_bal_p__bic : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:26:00,154 csda2013 INFO |   run 1/5  elapsed=9.2s
+2026-05-04 21:26:11,486 csda2013 INFO |   run 2/5  elapsed=20.6s
+2026-05-04 21:26:22,831 csda2013 INFO |   run 3/5  elapsed=31.9s
+2026-05-04 21:26:36,276 csda2013 INFO |   run 4/5  elapsed=45.4s
+2026-05-04 21:26:54,267 csda2013 INFO |   run 5/5  elapsed=63.3s
+2026-05-04 21:26:54,267 csda2013 INFO | Exp #3 / exp1_bal_p__huard : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:27:13,584 csda2013 INFO |   run 1/5  elapsed=19.3s
+2026-05-04 21:27:28,843 csda2013 INFO |   run 2/5  elapsed=34.6s
+2026-05-04 21:27:44,190 csda2013 INFO |   run 3/5  elapsed=49.9s
+2026-05-04 21:28:05,561 csda2013 INFO |   run 4/5  elapsed=71.3s
+2026-05-04 21:28:27,204 csda2013 INFO |   run 5/5  elapsed=92.9s
+2026-05-04 21:28:27,205 csda2013 INFO | Exp #3 / exp1_bal_p__cvm : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 21:28:38,390 csda2013 INFO |   run 1/5  elapsed=11.2s
+2026-05-04 21:28:52,192 csda2013 INFO |   run 2/5  elapsed=25.0s
+2026-05-04 21:29:06,025 csda2013 INFO |   run 3/5  elapsed=38.8s
+2026-05-04 21:29:21,220 csda2013 INFO |   run 4/5  elapsed=54.0s
+2026-05-04 21:29:43,280 csda2013 INFO |   run 5/5  elapsed=76.1s
+2026-05-04 21:29:43,280 csda2013 INFO | Exp #3 / exp2_bal_p__mle : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:29:54,641 csda2013 INFO |   run 1/5  elapsed=11.4s
+2026-05-04 21:30:08,860 csda2013 INFO |   run 2/5  elapsed=25.6s
+2026-05-04 21:30:21,046 csda2013 INFO |   run 3/5  elapsed=37.8s
+2026-05-04 21:30:29,631 csda2013 INFO |   run 4/5  elapsed=46.3s
+2026-05-04 21:30:38,485 csda2013 INFO |   run 5/5  elapsed=55.2s
+2026-05-04 21:30:38,485 csda2013 INFO | Exp #3 / exp2_bal_p__aic : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:31:03,236 csda2013 INFO |   run 1/5  elapsed=24.8s
+2026-05-04 21:31:18,713 csda2013 INFO |   run 2/5  elapsed=40.2s
+2026-05-04 21:31:36,882 csda2013 INFO |   run 3/5  elapsed=58.4s
+2026-05-04 21:31:50,046 csda2013 INFO |   run 4/5  elapsed=71.6s
+2026-05-04 21:32:08,818 csda2013 INFO |   run 5/5  elapsed=90.3s
+2026-05-04 21:32:08,819 csda2013 INFO | Exp #3 / exp2_bal_p__bic : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:32:34,829 csda2013 INFO |   run 1/5  elapsed=26.0s
+2026-05-04 21:32:50,923 csda2013 INFO |   run 2/5  elapsed=42.1s
+2026-05-04 21:33:09,062 csda2013 INFO |   run 3/5  elapsed=60.2s
+2026-05-04 21:33:22,092 csda2013 INFO |   run 4/5  elapsed=73.3s
+2026-05-04 21:33:40,187 csda2013 INFO |   run 5/5  elapsed=91.4s
+2026-05-04 21:33:40,187 csda2013 INFO | Exp #3 / exp2_bal_p__huard : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:33:55,067 csda2013 INFO |   run 1/5  elapsed=14.9s
+2026-05-04 21:34:12,918 csda2013 INFO |   run 2/5  elapsed=32.7s
+2026-05-04 21:34:30,576 csda2013 INFO |   run 3/5  elapsed=50.4s
+2026-05-04 21:34:42,414 csda2013 INFO |   run 4/5  elapsed=62.2s
+2026-05-04 21:34:56,929 csda2013 INFO |   run 5/5  elapsed=76.7s
+2026-05-04 21:34:56,929 csda2013 INFO | Exp #3 / exp2_bal_p__cvm : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 21:35:16,599 prg.pmc.ice WARNING | ICE iter 8: log-lik regressed by 1.6328e+01 (streak=1/3).
+2026-05-04 21:35:21,337 prg.pmc.ice WARNING | ICE iter 10: log-lik regressed by 1.6710e+01 (streak=1/3).
+2026-05-04 21:35:26,296 prg.pmc.ice WARNING | ICE iter 12: log-lik regressed by 1.6832e+01 (streak=1/3).
+2026-05-04 21:35:31,180 prg.pmc.ice WARNING | ICE iter 14: log-lik regressed by 1.6942e+01 (streak=1/3).
+2026-05-04 21:35:36,145 prg.pmc.ice WARNING | ICE iter 16: log-lik regressed by 1.7051e+01 (streak=1/3).
+2026-05-04 21:35:41,016 prg.pmc.ice WARNING | ICE iter 18: log-lik regressed by 1.7161e+01 (streak=1/3).
+2026-05-04 21:35:45,811 prg.pmc.ice WARNING | ICE iter 20: log-lik regressed by 1.7269e+01 (streak=1/3).
+2026-05-04 21:35:50,502 prg.pmc.ice WARNING | ICE iter 22: log-lik regressed by 1.7376e+01 (streak=1/3).
+2026-05-04 21:35:55,396 prg.pmc.ice WARNING | ICE iter 24: log-lik regressed by 1.7479e+01 (streak=1/3).
+2026-05-04 21:36:00,169 prg.pmc.ice WARNING | ICE iter 26: log-lik regressed by 1.7578e+01 (streak=1/3).
+2026-05-04 21:36:04,995 prg.pmc.ice WARNING | ICE iter 28: log-lik regressed by 1.7673e+01 (streak=1/3).
+2026-05-04 21:36:09,794 csda2013 INFO |   run 1/5  elapsed=72.9s
+2026-05-04 21:36:17,347 prg.pmc.ice WARNING | ICE iter 3: log-lik regressed by 4.5923e+00 (streak=1/3).
+2026-05-04 21:36:21,877 prg.pmc.ice WARNING | ICE iter 5: log-lik regressed by 6.8292e+00 (streak=1/3).
+2026-05-04 21:36:26,587 prg.pmc.ice WARNING | ICE iter 7: log-lik regressed by 7.6813e+00 (streak=1/3).
+2026-05-04 21:36:31,297 csda2013 INFO |   run 2/5  elapsed=94.4s
+2026-05-04 21:36:48,695 prg.pmc.ice WARNING | ICE iter 7: log-lik regressed by 1.2996e+01 (streak=1/3).
+2026-05-04 21:36:53,314 prg.pmc.ice WARNING | ICE iter 9: log-lik regressed by 1.3311e+01 (streak=1/3).
+2026-05-04 21:36:57,924 prg.pmc.ice WARNING | ICE iter 11: log-lik regressed by 1.3489e+01 (streak=1/3).
+2026-05-04 21:37:02,717 prg.pmc.ice WARNING | ICE iter 13: log-lik regressed by 1.3654e+01 (streak=1/3).
+2026-05-04 21:37:07,677 prg.pmc.ice WARNING | ICE iter 15: log-lik regressed by 1.3815e+01 (streak=1/3).
+2026-05-04 21:37:12,661 prg.pmc.ice WARNING | ICE iter 17: log-lik regressed by 1.3971e+01 (streak=1/3).
+2026-05-04 21:37:17,579 prg.pmc.ice WARNING | ICE iter 19: log-lik regressed by 1.4113e+01 (streak=1/3).
+2026-05-04 21:37:22,499 prg.pmc.ice WARNING | ICE iter 21: log-lik regressed by 1.4243e+01 (streak=1/3).
+2026-05-04 21:37:27,473 prg.pmc.ice WARNING | ICE iter 23: log-lik regressed by 1.4361e+01 (streak=1/3).
+2026-05-04 21:37:32,522 prg.pmc.ice WARNING | ICE iter 25: log-lik regressed by 1.4467e+01 (streak=1/3).
+2026-05-04 21:37:37,057 prg.pmc.ice WARNING | ICE iter 27: log-lik regressed by 1.4564e+01 (streak=1/3).
+2026-05-04 21:37:41,975 prg.pmc.ice WARNING | ICE iter 29: log-lik regressed by 1.4651e+01 (streak=1/3).
+2026-05-04 21:37:44,431 csda2013 INFO |   run 3/5  elapsed=167.5s
+2026-05-04 21:37:51,911 prg.pmc.ice WARNING | ICE iter 3: log-lik regressed by 9.8632e+00 (streak=1/3).
+2026-05-04 21:37:56,708 prg.pmc.ice WARNING | ICE iter 5: log-lik regressed by 1.1101e+01 (streak=1/3).
+2026-05-04 21:38:01,421 prg.pmc.ice WARNING | ICE iter 7: log-lik regressed by 1.1454e+01 (streak=1/3).
+2026-05-04 21:38:06,214 prg.pmc.ice WARNING | ICE iter 9: log-lik regressed by 1.1548e+01 (streak=1/3).
+2026-05-04 21:38:11,069 prg.pmc.ice WARNING | ICE iter 11: log-lik regressed by 1.1600e+01 (streak=1/3).
+2026-05-04 21:38:16,026 prg.pmc.ice WARNING | ICE iter 13: log-lik regressed by 1.1653e+01 (streak=1/3).
+2026-05-04 21:38:20,930 prg.pmc.ice WARNING | ICE iter 15: log-lik regressed by 1.1711e+01 (streak=1/3).
+2026-05-04 21:38:25,785 prg.pmc.ice WARNING | ICE iter 17: log-lik regressed by 1.1774e+01 (streak=1/3).
+2026-05-04 21:38:30,850 prg.pmc.ice WARNING | ICE iter 19: log-lik regressed by 1.1836e+01 (streak=1/3).
+2026-05-04 21:38:35,722 prg.pmc.ice WARNING | ICE iter 21: log-lik regressed by 1.1897e+01 (streak=1/3).
+2026-05-04 21:38:40,627 prg.pmc.ice WARNING | ICE iter 23: log-lik regressed by 1.1955e+01 (streak=1/3).
+2026-05-04 21:38:45,463 prg.pmc.ice WARNING | ICE iter 25: log-lik regressed by 1.2010e+01 (streak=1/3).
+2026-05-04 21:38:50,284 prg.pmc.ice WARNING | ICE iter 27: log-lik regressed by 1.2061e+01 (streak=1/3).
+2026-05-04 21:38:55,275 prg.pmc.ice WARNING | ICE iter 29: log-lik regressed by 1.2109e+01 (streak=1/3).
+2026-05-04 21:38:57,758 csda2013 INFO |   run 4/5  elapsed=240.8s
+2026-05-04 21:39:05,015 prg.pmc.ice WARNING | ICE iter 3: log-lik regressed by 1.6980e+01 (streak=1/3).
+2026-05-04 21:39:09,457 prg.pmc.ice WARNING | ICE iter 5: log-lik regressed by 1.8650e+01 (streak=1/3).
+2026-05-04 21:39:14,142 prg.pmc.ice WARNING | ICE iter 7: log-lik regressed by 1.8675e+01 (streak=1/3).
+2026-05-04 21:39:18,725 prg.pmc.ice WARNING | ICE iter 9: log-lik regressed by 1.8577e+01 (streak=1/3).
+2026-05-04 21:39:23,181 prg.pmc.ice WARNING | ICE iter 11: log-lik regressed by 1.8488e+01 (streak=1/3).
+2026-05-04 21:39:27,640 prg.pmc.ice WARNING | ICE iter 13: log-lik regressed by 1.8419e+01 (streak=1/3).
+2026-05-04 21:39:32,134 prg.pmc.ice WARNING | ICE iter 15: log-lik regressed by 1.8368e+01 (streak=1/3).
+2026-05-04 21:39:36,586 prg.pmc.ice WARNING | ICE iter 17: log-lik regressed by 1.8329e+01 (streak=1/3).
+2026-05-04 21:39:40,994 prg.pmc.ice WARNING | ICE iter 19: log-lik regressed by 1.8301e+01 (streak=1/3).
+2026-05-04 21:39:45,448 prg.pmc.ice WARNING | ICE iter 21: log-lik regressed by 1.8278e+01 (streak=1/3).
+2026-05-04 21:39:49,938 prg.pmc.ice WARNING | ICE iter 23: log-lik regressed by 1.8261e+01 (streak=1/3).
+2026-05-04 21:39:54,455 prg.pmc.ice WARNING | ICE iter 25: log-lik regressed by 1.8247e+01 (streak=1/3).
+2026-05-04 21:39:59,060 prg.pmc.ice WARNING | ICE iter 27: log-lik regressed by 1.8235e+01 (streak=1/3).
+2026-05-04 21:40:03,634 prg.pmc.ice WARNING | ICE iter 29: log-lik regressed by 1.8225e+01 (streak=1/3).
+2026-05-04 21:40:06,007 csda2013 INFO |   run 5/5  elapsed=309.1s
+2026-05-04 21:40:06,009 csda2013 INFO | Done.  CSV → /Users/MacBook_Derrode/Documents/ProjetsRecherche/Clement/copulasformm/report/results   LaTeX → /Users/MacBook_Derrode/Documents/ProjetsRecherche/Clement/copulasformm/report/tables

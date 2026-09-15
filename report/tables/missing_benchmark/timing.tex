@@ -1,0 +1,18 @@
+\begin{table}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \caption{Median wall time (ms) per sequence over every pattern, rate and replicate, $N = 2000$, one BLAS thread per worker (four workers running side by side). marg.\ classify: \texttt{classify} on the gapped series; marg.\ impute+draws: \texttt{impute} with five quantiles and 200 FFBS draws; plugin: \texttt{impute} (mean and sd only) + \texttt{classify}.}
+  \label{tab:missing-timing}
+  \begin{tabular}{lrrrrrrr}
+    \toprule
+    model & complete & marg.\ classify & marg.\ impute+draws & plugin & linear & locf & mean \\
+    \midrule
+    HMC-IN Gauss & 8.6 & 8.6 & 59.8 & 22.2 & 8.6 & 8.6 & 8.6 \\
+    HMC-DN Gauss & 9.6 & 25.2 & 220.8 & 34.8 & 9.4 & 9.4 & 9.4 \\
+    PMC state Gauss & 9.8 & 26.6 & 225.3 & 35.8 & 9.3 & 9.4 & 9.3 \\
+    PMC pair Gauss--Clayton & 9.8 & 28.2 & 228.7 & 37.3 & 9.3 & 9.3 & 9.3 \\
+    PMC pair Gamma--Gumbel & 10.6 & 34.4 & 293.9 & 44.6 & 10.1 & 10.1 & 10.1 \\
+    \bottomrule
+  \end{tabular}
+\end{table}

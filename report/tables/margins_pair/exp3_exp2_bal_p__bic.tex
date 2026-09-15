@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 with balanced prior $p_{\text{bal}}$, criterion: BIC. Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp2_bal_p__bic}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 100/100 & 0.235 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 25/100 & 0.102 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 23/100 & 0.108 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 95/100 & 0.171 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 20.70\% ($\pm$ 0.97). Unsupervised: 20.90\% ($\pm$ 0.95).
+\end{table}

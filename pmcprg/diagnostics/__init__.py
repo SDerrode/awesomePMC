@@ -1,0 +1,106 @@
+"""
+pmcprg.diagnostics — goodness-of-fit and inference diagnostics.
+
+This sub-package collects standalone diagnostic tools that complement the
+estimation routines in :mod:`pmcprg.pmc`. They are intentionally independent
+of any specific model class: each utility takes raw NumPy arrays (and
+optionally a CDF callable) and returns a typed result object.
+
+Public API
+----------
+mks_1samp, mks_2samp, mks_test : multivariate Kolmogorov-Smirnov tests
+    (Naaman 2021 finite-sample extension).
+MKSResult                       : typed result of an MKS test.
+parametric_bootstrap            : model-level calibration of any post-fit
+    statistic. A tabulated critical value is wrong on a fitted model — the
+    MKS one rejects a correct PMC 10% of the time at a nominal 5% — because
+    the reference is estimated, the observations are dependent, and in a
+    latent-state model the per-state sample is assigned rather than given.
+    Resampling whole series from the fitted model absorbs all three.
+BootstrapResult                 : typed result of that calibration.
+neyman_components, neyman_test  : smooth-test components of a fitted margin.
+    The transform projected on Legendre polynomials — one component per kind
+    of departure (location, dispersion, asymmetry, tails). Measured to reject
+    a wrong margin 3x more often than the KS test, and to say *which* way it
+    is wrong. `neyman_test` pays the multiplicity: taking the smallest of
+    four p-values uncorrected raises the level from 0.05 to 0.175.
+NeymanResult                    : typed result of a smooth-test call.
+vuong_test, clarke_test,         : is a copula family choice significant?
+comparison_matrix, confidence_set,  Weighted Vuong (1989) and Clarke (2007)
+ice_pair_comparisons              tests with a HAC variance, all pairs of a
+    candidate set, the families not significantly worse than the best (ties
+    declared), and the same for every pair of states after an ICE run
+    (audit FR-6). Opt-in; see ``pmcprg.diagnostics.model_selection`` for the
+    caveats (estimated pseudo-observations, Chen & Fan 2006).
+margin_cdfs, copula_pseudo_obs, : pseudo-observations and margin samples of a
+margin_pit_dual, margin_keys,     fitted chain, for state margins f_i and for
+margin_of, margin_sample          the pair margins f_ij of a general PMC
+    (A16 Eqs. 12-14): c_ij is tested on (F_ij(y_n), F_ji(y_{n+1})) weighted by
+    xi_n(i, j); f_ij on F_ij(y_n) weighted by xi_n(i, j) and on F_ij(y_{n+1})
+    weighted by xi_n(j, i). These need a model exposing K, margin_structure
+    and margin(i, j) — duck-typed, the model class is not imported.
+"""
+
+from pmcprg.diagnostics.bootstrap import (
+    BootstrapResult,
+    parametric_bootstrap,
+)
+from pmcprg.diagnostics.model_selection import (
+    ComparisonMatrix,
+    ComparisonResult,
+    ConfidenceSet,
+    PairComparison,
+    clarke_test,
+    comparison_matrix,
+    confidence_set,
+    ice_pair_comparisons,
+    vuong_test,
+)
+from pmcprg.diagnostics.mks import (
+    MKSResult,
+    mks_1samp,
+    mks_2samp,
+    mks_test,
+)
+from pmcprg.diagnostics.pseudo import (
+    copula_pseudo_obs,
+    margin_cdfs,
+    margin_keys,
+    margin_of,
+    margin_pit_dual,
+    margin_sample,
+)
+from pmcprg.diagnostics.smooth import (
+    COMPONENT_NAMES,
+    NeymanResult,
+    neyman_components,
+    neyman_test,
+)
+
+__all__ = [
+    "COMPONENT_NAMES",
+    "BootstrapResult",
+    "ComparisonMatrix",
+    "ComparisonResult",
+    "ConfidenceSet",
+    "PairComparison",
+    "clarke_test",
+    "comparison_matrix",
+    "confidence_set",
+    "ice_pair_comparisons",
+    "vuong_test",
+    "MKSResult",
+    "NeymanResult",
+    "copula_pseudo_obs",
+    "margin_cdfs",
+    "margin_keys",
+    "margin_of",
+    "margin_pit_dual",
+    "margin_sample",
+    "neyman_components",
+    "neyman_test",
+    "parametric_bootstrap",
+    "mks_1samp",
+    "mks_2samp",
+    "mks_test",
+]

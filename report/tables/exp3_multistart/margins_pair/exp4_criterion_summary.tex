@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+  \centering
+  \caption{Selection-criterion comparison (summary). D / O = diagonal / off-diagonal recovery (\%); $\bar{e}$ = mean unsupervised classification error (\%).}
+  \label{tab:exp4-summary}
+  \footnotesize
+  \begin{tabular}{l ccc ccc ccc ccc ccc ccc }
+    \toprule
+    & \multicolumn{3}{c}{MLE} & \multicolumn{3}{c}{AIC} & \multicolumn{3}{c}{BIC} & \multicolumn{3}{c}{Huard} & \multicolumn{3}{c}{CvM} & \multicolumn{3}{c}{xv-CIC} \\
+    \cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}\cmidrule(lr){11-13}\cmidrule(lr){14-16}\cmidrule(lr){17-19}
+    config  & D & O & $\bar{e}$ & D & O & $\bar{e}$ & D & O & $\bar{e}$ & D & O & $\bar{e}$ & D & O & $\bar{e}$ & D & O & $\bar{e}$ \\
+    \midrule
+    exp.\ 1, $p_{\text{orig}}$ & \textbf{100} & 53 & 14.7 & \textbf{100} & 53 & 14.7 & \textbf{100} & 53 & 14.7 & \textbf{100} & \textbf{78} & \textbf{14.7} & 70 & 55 & 18.3 & \textbf{100} & 60 & 14.7 \\
+    exp.\ 2, $p_{\text{orig}}$ & 97 & 35 & 10.4 & \textbf{98} & 45 & 10.3 & 97 & 52 & \textbf{10.3} & \textbf{98} & 57 & 10.3 & 35 & \textbf{60} & 10.5 & \textbf{98} & 37 & 10.3 \\
+    exp.\ 1, $p_{\text{bal}}$ & \textbf{100} & 45 & 20.9 & \textbf{100} & 45 & 20.9 & \textbf{100} & 45 & 20.9 & \textbf{100} & 53 & \textbf{20.9} & 85 & \textbf{55} & 21.6 & \textbf{100} & 45 & 20.9 \\
+    exp.\ 2, $p_{\text{bal}}$ & \textbf{98} & 53 & \textbf{20.6} & \textbf{98} & 55 & 20.7 & \textbf{98} & 52 & 20.7 & 97 & \textbf{70} & 20.7 & 40 & 62 & 20.9 & \textbf{98} & 40 & 20.7 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip
+  \emph{D} = diagonal recovery rate (\%, higher is better, $K{=}2$ diagonal cells $\times$ runs); \emph{O} = off-diagonal recovery rate (\%); $\bar{e}$ = mean unsupervised classification error (\%, lower is better). Bold = best per row.
+\end{table}

@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 1 (\{Gauss, GH, Clayton\}, $p_{\text{orig}}$), criterion: AIC. Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp1_orig_p__aic}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Gauss} & 0.70 & 30/30 & 0.701 \\
+    (0, 1) & \texttt{GH} & 0.40 & 15/30 & 0.417 \\
+    (1, 0) & \texttt{GH} & 0.40 & 17/30 & 0.415 \\
+    (1, 1) & \texttt{Clayton} & 0.70 & 30/30 & 0.698 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 14.45\% ($\pm$ 1.89). Unsupervised: 14.70\% ($\pm$ 1.92).
+\end{table}

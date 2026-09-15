@@ -1,0 +1,29 @@
+# PMC-IN model — K=2 classes, Gaussian margins, no copula.
+#
+# Variant: PMC-IN
+#   • Pairwise Markov Chain
+#   • Independent observations: joint density factorises into f_i(y_n) * f_j(y_{n+1})
+#   • K margin blocks (one per state — SR-PMC contract)
+#   • Prior: K×K symmetric joint distribution p[i][j] (sum to 1)
+
+[model]
+name      = "PMC-IN Gaussien K=2"
+variant   = "PMC-IN"
+K         = 2
+N_default = 1000
+
+[prior]
+# p[i][j] = P(X_n=i, X_{n+1}=j) — symmetric and sum to 1.
+p = [[0.45, 0.05],
+     [0.05, 0.45]]
+
+# ── Margins (K-format: one block per state) ──────────────────────────────────
+[[margins]]
+i      = 0
+dist   = "norm"
+params = {loc = -1.0, scale = 1.0}
+
+[[margins]]
+i      = 1
+dist   = "norm"
+params = {loc = 1.0, scale = 1.0}

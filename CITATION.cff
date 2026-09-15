@@ -1,0 +1,77 @@
+# Citation metadata (Citation File Format 1.2.0 — https://citation-file-format.github.io).
+# GitHub renders this as "Cite this repository"; Zenodo reads it on archive.
+# The package implements two papers: cite BOTH when you use it — the CSDA 2013
+# paper is `preferred-citation`, the Signal Processing 2016 paper is under
+# `references`. Version and release date track the git tag (v1.0.0, 2026-09-15).
+cff-version: 1.2.0
+message: >-
+  If you use awesomePMC in published work, please cite both papers below
+  (Derrode & Pieczynski 2013 for the PMC model family and ICE-based copula
+  selection; Derrode & Pieczynski 2016 for GICE, the automatic margin
+  selection), and the software itself by this file.
+type: software
+title: awesomePMC
+abstract: >-
+  Pairwise and hidden Markov chains with copula-based non-Gaussian dependence
+  (general pairwise Markov chains with pair-indexed margins): simulation,
+  supervised MPM classification and unsupervised ICE/SEM estimation with
+  automatic per-pair copula selection and GICE margin selection, standard
+  errors and non-nested tests for the family choice, exact inference with
+  missing observations, imputation and forecasting, image segmentation and a
+  PyQt6 GUI.
+authors:
+  - family-names: Derrode
+    given-names: Stéphane
+    email: stephane.derrode@ec-lyon.fr
+    affiliation: École Centrale de Lyon
+version: 1.0.0
+date-released: "2026-09-15"
+license: MIT
+repository-code: https://github.com/SDerrode/awesomePMC
+repository-artifact: https://pypi.org/project/awesomepmc/
+url: https://github.com/SDerrode/awesomePMC
+keywords:
+  - copula
+  - copulas
+  - pairwise Markov chain
+  - hidden Markov model
+  - Markov chain
+  - unsupervised classification
+  - time series
+  - time series classification
+  - image segmentation
+  - Bayesian inference
+  - expectation maximization
+  - missing data
+  - imputation
+  - forecasting
+  - statistics
+  - signal processing
+preferred-citation:
+  type: article
+  title: Unsupervised data classification using pairwise Markov chains with automatic copulas selection
+  authors:
+    - family-names: Derrode
+      given-names: Stéphane
+    - family-names: Pieczynski
+      given-names: Wojciech
+  journal: Computational Statistics & Data Analysis
+  volume: 63
+  start: 81
+  end: 98
+  year: 2013
+  doi: 10.1016/j.csda.2013.01.027
+references:
+  - type: article
+    title: Unsupervised classification using hidden Markov chain with unknown noise copulas and margins
+    authors:
+      - family-names: Derrode
+        given-names: Stéphane
+      - family-names: Pieczynski
+        given-names: Wojciech
+    journal: Signal Processing
+    volume: 128
+    start: 8
+    end: 17
+    year: 2016
+    doi: 10.1016/j.sigpro.2016.03.008

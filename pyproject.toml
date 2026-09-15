@@ -1,0 +1,183 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "awesomepmc"
+# Single source of truth: pmcprg/__init__.py::__version__, read at build time by
+# Hatchling (see [tool.hatch.version] below). Do not hardcode a version here.
+dynamic = ["version"]
+description = "Pairwise and hidden Markov chains with copula-based non-Gaussian dependence: simulation, supervised and unsupervised classification (ICE, SEM, GICE), automatic copula selection, missing-data imputation and forecasting, PyQt6 GUI."
+readme = "README.md"
+license = "MIT"                 # SPDX expression (PEP 639)
+license-files = ["LICENSE"]
+requires-python = ">=3.11"   # tomllib (used by pmcprg.pmc.model) is stdlib since 3.11
+authors = [
+    { name = "Derrode Stéphane", email = "stephane.derrode@ec-lyon.fr" },
+]
+keywords = [
+    "copula",
+    "copulas",
+    "pairwise markov chain",
+    "hidden markov model",
+    "markov chain",
+    "unsupervised classification",
+    "time series",
+    "time series classification",
+    "image segmentation",
+    "bayesian inference",
+    "expectation maximization",
+    "missing data",
+    "imputation",
+    "forecasting",
+    "statistics",
+    "signal processing",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    # Lower bounds are checked by the `min-versions` CI job (Python 3.11, these
+    # and the `ml` extra pinned to their lower bounds): keep every entry in the
+    # "name>=X.Y" form that job parses.
+    # statsmodels is no longer a dependency: the last copula backends that used
+    # it were replaced by native closed forms, and nothing imports it.
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "tomli_w>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    # The linter CI runs (`ruff check pmcprg`), so a fresh dev install can lint too.
+    "ruff>=0.5",
+    # Notebook regression tests importorskip these three — without them CI
+    # silently skipped both notebook tests (audit T-9).
+    "nbformat>=5.0",
+    "nbclient>=0.7",
+    "ipykernel>=6.0",
+    # Pull Pillow / scikit-learn from the image+ml extras so their version
+    # pins live in exactly one place (no drift between dev and image/ml).
+    "awesomepmc[image,ml]",
+]
+gui = [
+    "PyQt6>=6.4",
+]
+image = [
+    "Pillow>=9.0",
+]
+ml = [
+    # Optional ML extras used by ICE init='kmeans' (and future SEM init).
+    # Kept out of the runtime dependencies to keep the package light.
+    "scikit-learn>=1.3",
+]
+
+[project.scripts]
+pmc = "pmcprg.pmc.cli:main"
+
+[project.urls]
+# The public GitHub repository (exported tree) is the reference for PyPI users;
+# the GitLab repository is the private working repository.
+Homepage          = "https://github.com/SDerrode/awesomePMC"
+Repository        = "https://github.com/SDerrode/awesomePMC"
+Issues            = "https://github.com/SDerrode/awesomePMC/issues"
+Changelog         = "https://github.com/SDerrode/awesomePMC/blob/main/CHANGELOG.md"
+Citation          = "https://github.com/SDerrode/awesomePMC/blob/main/CITATION.cff"
+
+[tool.pytest.ini_options]
+testpaths = ["pmcprg/tests"]
+python_files = ["test_*.py"]
+markers = [
+    "slow: marks tests that take > ~1 s (they run by default, in CI included; deselect with `-m 'not slow'`).",
+]
+
+[tool.coverage.run]
+source = ["pmcprg"]
+omit = [
+    "pmcprg/tests/*",
+    "pmcprg/pmc/gui/*",        # PyQt6 widgets are not unit-tested
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+
+[tool.ruff.lint]
+# Explicit rule selection — the classic pycodestyle-error + pyflakes set the
+# project has always linted with. Ruff's *default* selection changed in newer
+# releases (0.16 added import-sorting I and RUF rules), and CI installs the
+# latest ruff: without an explicit select, a ruff release can turn a green
+# tree red overnight (which happened on 2026-08-05: 246 spurious errors).
+select = ["E4", "E7", "E9", "F"]
+
+# E702 (multiple statements on one line via ';') is intentionally tolerated:
+# it is used deliberately in ~37 spots for compact paired assignments
+# (e.g. ``A = m.transition_A; pi = m.stationary_pi``) across the GUI,
+# the copula fitting helpers, and a few tests. Purely stylistic; kept global.
+ignore = ["E702"]
+
+# E402 (import not at top) is scoped via per-file-ignores rather than a blanket
+# project-wide ignore, so genuinely mis-ordered imports are still caught in the
+# top-level modules (pmcprg/__init__.py, numerics.py, exceptions.py, plot_style.py,
+# diagnostics/*).
+[tool.ruff.lint.per-file-ignores]
+# GUI: the matplotlib backend must be selected before any pyplot import.
+"pmcprg/pmc/gui/*" = ["E402"]
+# pmc / copula modules run a ``sys.path`` bootstrap in their ``__main__`` block
+# (so each can be executed as a standalone script) before the package imports;
+# some also re-export at the bottom of the module.
+"pmcprg/pmc/**" = ["E402"]
+"pmcprg/copulas/**" = ["E402"]
+# Late / conditional imports in tests (after importorskip guards, etc.).
+"pmcprg/tests/*" = ["E402"]
+
+[tool.hatch.version]
+path = "pmcprg/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pmcprg"]
+# Mirror the sdist exclusion: without it `pip install .` ships the 27 test
+# files into site-packages, and a wheel built from the repo differs from one
+# built from the sdist (audit P-13).
+exclude = [
+    "pmcprg/tests/",
+]
+
+[tool.hatch.build.targets.sdist]
+# Patterns are gitignore-style: an unanchored "README.md" also matches
+# report/README.md, data/uci_har/README.md, ... — anchor every entry to the
+# project root with a leading "/".
+include = [
+    "/pmcprg/",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+exclude = [
+    "/pmcprg/tests/",
+]

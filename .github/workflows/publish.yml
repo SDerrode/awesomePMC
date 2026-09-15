@@ -1,0 +1,186 @@
+# ----------------------------------------------------------------------------
+# Publish awesomepmc to PyPI / TestPyPI  (GitHub only — see RELEASING.md)
+#
+# Triggers:
+#   * a GitHub Release is *published*            -> PyPI
+#   * manual run (Actions tab, "Run workflow")   -> TestPyPI (default, dry run)
+#                                                   or PyPI (fallback, tag refs only)
+# Pushing a tag alone publishes nothing: the release is a deliberate second step.
+#
+# Jobs:
+#   guard  — the release tag must be exactly "v" + pmcprg.__version__
+#            (e.g. v1.0.0 <-> __version__ = "1.0.0"); a PyPI upload is only
+#            allowed from such a tag. For a TestPyPI dry run from a branch the
+#            version is only reported.
+#   build  — sdist + wheel (the wheel is built from the sdist), twine check,
+#            file names must carry the guarded version.
+#   publish-testpypi / publish-pypi — upload with PyPI Trusted Publishing
+#            (OpenID Connect): no API token is stored anywhere. Each index must
+#            list a trusted publisher with owner SDerrode, repository
+#            awesomePMC, workflow publish.yml and the environment named below.
+# ----------------------------------------------------------------------------
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish (testpypi for a dry run, pypi for production — pypi requires running from a vX.Y.Z tag)"
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+# Never run two publications of the same ref at once; never cancel one midway.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  # --------------------------------------------------------------------
+  # Guard — tag / version consistency
+  # --------------------------------------------------------------------
+  guard:
+    name: Check tag / version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Compare the tag with pmcprg.__version__
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          TARGET: ${{ inputs.target }}
+          REF_TYPE: ${{ github.ref_type }}
+          # release event: the release's tag; manual run: the selected ref.
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          python - <<'EOF'
+          import ast, os, pathlib, re, sys
+
+          # Read __version__ without importing the package (no dependencies needed).
+          tree = ast.parse(pathlib.Path("pmcprg/__init__.py").read_text(encoding="utf-8"))
+          version = next(
+              node.value.value
+              for node in tree.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets)
+          )
+          event, target = os.environ["EVENT"], os.environ.get("TARGET", "")
+          ref_type, tag = os.environ["REF_TYPE"], os.environ["TAG"]
+          print(f"event={event} target={target or '-'} ref_type={ref_type} ref={tag} __version__={version}")
+
+          if not re.fullmatch(r"\d+\.\d+\.\d+((a|b|rc)\d+)?", version):
+              sys.exit(f"::error::__version__ = {version!r} is not X.Y.Z (optionally aN/bN/rcN)")
+
+          must_match = event == "release" or target == "pypi" or ref_type == "tag"
+          if must_match:
+              if ref_type != "tag" and event != "release":
+                  sys.exit("::error::publishing to PyPI requires running the workflow from a vX.Y.Z tag, not a branch")
+              if tag != f"v{version}":
+                  sys.exit(f"::error::tag {tag!r} does not match pmcprg.__version__ = {version!r} (expected 'v{version}')")
+              print(f"OK: tag {tag} matches __version__ {version}")
+          else:
+              print(f"::notice::TestPyPI dry run from branch {tag!r}: version {version} (tag check skipped)")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"version={version}\n")
+          EOF
+
+  # --------------------------------------------------------------------
+  # Build — sdist + wheel, verified
+  # --------------------------------------------------------------------
+  build:
+    name: Build sdist + wheel
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Build distributions
+        run: python -m build
+      - name: Verify distributions
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          twine check --strict dist/*
+          ls -l dist/
+          test -f "dist/awesomepmc-${VERSION}.tar.gz"
+          test -f "dist/awesomepmc-${VERSION}-py3-none-any.whl"
+          echo "--- sdist top level (expected: LICENSE PKG-INFO README.md pyproject.toml pmcprg/ and hatchling's .gitignore)"
+          tar tzf "dist/awesomepmc-${VERSION}.tar.gz" | cut -d/ -f2 | sort -u
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------
+  # TestPyPI — manual dry run
+  # --------------------------------------------------------------------
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/awesomepmc
+    permissions:
+      id-token: write   # Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Upload to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # --------------------------------------------------------------------
+  # PyPI — published GitHub Release (or manual run with target=pypi on a tag)
+  # --------------------------------------------------------------------
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: >-
+      ${{ github.event_name == 'release' ||
+          (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/awesomepmc
+    permissions:
+      id-token: write   # Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$), criterion: MLE (max log-likelihood). Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp2_orig_p__mle}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 29/30 & 0.242 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 15/30 & 0.108 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 6/30 & 0.128 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 29/30 & 0.190 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 10.19\% ($\pm$ 1.08). Unsupervised: 10.36\% ($\pm$ 1.11).
+\end{table}

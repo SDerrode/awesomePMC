@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 (\{Student, GH, CubSec, Clayton\}, $p_{\text{orig}}$), criterion: Cram\'er--von Mises. Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp2_orig_p__cvm}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 0/30 & 0.257 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 21/30 & 0.045 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 15/30 & 0.055 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 21/30 & 0.173 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 10.19\% ($\pm$ 1.08). Unsupervised: 10.54\% ($\pm$ 1.08).
+\end{table}

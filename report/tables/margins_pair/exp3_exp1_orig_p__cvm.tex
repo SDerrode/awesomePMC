@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 1 (\{Gauss, GH, Clayton\}, $p_{\text{orig}}$), criterion: Cram\'er--von Mises. Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp1_orig_p__cvm}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Gauss} & 0.70 & 43/100 & 0.689 \\
+    (0, 1) & \texttt{GH} & 0.40 & 45/100 & 0.360 \\
+    (1, 0) & \texttt{GH} & 0.40 & 53/100 & 0.364 \\
+    (1, 1) & \texttt{Clayton} & 0.70 & 64/100 & 0.653 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 14.42\% ($\pm$ 1.74). Unsupervised: 20.59\% ($\pm$ 6.32).
+\end{table}

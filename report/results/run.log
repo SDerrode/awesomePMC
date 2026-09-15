@@ -1,0 +1,89 @@
+2026-05-04 18:29:06,930 csda2013 INFO | Exp #1 / low_tau_gauss : τ=0.16  Π=['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6']  margins=gauss  reps=30  N=2000
+2026-05-04 18:29:12,865 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=5.9s
+2026-05-04 18:29:22,602 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=15.7s
+2026-05-04 18:30:11,669 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=64.7s
+2026-05-04 18:30:19,184 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=72.3s
+2026-05-04 18:30:26,466 csda2013 INFO |   row c4  [ 5/ 7]  elapsed=79.5s
+2026-05-04 18:30:33,842 csda2013 INFO |   row c5  [ 6/ 7]  elapsed=86.9s
+2026-05-04 18:30:39,348 csda2013 INFO |   row c6  [ 7/ 7]  elapsed=92.4s
+2026-05-04 18:30:39,349 csda2013 INFO | Exp #1 / low_tau_gamma : τ=0.16  Π=['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6']  margins=gamma  reps=30  N=2000
+2026-05-04 18:30:45,414 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=6.1s
+2026-05-04 18:30:55,359 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=16.0s
+2026-05-04 18:31:43,735 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=64.4s
+2026-05-04 18:31:51,300 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=72.0s
+2026-05-04 18:31:58,923 csda2013 INFO |   row c4  [ 5/ 7]  elapsed=79.6s
+2026-05-04 18:32:06,513 csda2013 INFO |   row c5  [ 6/ 7]  elapsed=87.2s
+2026-05-04 18:32:12,339 csda2013 INFO |   row c6  [ 7/ 7]  elapsed=93.0s
+2026-05-04 18:32:12,340 csda2013 INFO | Exp #1 / high_tau_gauss : τ=0.70  Π=['c0', 'c1', 'c2', 'c3', 'c6', 'c7', 'c8']  margins=gauss  reps=30  N=2000
+2026-05-04 18:32:18,318 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=6.0s
+2026-05-04 18:32:28,216 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=15.9s
+2026-05-04 18:33:28,502 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=76.2s
+2026-05-04 18:33:36,520 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=84.2s
+2026-05-04 18:33:42,024 csda2013 INFO |   row c6  [ 5/ 7]  elapsed=89.7s
+2026-05-04 18:33:50,373 csda2013 INFO |   row c7  [ 6/ 7]  elapsed=98.0s
+2026-05-04 18:33:58,793 csda2013 INFO |   row c8  [ 7/ 7]  elapsed=106.5s
+2026-05-04 18:33:58,794 csda2013 INFO | Exp #1 / high_tau_gamma : τ=0.70  Π=['c0', 'c1', 'c2', 'c3', 'c6', 'c7', 'c8']  margins=gamma  reps=30  N=2000
+2026-05-04 18:34:04,954 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=6.2s
+2026-05-04 18:34:14,949 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=16.2s
+2026-05-04 18:35:14,954 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=76.2s
+2026-05-04 18:35:22,911 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=84.1s
+2026-05-04 18:35:28,430 csda2013 INFO |   row c6  [ 5/ 7]  elapsed=89.6s
+2026-05-04 18:35:36,572 csda2013 INFO |   row c7  [ 6/ 7]  elapsed=97.8s
+2026-05-04 18:35:44,681 csda2013 INFO |   row c8  [ 7/ 7]  elapsed=105.9s
+2026-05-04 18:35:44,682 csda2013 INFO | Exp #2 / low_tau_gauss : τ=0.16  Π=['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6']  margins=gauss  reps=30
+2026-05-04 18:36:08,014 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=23.3s
+2026-05-04 18:36:33,979 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=49.3s
+2026-05-04 18:37:18,118 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=93.4s
+2026-05-04 18:37:43,129 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=118.4s
+2026-05-04 18:38:07,162 csda2013 INFO |   row c4  [ 5/ 7]  elapsed=142.5s
+2026-05-04 18:38:31,836 csda2013 INFO |   row c5  [ 6/ 7]  elapsed=167.2s
+2026-05-04 18:38:55,300 csda2013 INFO |   row c6  [ 7/ 7]  elapsed=190.6s
+2026-05-04 18:38:55,301 csda2013 INFO | Exp #2 / low_tau_gamma : τ=0.16  Π=['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6']  margins=gamma  reps=30
+2026-05-04 18:39:19,498 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=24.2s
+2026-05-04 18:39:45,423 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=50.1s
+2026-05-04 18:40:30,321 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=95.0s
+2026-05-04 18:40:54,909 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=119.6s
+2026-05-04 18:41:19,467 csda2013 INFO |   row c4  [ 5/ 7]  elapsed=144.2s
+2026-05-04 18:41:44,212 csda2013 INFO |   row c5  [ 6/ 7]  elapsed=168.9s
+2026-05-04 18:42:08,084 csda2013 INFO |   row c6  [ 7/ 7]  elapsed=192.8s
+2026-05-04 18:42:08,085 csda2013 INFO | Exp #2 / high_tau_gauss : τ=0.70  Π=['c0', 'c1', 'c2', 'c3', 'c6', 'c7', 'c8']  margins=gauss  reps=30
+2026-05-04 18:42:32,646 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=24.6s
+2026-05-04 18:42:59,013 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=50.9s
+2026-05-04 18:43:54,373 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=106.3s
+2026-05-04 18:44:21,306 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=133.2s
+2026-05-04 18:44:46,878 csda2013 INFO |   row c6  [ 5/ 7]  elapsed=158.8s
+2026-05-04 18:45:13,667 csda2013 INFO |   row c7  [ 6/ 7]  elapsed=185.6s
+2026-05-04 18:45:40,580 csda2013 INFO |   row c8  [ 7/ 7]  elapsed=212.5s
+2026-05-04 18:45:40,581 csda2013 INFO | Exp #2 / high_tau_gamma : τ=0.70  Π=['c0', 'c1', 'c2', 'c3', 'c6', 'c7', 'c8']  margins=gamma  reps=30
+2026-05-04 18:46:07,165 csda2013 INFO |   row c0  [ 1/ 7]  elapsed=26.6s
+2026-05-04 18:46:34,572 csda2013 INFO |   row c1  [ 2/ 7]  elapsed=54.0s
+2026-05-04 18:47:29,394 csda2013 INFO |   row c2  [ 3/ 7]  elapsed=108.8s
+2026-05-04 18:47:56,299 csda2013 INFO |   row c3  [ 4/ 7]  elapsed=135.7s
+2026-05-04 18:48:21,552 csda2013 INFO |   row c6  [ 5/ 7]  elapsed=161.0s
+2026-05-04 18:48:48,525 csda2013 INFO |   row c7  [ 6/ 7]  elapsed=187.9s
+2026-05-04 18:49:15,247 csda2013 INFO |   row c8  [ 7/ 7]  elapsed=214.7s
+2026-05-04 18:49:15,248 csda2013 INFO | Exp #3 / exp1_orig_p : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 18:49:22,628 csda2013 INFO |   run 1/5  elapsed=7.4s
+2026-05-04 18:49:32,411 csda2013 INFO |   run 2/5  elapsed=17.2s
+2026-05-04 18:49:42,278 csda2013 INFO |   run 3/5  elapsed=27.0s
+2026-05-04 18:49:48,600 csda2013 INFO |   run 4/5  elapsed=33.4s
+2026-05-04 18:50:00,943 csda2013 INFO |   run 5/5  elapsed=45.7s
+2026-05-04 18:50:00,944 csda2013 INFO | Exp #3 / exp2_orig_p : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 18:50:11,119 csda2013 INFO |   run 1/5  elapsed=10.2s
+2026-05-04 18:50:19,024 csda2013 INFO |   run 2/5  elapsed=18.1s
+2026-05-04 18:50:31,362 csda2013 INFO |   run 3/5  elapsed=30.4s
+2026-05-04 18:50:39,199 csda2013 INFO |   run 4/5  elapsed=38.3s
+2026-05-04 18:50:51,773 csda2013 INFO |   run 5/5  elapsed=50.8s
+2026-05-04 18:50:51,773 csda2013 INFO | Exp #3 / exp1_bal_p : truth={(0, 0): ('c1', 0.7), (0, 1): ('c3', 0.4), (1, 0): ('c3', 0.4), (1, 1): ('c6', 0.7)} candidates=['c1', 'c3', 'c6'] runs=5 N=2500
+2026-05-04 18:51:01,953 csda2013 INFO |   run 1/5  elapsed=10.2s
+2026-05-04 18:51:14,464 csda2013 INFO |   run 2/5  elapsed=22.7s
+2026-05-04 18:51:27,066 csda2013 INFO |   run 3/5  elapsed=35.3s
+2026-05-04 18:51:42,071 csda2013 INFO |   run 4/5  elapsed=50.3s
+2026-05-04 18:52:01,026 csda2013 INFO |   run 5/5  elapsed=69.3s
+2026-05-04 18:52:01,027 csda2013 INFO | Exp #3 / exp2_bal_p : truth={(0, 0): ('c2', 0.25), (0, 1): ('c5', 0.1), (1, 0): ('c5', 0.1), (1, 1): ('c6', 0.2)} candidates=['c2', 'c3', 'c5', 'c6'] runs=5 N=2500
+2026-05-04 18:52:12,645 csda2013 INFO |   run 1/5  elapsed=11.6s
+2026-05-04 18:52:28,114 csda2013 INFO |   run 2/5  elapsed=27.1s
+2026-05-04 18:52:41,734 csda2013 INFO |   run 3/5  elapsed=40.7s
+2026-05-04 18:52:50,496 csda2013 INFO |   run 4/5  elapsed=49.5s
+2026-05-04 18:52:59,438 csda2013 INFO |   run 5/5  elapsed=58.4s
+2026-05-04 18:52:59,442 csda2013 INFO | Done.  CSV → /Users/MacBook_Derrode/Documents/ProjetsRecherche/Clement/copulasformm/report/results   LaTeX → /Users/MacBook_Derrode/Documents/ProjetsRecherche/Clement/copulasformm/report/tables

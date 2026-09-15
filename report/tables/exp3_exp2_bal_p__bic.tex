@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 with balanced prior $p_{\text{bal}}$, criterion: BIC.}
+  \label{tab:exp3-exp2_bal_p__bic}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 100/100 & 0.234 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 4/100 & 0.141 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 7/100 & 0.130 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 96/100 & 0.170 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 32.03\% ($\pm$ 1.12). Unsupervised: 32.44\% ($\pm$ 1.11).
+\end{table}

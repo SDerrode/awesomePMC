@@ -1,0 +1,45 @@
+{
+  "models": [
+    "hmc_in_gauss_k2",
+    "hmc_dn_gauss_k2",
+    "pmc_gauss_k2",
+    "pmc_pair_gauss_k2",
+    "pmc_pair_gamma_gumbel_k2"
+  ],
+  "patterns": [
+    "mcar_b1",
+    "mcar_b10",
+    "mcar_b50",
+    "scattered",
+    "aligned"
+  ],
+  "rates": [
+    0.05,
+    0.1,
+    0.2,
+    0.4,
+    0.6
+  ],
+  "reps": 20,
+  "n_obs": 2000,
+  "draws": 200,
+  "quantiles": [
+    0.025,
+    0.05,
+    0.5,
+    0.95,
+    0.975
+  ],
+  "seed": 20260915,
+  "jobs": 4,
+  "quick": false,
+  "n_tasks": 2500,
+  "wall_time_s": 365.2,
+  "cpu_time_s": 1032.7,
+  "commit": "b0283f67c32032ca323e87a0da503b6fb9374683",
+  "date": "2026-09-15T07:11:12+00:00",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "scipy": "1.18.1",
+  "platform": "macOS-14.5-arm64-arm-64bit-Mach-O"
+}

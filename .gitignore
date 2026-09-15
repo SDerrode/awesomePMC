@@ -1,0 +1,151 @@
+# macOS
+.DS_Store
+
+# CLI default outputs at repo root
+/simulation.csv
+/classification.csv
+/fitted.toml
+
+# Données générées (sorties des scripts) — on garde l'arborescence vide via .gitkeep
+data/datafile/*
+data/historyTracker/*
+data/Plots/*
+!data/*/.gitkeep
+
+# UCI HAR cache (downloaded by examples/uci_har_smartphone.ipynb on demand)
+data/uci_har/*
+!data/uci_har/README.md
+
+# Logs générés par les scripts
+logs/
+
+# Articles / manuscrits (non versionnés)
+docs/
+
+# VSCodium / VSCode
+copulasformm.code-workspace
+awesomePMC.code-workspace
+*.code-workspace
+.vscode/
+.vscode-oss/
+.history/
+
+# Editor leftovers
+*~
+*.swp
+*.swo
+
+# Claude Code (no trace in the repo)
+.claude/
+
+######################### PYTHON FILES
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# LaTeX intermediates from the CSDA-2013 reproduction report
+report/*.aux
+report/*.fdb_latexmk
+report/*.fls
+report/*.log
+report/*.out
+report/*.synctex.gz
+report/*.toc
+report/__pycache__/
+note/*.aux
+note/*.bbl
+note/*.blg
+note/*.fdb_latexmk
+note/*.fls
+note/*.log
+note/*.out
+
+# Power-study output — regenerate with report/gof_power_study.py
+report/out/

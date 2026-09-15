@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 2 with balanced prior $p_{\text{bal}}$, criterion: Huard et al.\ 2006 (CSDA-2013 Eq.\ 20). Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp2_bal_p__huard}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Student} & 0.25 & 100/100 & 0.232 \\
+    (0, 1) & \texttt{CubSec} & 0.10 & 65/100 & 0.111 \\
+    (1, 0) & \texttt{CubSec} & 0.10 & 62/100 & 0.116 \\
+    (1, 1) & \texttt{Clayton} & 0.20 & 77/100 & 0.173 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 20.70\% ($\pm$ 0.97). Unsupervised: 20.92\% ($\pm$ 0.91).
+\end{table}

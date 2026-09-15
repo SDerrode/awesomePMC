@@ -1,0 +1,202 @@
+# ----------------------------------------------------------------------------
+# GitHub Actions CI for awesomePMC  (mirror of .gitlab-ci.yml)
+#
+# Jobs:
+#   lint         — ruff (no autofix; fails on any warning).
+#   smoke        — packaging: build sdist + wheel (wheel built from the sdist),
+#                  twine check, install the wheel (no extras) and check the
+#                  imports + `pmc --help`, in parallel with the test matrix.
+#   test         — pytest + coverage on Python 3.11 / 3.12 / 3.13 / 3.14.
+#   min-versions — Python 3.11 with every runtime dependency (and the `ml`
+#                  extra) pinned to the lower bound declared in
+#                  pyproject.toml; fast test subset.
+#
+# The "gui" optional extra (PyQt6) is installed so the test_gui_dialogs
+# tests run; PyQt6 ships its own Qt; we just need an X-less display
+# server (xvfb) for headless rendering.
+# The publication workflow (PyPI / TestPyPI) is publish.yml — see RELEASING.md.
+# ----------------------------------------------------------------------------
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same ref when a new push lands; PR pushes
+# of repeated commits don't fan out into queued shadows.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  # --------------------------------------------------------------------
+  # Lint  — ruff
+  # --------------------------------------------------------------------
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check pmcprg
+
+  # --------------------------------------------------------------------
+  # Smoke — packaging and the non-editable install path.
+  #   The `test` job below installs `-e ".[dev,gui]"`, which always puts the
+  #   source tree on sys.path and so cannot catch a runtime dependency missing
+  #   from [project].dependencies, a broken entry point, or sdist/wheel
+  #   packaging gaps (audit P-6). This job builds the distributions exactly as
+  #   publish.yml does (`python -m build` builds the wheel *from the sdist*, so
+  #   a file missing from the sdist breaks the wheel), runs `twine check`,
+  #   installs the wheel with no extras and checks the package imports and the
+  #   `pmc` console script runs.
+  # --------------------------------------------------------------------
+  smoke-install:
+    name: smoke (build + install wheel)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build sdist + wheel and check them
+        run: |
+          python -V
+          pip install --upgrade pip
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+          echo "--- sdist top level"
+          tar tzf dist/*.tar.gz | cut -d/ -f2 | sort -u
+      - name: Install the wheel (no extras, non-editable)
+        run: pip install dist/*.whl
+      - name: Import smoke + console-script entry point
+        run: |
+          cd "$RUNNER_TEMP"   # away from the repo so `pmcprg` resolves from the install, not cwd
+          python -c "import pmcprg, pmcprg.copulas, pmcprg.pmc, pmcprg.missing, pmcprg.diagnostics; print('import OK', pmcprg.__version__)"
+          pmc --help
+
+  # --------------------------------------------------------------------
+  # Tests  — matrix over Python versions
+  # --------------------------------------------------------------------
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    needs: lint
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the minimum (requires-python); 3.14 is the development
+        # version. Every entry is a required check. To try a pre-release
+        # Python, add an `include` entry with `experimental: true` and set
+        # `allow-prereleases: true` on setup-python.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    continue-on-error: ${{ matrix.experimental == true }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # Headless Qt runtime — PyQt6 needs libGL + xkbcommon + a few X libs.
+      # Qt itself is shipped inside the wheel; we only need the system
+      # libraries it dlopens at startup.
+      - name: Install system Qt dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq -y --no-install-recommends \
+            libgl1 libxkbcommon-x11-0 libdbus-1-3 libegl1 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+            libxkbcommon0 libfontconfig1
+
+      - name: Install package
+        run: |
+          python -V
+          pip install --upgrade pip
+          pip install -e ".[dev,gui]"
+
+      - name: Run tests with coverage
+        env:
+          # Headless Qt — avoid "could not connect to any X display".
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q --cov --cov-report=term --cov-report=xml
+
+      - name: Upload coverage artefact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 7
+
+  # --------------------------------------------------------------------
+  # Minimum versions — are the declared lower bounds true?
+  #   Python 3.11 (the requires-python minimum) with every runtime dependency
+  #   of [project].dependencies, plus the `ml` extra (scikit-learn, used by
+  #   the k-means initialisation tests), pinned to its lower bound
+  #   ("numpy>=1.24" -> "numpy==1.24") through a constraints file generated
+  #   from pyproject.toml, then the fast test subset (-m "not slow"). The
+  #   tests that need PyQt6 / nbformat skip themselves.
+  #   A failure here means a lower bound in pyproject.toml (and
+  #   requirements.txt) is false: raise it to the first version that passes
+  #   (or stop using the newer API) — do not silence the job.
+  # --------------------------------------------------------------------
+  min-versions:
+    name: min-versions (Python 3.11, lowest dependencies)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Generate constraints-min.txt from the lower bounds
+        run: |
+          python - <<'EOF'
+          import re, sys, tomllib
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          deps = project["dependencies"] + project["optional-dependencies"]["ml"]
+          pins = []
+          for req in deps:
+              m = re.fullmatch(r"\s*([A-Za-z0-9._-]+)\s*>=\s*([0-9][^,;\s]*)\s*", req)
+              if m is None:
+                  sys.exit(f"::error::cannot derive a lower bound from {req!r} (expected 'name>=X.Y')")
+              pins.append(f"{m[1]}=={m[2]}")
+          open("constraints-min.txt", "w").write("\n".join(pins) + "\n")
+          EOF
+          cat constraints-min.txt
+      - name: Install the package with the lowest declared dependencies
+        run: |
+          python -V
+          pip install --upgrade pip
+          pip install -c constraints-min.txt ".[ml]" pytest
+          pip list
+      - name: Fast test subset
+        env:
+          MPLBACKEND: Agg
+        run: pytest -q -m "not slow"

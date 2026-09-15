@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+  \centering
+  \caption{ICE copula selection — exp.\ 1 with balanced prior $p_{\text{bal}}$, criterion: Cram\'er--von Mises. Pair-indexed margins $f_{ij}$ of Table~1, second Gaussian parameter read as a variance.}
+  \label{tab:exp3-exp1_bal_p__cvm}
+  \begin{tabular}{ccccc}
+    \toprule
+    $(i, j)$ & true family & $\tau_{ij}$ & hits / runs & $\hat\tau_{ij}$ \\
+    \midrule
+    (0, 0) & \texttt{Gauss} & 0.70 & 65/100 & 0.675 \\
+    (0, 1) & \texttt{GH} & 0.40 & 38/100 & 0.342 \\
+    (1, 0) & \texttt{GH} & 0.40 & 38/100 & 0.343 \\
+    (1, 1) & \texttt{Clayton} & 0.70 & 61/100 & 0.652 \\
+    \bottomrule
+  \end{tabular}
+  \par\smallskip Supervised error: 20.17\% ($\pm$ 1.24). Unsupervised: 23.47\% ($\pm$ 3.85).
+\end{table}

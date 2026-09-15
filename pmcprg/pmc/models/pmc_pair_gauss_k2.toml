@@ -1,0 +1,73 @@
+# General PMC — K=2 classes, pair-indexed Gaussian margins, Clayton copulas.
+#
+# Variant: PMC, margin_structure = "pair" (inferred from the K² [[margins]] blocks)
+#   • f_ij = p(y_n | x_n = i, x_{n+1} = j) depends on the pair (A16 Eq. 12):
+#     the hidden chain X is NOT Markov (A16 §2.1 Proposition) and
+#     p(x_{n+1} = j | x_n = i, y_n) ∝ p[i][j] · f_ij(y_n)          (A16 Eq. 13)
+#   • y_{n+1} | (i, j, y_n) ~ f_ji(·) · c_ij(F_ij(y_n), F_ji(·))    (A16 Eq. 14)
+#
+# Setting of A16 (Derrode & Pieczynski 2013, CSDA 63:81–98) §2.2 and Table 1:
+# Gaussian margins N(μ, σ) with σ the standard deviation, classes {1, 2} of the
+# paper numbered {0, 1} here; joint prior p(1,1) = 0.50, p(1,2) = p(2,1) = 0.05,
+# p(2,2) = 0.40; Clayton copulas with Kendall's τ = 0.7.
+
+[model]
+name      = "General PMC Gauss K=2 (CSDA-2013 Table 1)"
+variant   = "PMC"
+K         = 2
+N_default = 2000
+
+[prior]
+# p[i][j] = P(X_n=i, X_{n+1}=j) — symmetric (reversible), sums to 1.
+p = [[0.50, 0.05],
+     [0.05, 0.40]]
+
+# ── Pair margins (K²-format: one block per pair (i, j)) ──────────────────────
+[[margins]]
+i      = 0
+j      = 0
+dist   = "norm"
+params = {loc = 0.0, scale = 1.0}
+
+[[margins]]
+i      = 0
+j      = 1
+dist   = "norm"
+params = {loc = 0.3, scale = 1.6}
+
+[[margins]]
+i      = 1
+j      = 0
+dist   = "norm"
+params = {loc = 1.1, scale = 1.4}
+
+[[margins]]
+i      = 1
+j      = 1
+dist   = "norm"
+params = {loc = 1.5, scale = 1.0}
+
+# ── Copulas (K² blocks) ──────────────────────────────────────────────────────
+[[copulas]]
+i    = 0
+j    = 0
+name = "Clayton"
+tau  = 0.7
+
+[[copulas]]
+i    = 0
+j    = 1
+name = "Clayton"
+tau  = 0.7
+
+[[copulas]]
+i    = 1
+j    = 0
+name = "Clayton"
+tau  = 0.7
+
+[[copulas]]
+i    = 1
+j    = 1
+name = "Clayton"
+tau  = 0.7

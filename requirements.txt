@@ -1,0 +1,10 @@
+# Source of truth for dependencies is pyproject.toml.
+# This file is kept as a convenience: `pip install -r requirements.txt`
+# installs the same runtime dependencies without building the package.
+#
+# Must stay in sync with [project].dependencies in pyproject.toml.
+
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+tomli_w>=1.0

@@ -1,0 +1,51 @@
+margins = [
+    { i = 0, dist = "norm", params = { loc = -1.0, scale = 1.0 } },
+    { i = 1, dist = "norm", params = { loc = 1.0, scale = 1.0 } },
+]
+copulas = [
+    { i = 0, j = 0, name = "Gauss", tau = 0.6 },
+    { i = 0, j = 1, name = "Gauss", tau = 0.0 },
+    { i = 1, j = 0, name = "Gauss", tau = 0.0 },
+    { i = 1, j = 1, name = "Gauss", tau = 0.6 },
+]
+
+[model]
+name = "PMC Gaussien K=2"
+variant = "PMC"
+K = 2
+N_default = 300
+
+[prior]
+p = [
+    [
+        0.45,
+        0.05,
+    ],
+    [
+        0.05,
+        0.45,
+    ],
+]
+
+[ice]
+algorithm = "ice"
+sem_seed = 0
+fit_margins = false
+max_iter = 50
+tol = 0.0001
+patience = 3
+candidates = [
+    "Gauss",
+    "GH",
+    "Clayton",
+    "Frank",
+    "Joe",
+]
+init = "model"
+kmeans_seed = 0
+n_starts = 1
+multistart_seed = 42
+multistart_jitter = 0.1
+multistart_workers = 1
+selection_criterion = "mle"
+margin_selection_rule = "mle"
