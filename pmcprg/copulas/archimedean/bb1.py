@@ -55,6 +55,34 @@ doi:10.1016/j.jmva.2012.02.019. ``C(u, 1) = u`` holds to rounding: B → 0
 gives log B → −∞ and logaddexp returns δ log A (audit K-12). There is no
 fallback: a value that cannot be computed is NaN, not ``EPS`` or a 0/1 step
 (audit RB-9).
+
+Kernel interface (audit FR-8, BB1 round). Every path above is built from
+``ka = log u``, ``kb = log v`` — never from ``u``/``v`` themselves — because
+``A = u^{-θ} − 1`` is already a function of ``log u`` alone
+(``_bb1_loga``); this is BB1's *own* natural kernel coordinate, and it
+coincides with Gumbel's (``pmcprg.copulas.archimedean.gumbel``: ``ka =
+log u``), not with Joe's (``ka = log(1 − u)``), because BB1's generator
+``φ(t) = (t^{-θ} − 1)^δ`` — unlike Joe's ``φ(t) = -log(1-(1-t)^θ)`` — is
+built from ``t`` directly, not from its complement. ``_kcoord_reflected(x)
+= log1p(-x)`` is then the exact log of ``1 − x`` for the 90°/270° rotation
+wrapper (``pmcprg.copulas.archimedean.rotated``) to pass as ``ka``/``kb``
+without ever forming ``1 − x`` in linear scale.
+
+The two-parameter generator changes only which quantity the *inverse*
+h-function is solved for, not the coordinate: ``h(v|u) = w`` has no closed
+form in BB1 (unlike Gumbel/Joe, whose textbook h admits an explicit inverse
+up to a monotone Newton iteration in a transformed variable — Hofert et al.
+2012's substitution does not separate the two parameters θ, δ enough for
+that here). ``_k_inv_h`` therefore solves ``log h(v|u) = log w`` by Brent's
+method directly on ``kb = log v`` — the same kernel coordinate the rest of
+the interface uses, so a reflected conditioning value never re-forms ``1 −
+u`` either — rather than by a closed-form step. This is a genuine, exact
+(to Brent's tolerance) solve, not an approximation: BB1's own public
+``inv_h``/``inv_h_array`` (unchanged by this refactor) already used the
+generic numerical inversion of ``CopulaVirt.inv_h`` via ``conditional_cdf``,
+so ``_k_inv_h`` is no slower or less precise than the family's pre-existing
+public inverse — only reformulated on kernel coordinates so
+``CopulaBB190``/``CopulaBB1270`` (``rotated.py``) can use it.
 """
 if __name__ == '__main__':
     import sys
@@ -62,8 +90,10 @@ if __name__ == '__main__':
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import logging
+import math
+
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import brentq, minimize
 
 from pmcprg.copulas._base import TAU_PAD_ABS, TAU_PAD_REL, CopulaVirt, FitResult
 from pmcprg.exceptions    import CopulaParameterError
@@ -73,50 +103,93 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Log-space kernel shared by every evaluation path
+# Log-space kernel on ka = log u, kb = log v (module docstring) — shared by
+# every evaluation path, including the rotation wrapper's kernel interface.
 # ---------------------------------------------------------------------------
 
-def _bb1_loga(log_u, th):
-    """``log(u^{−θ} − 1)`` from ``log u``: a + log(1 − e^{−a}), a = −θ log u."""
-    a = -th * log_u
+def _bb1_loga(ka, th):
+    """``log(u^{−θ} − 1)`` from ``ka = log u``: a + log(1 − e^{−a}), a = −θ·ka."""
+    a = -th * ka
     return a + np.log(-np.expm1(-a))
 
 
-def _bb1_terms(u, v, th, de):
-    """``(log u, log A, log B, log S, log(1 + S))`` for arrays or numpy scalars in (0, 1)."""
-    log_u = np.log(u)
-    log_a = _bb1_loga(log_u, th)
-    log_b = _bb1_loga(np.log(v), th)
+def _bb1_terms_k(ka, kb, th, de):
+    """``(ka, log A, log B, log S, log(1 + S))`` from ``ka = log u``, ``kb = log v``."""
+    log_a = _bb1_loga(ka, th)
+    log_b = _bb1_loga(kb, th)
     log_s = np.logaddexp(de * log_a, de * log_b) / de
-    return log_u, log_a, log_b, log_s, np.logaddexp(0.0, log_s)
+    return ka, log_a, log_b, log_s, np.logaddexp(0.0, log_s)
 
 
-def _bb1_logpdf(u, v, th, de):
-    """log c(u, v) on arrays (or numpy scalars) already clipped to (0, 1)."""
-    log_u, log_a, log_b, log_s, log_1ps = _bb1_terms(u, v, th, de)
+def _bb1_logpdf_k(ka, kb, th, de):
+    """log c(u, v) from ``ka = log u``, ``kb = log v``."""
+    ka, log_a, log_b, log_s, log_1ps = _bb1_terms_k(ka, kb, th, de)
     with np.errstate(divide='ignore'):
         # θ(δ − 1) + (θδ + 1) S: at δ = 1 (Clayton) the constant vanishes, and
         # logaddexp(−inf, x) = x handles that boundary exactly.
         log_last = np.logaddexp(np.log(th * (de - 1.0)), np.log(th * de + 1.0) + log_s)
-    return ((-th - 1.0) * (log_u + np.log(v))
+    return ((-th - 1.0) * (ka + kb)
             + (de - 1.0) * (log_a + log_b)
             + (1.0 - 2.0 * de) * log_s
             + (-1.0 / th - 2.0) * log_1ps
             + log_last)
 
 
-def _bb1_cdf(u, v, th, de):
-    """C = (1 + S)^{−1/θ} = exp(−log(1 + S)/θ)."""
-    return np.exp(-_bb1_terms(u, v, th, de)[4] / th)
+def _bb1_cdf_k(ka, kb, th, de):
+    """``(C, 1 − C)``, ``C = (1 + S)^{−1/θ} = exp(−log(1 + S)/θ)``."""
+    e = _bb1_terms_k(ka, kb, th, de)[4] / th
+    return np.exp(-e), -np.expm1(-e)
 
 
-def _bb1_h(v, u, th, de):
-    """h(v|u) = u^{−θ−1} A^{δ−1} S^{1−δ} (1+S)^{−1/θ−1}, in log space."""
-    log_u, log_a, _, log_s, log_1ps = _bb1_terms(u, v, th, de)
-    return np.exp((-th - 1.0) * log_u
-                  + (de - 1.0) * log_a
-                  + (1.0 - de) * log_s
-                  + (-1.0 / th - 1.0) * log_1ps)
+def _bb1_logh_k(kb, ka, th, de):
+    """log h(v|u) = (−θ−1)·ka + (δ−1)·log A + (1−δ)·log S + (−1/θ−1)·log(1+S),
+    from ``kb = log v``, ``ka = log u`` (GH/Joe argument order: conditioned
+    variable first, conditioning variable second)."""
+    _, log_a, _, log_s, log_1ps = _bb1_terms_k(ka, kb, th, de)
+    return ((-th - 1.0) * ka
+            + (de - 1.0) * log_a
+            + (1.0 - de) * log_s
+            + (-1.0 / th - 1.0) * log_1ps)
+
+
+def _bb1_h_k(kb, ka, th, de):
+    """``(h, 1 − h)`` of h(v|u), in log space (module docstring)."""
+    logh = _bb1_logh_k(kb, ka, th, de)
+    return np.exp(logh), -np.expm1(logh)
+
+
+def _bb1_inv_h_k(lw, ka, th, de):
+    """``(v, 1 − v)`` solving h(v|u) = w, from ``lw = log w`` and ``ka = log u``.
+
+    No closed form (module docstring): Brent's method on ``kb = log v`` — the
+    same kernel coordinate as everything else here — bracketed on
+    ``[log EPS, log(1 − EPS)]``, the full admissible range of ``v``. ``log
+    h(v|u)`` is monotone increasing in ``kb`` (h is a CDF in v, v = exp(kb)
+    increasing in kb), so the bracket always contains the root when one
+    exists; ``w`` outside the attainable range saturates to the nearer end,
+    matching :meth:`CopulaVirt.inv_h`'s own saturation convention.
+    """
+    lw = np.asarray(lw, dtype=float)
+    ka = np.asarray(ka, dtype=float)
+    shape = np.broadcast(lw, ka).shape
+    lw_flat = np.broadcast_to(lw, shape).ravel()
+    ka_flat = np.broadcast_to(ka, shape).ravel()
+    kb_lo, kb_hi = math.log(EPS), math.log(ONE_MINUS_EPS)
+    out = np.empty(lw_flat.shape, dtype=float)
+    for i in range(lw_flat.size):
+        l_, k_ = float(lw_flat[i]), float(ka_flat[i])
+        logh_lo = _bb1_logh_k(kb_lo, k_, th, de)
+        logh_hi = _bb1_logh_k(kb_hi, k_, th, de)
+        if l_ <= logh_lo:
+            out[i] = kb_lo
+        elif l_ >= logh_hi:
+            out[i] = kb_hi
+        else:
+            out[i] = brentq(lambda kb_: _bb1_logh_k(kb_, k_, th, de) - l_,
+                             kb_lo, kb_hi, maxiter=100, xtol=1e-13,
+                             rtol=8.0 * np.finfo(float).eps)
+    kb = out.reshape(shape)
+    return np.exp(kb), -np.expm1(kb)
 
 
 class CopulaBB1(CopulaVirt):
@@ -220,7 +293,34 @@ class CopulaBB1(CopulaVirt):
         self.params['delta'] = delta
 
     # ------------------------------------------------------------------
-    # CDF / PDF / h-function — all through the log-space kernel above
+    # Kernel interface (audit FR-8) — consumed by the 90°/270° rotation
+    # wrapper in ``pmcprg.copulas.archimedean.rotated``, same shape as
+    # ``CopulaGH``/``CopulaJoe``'s (module docstring: BB1's own natural
+    # kernel coordinate is ``ka = log u``, coinciding with Gumbel's).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _kcoord(x):
+        return np.log(x)
+
+    @staticmethod
+    def _kcoord_reflected(x):
+        return np.log1p(-x)
+
+    def _k_logpdf(self, ka, kb):
+        return _bb1_logpdf_k(ka, kb, self.theta, self.delta)
+
+    def _k_cdf(self, ka, kb):
+        return _bb1_cdf_k(ka, kb, self.theta, self.delta)
+
+    def _k_h(self, kb, ka):
+        return _bb1_h_k(kb, ka, self.theta, self.delta)
+
+    def _k_inv_h(self, lw, ka):
+        return _bb1_inv_h_k(lw, ka, self.theta, self.delta)
+
+    # ------------------------------------------------------------------
+    # CDF / PDF / h-function — all built from the kernel interface above
     # ------------------------------------------------------------------
 
     def cdf(self, uv):
@@ -228,8 +328,8 @@ class CopulaBB1(CopulaVirt):
         u = minmaxEPS(uv[0])
         v = minmaxEPS(uv[1])
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            result = _bb1_cdf(np.float64(u), np.float64(v), self.theta, self.delta)
-        return float(np.clip(result, 0.0, 1.0))
+            c, _ = self._k_cdf(self._kcoord(np.float64(u)), self._kcoord(np.float64(v)))
+        return float(np.clip(c, 0.0, 1.0))
 
     def cdf_array(self, uv: np.ndarray) -> np.ndarray:
         """Vectorised closed-form CDF (BB1 has no statsmodels backend)."""
@@ -237,7 +337,8 @@ class CopulaBB1(CopulaVirt):
         u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
         v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return np.clip(_bb1_cdf(u, v, self.theta, self.delta), 0.0, 1.0)
+            c, _ = self._k_cdf(self._kcoord(u), self._kcoord(v))
+        return np.clip(c, 0.0, 1.0)
 
     def pdf(self, uv):
         """c(u,v) = u^{-θ-1}·v^{-θ-1}·A^{δ-1}·B^{δ-1}·S^{1-2δ}·(1+S)^{-1/θ-2}·[θ(δ-1)+(θδ+1)S].
@@ -247,8 +348,8 @@ class CopulaBB1(CopulaVirt):
         u = minmaxEPS(uv[0])
         v = minmaxEPS(uv[1])
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return float(np.exp(_bb1_logpdf(np.float64(u), np.float64(v),
-                                            self.theta, self.delta)))
+            return float(np.exp(self._k_logpdf(self._kcoord(np.float64(u)),
+                                                self._kcoord(np.float64(v)))))
 
     def pdf_array(self, uv: np.ndarray) -> np.ndarray:
         """Vectorised closed-form PDF, ``exp`` of :meth:`logpdf_array` (no floor)."""
@@ -268,15 +369,15 @@ class CopulaBB1(CopulaVirt):
         u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
         v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return _bb1_logpdf(u, v, self.theta, self.delta)
+            return self._k_logpdf(self._kcoord(u), self._kcoord(v))
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = u^{-θ-1} · A^{δ-1} · S^{1-δ} · (1+S)^{-1/θ-1}."""
         u = minmaxEPS(u)
         v = minmaxEPS(v)
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            result = _bb1_h(np.float64(v), np.float64(u), self.theta, self.delta)
-        return float(np.clip(result, 0.0, 1.0))
+            h, _ = self._k_h(self._kcoord(np.float64(v)), self._kcoord(np.float64(u)))
+        return float(np.clip(h, 0.0, 1.0))
 
     def tail_dependence(self) -> tuple[float, float]:
         """λ_L = 2^{−1/(θδ)},  λ_U = 2 − 2^{1/δ}."""

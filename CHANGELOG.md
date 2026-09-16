@@ -9,6 +9,272 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — 90°/270° rotations of BB1, the kernel-interface prerequisite included (FR-8, third round)
+
+- **BB1 did not expose the kernel interface** (`_kcoord`, `_kcoord_reflected`,
+  `_k_logpdf`, `_k_cdf`, `_k_h`, `_k_inv_h`) the `rotated.py` mechanism needs
+  — unlike Clayton/GH/Joe, which already had it via their own survival-copula
+  wrappers. `pmcprg/copulas/archimedean/bb1.py` was refactored first: its
+  `cdf`/`pdf`/`logpdf_array`/`conditional_cdf` are now built from the kernel
+  interface instead of calling the log-space helpers directly, with **no
+  change to BB1's external behaviour** — the existing BB1 tests
+  (`test_palier1_b1_families.py`, `test_copula_limits.py`'s BB1 cases) pass
+  bit-identically before and after. BB1's own natural kernel coordinate
+  turned out to coincide with Gumbel's (`ka = log u`, not Joe's
+  `log(1 − u)`), since its generator `(t^{-θ} − 1)^δ` is built from `t`
+  directly. `_k_inv_h` has no closed form for BB1 (unlike GH/Joe's monotone
+  Newton iteration) and solves `h(v|u) = w` by Brent's method on the kernel
+  coordinate `kb = log v` itself — still a genuine kernel-interface
+  implementation, not a fallback to direct composition.
+- **`CopulaBB190`/`CopulaBB1270`** (`_base_class = CopulaBB1`) then follow the
+  same two-line `RotatedCopula90`/`RotatedCopula270` pattern as every prior
+  round, registered as `CopulaEnum.BB190`/`BB1270` (IDs 26–27),
+  `TAU_MIN_MAX = [-1.0, -EPS]` mirroring BB1's own `[EPS, 1.0]`; `delta`
+  passed through unchanged, unaffected by the rotation.
+- **The `delta` pass-through, actually exercised for the first time.** Both
+  prior rounds' reports noted (by inspection only) that `RotatedCopula`
+  already passes a second parameter through to the base class unchanged.
+  This round is the first to build a rotated family that actually has one,
+  and it surfaced two real bugs the inspection could not have found:
+  1. **`constrain_params`/`constructible_params`** (audit G1) are BB1's own
+     joint δ-vs-τ repair hooks, not the identity — `RotatedCopula` needed a
+     new generic delegation (τ negated, delegate to `_base_class`, τ negated
+     back), preserving `CopulaVirt.constructible_params`'s identity contract
+     (`params` returned as the same object when the base's own hook would
+     not touch it either) so multistart's "was this pair repaired?" checks
+     stay correct. Harmless for Clayton/GH/Joe's rotations, whose base
+     hooks are the identity (round-trips to the same dict, verified).
+  2. **`pmcprg.copulas._fit._fit_two_parameter_mle`'s BB1-specific `delta`
+     branch hardcoded a positive τ range** (its θ-bound is built from the
+     padded τ *ceiling*, `2/(1−τ_max) − 2`, meant to stay finite as
+     τ_max → 1): on BB190/BB1270's negative range this degenerated and the
+     joint optimiser returned a τ̂ outside the family's own registered
+     range — found by actually running the fit, not by inspection. Fixed by
+     solving the shadow positive-τ problem (`sign = −1` when the registered
+     range is ≤ 0) and negating τ back in `params_of`; `CopulaBB1` itself is
+     untouched (`sign = 1` there). `CopulaBB190`/`CopulaBB1270` additionally
+     override `fit` to reuse BB1's own already-validated 2-D MLE via the
+     reflection identity (`(U,V) ~ BB190` iff `(1−U,V) ~ BB1`) rather than
+     rely on this routine directly — ICE's M-step
+     (`pmcprg.pmc.ice._fit_copula_params`) still calls the routine directly,
+     so the sign-fix was needed regardless.
+- **Correctness.** The VineCopula identity `C90(u,v) = v − C(1−u,v)` (and the
+  270° analogue) holds to machine precision across (τ, δ) ∈ {(−0.3, 1.2),
+  (−0.6, 2.0), (−0.8, 3.0), (−0.9, 5.0)} on a 25×25 grid: max |ΔC| ≈ 2×10⁻¹⁶.
+  Densities match the base's own `pdf_array` at the reflected point (max
+  |Δc| ≈ 1.6×10⁻¹²); `h90(v|u) = h_base(v|1−u)` and
+  `h270(v|u) = 1 − h_base(1−v|u)` hold to ≤5×10⁻¹⁶ on 100 random points per
+  (τ, δ); `inv_h(h(v|u), u)` round-trips to ≤1×10⁻¹⁴. Cross-checked against
+  `test_copula_limits.py`'s decimal reference file, extended by reflecting
+  BB1's own already-validated CDF through the same machinery — pure
+  addition, 6 new entries, zero changed bytes in any of the 116
+  pre-existing ones (including Clayton90/270, GH90/270, Joe90/270).
+  `fit` recovers both τ and δ: e.g. τ = −0.85, δ = 4.0, n = 3000 →
+  τ̂ = −0.847, δ̂ = 3.92 (both `method='tau'` and `method='mle'` — BB1's own
+  `fit` always uses MLE regardless, so both give the same answer here too).
+- **Tail asymmetry, measured rather than assumed to be Clayton's or
+  GH/Joe's.** BB1 is a Joe-Clayton hybrid with generally λ_L, λ_U both > 0
+  (unlike Clayton's pure-lower or GH/Joe's pure-upper asymmetry), so a plain
+  BB1 sample has residual mass in **both** diagonal corners (verified:
+  λ_L=0.707, λ_U=0.413 at τ=0.6, δ=1.5, and both (0,0)/(1,1) corner masses
+  are nonzero, the larger one at (0,0) matching λ_L > λ_U). The rotations
+  therefore populate **both** anti-diagonal corners too, not a single
+  dominant one: at τ=−0.6, δ=1.5 (40 000 simulated points), `CopulaBB190`'s
+  lower-right corner (0.0362) exceeds its upper-left (0.0226), while
+  `CopulaBB1270`'s upper-left (0.0348) exceeds its lower-right (0.0242) —
+  the two rotations disagree on which corner dominates, unlike Clayton/GH/
+  Joe's rotations, which always agree with each other's single opposite
+  corner. `fit_best` still picks the correctly-rotated family cleanly when
+  δ is close to 1 (near-Clayton, effectively one-sided: AIC −5086.89 vs.
+  −4594.19 for the wrong rotation at τ=−0.8, δ=1.1), but the two rotations
+  become harder to separate at higher δ, where both diagonal tails are
+  comparable — a genuine property of this family, not a test flake.
+- **Scoping note for A12/A14 (not touched this round).** BB1 confirms that a
+  second free parameter is not, by itself, an obstacle to the rotation
+  mechanism — the kernel-interface refactor and the two-line subclass
+  pattern both went through unmodified. What actually needed new code was
+  everything *downstream* of construction that has its own opinion about
+  τ's sign: the joint-constraint hooks and the two-parameter MLE fitter.
+  A12/A14 are one-parameter families, so if their kernel interface turns
+  out to fit as cleanly as GH/Joe's did, no analogous fitter fix should be
+  needed for them — but they should still be checked for any
+  family-specific fitting path (like BB1's) that assumes a positive τ.
+- **Tests.** `pmcprg/tests/test_rotated_bb1.py` (registration, the kernel
+  interface, the VineCopula identity, h/h⁻¹ round-trips, τ/δ pass-through,
+  `constructible_params`/`constrain_params` delegation — including a check
+  that the one-parameter rotations are unaffected by it — measured corner
+  asymmetry, `fit` recovery of τ *and* δ, `fit_best`); `test_copula_limits.py`
+  extended with BB190/BB1270; `test_scientific.py`'s generic family sweep
+  now builds each family via `constructible_params` instead of a bare
+  `cls(tau_k=tau)` (BB190/BB1270's clipped τ landed exactly where the
+  default δ = 1.5 is inadmissible, the same joint constraint BB1 itself
+  needed this hook for); `test_multistart_joint_constraints.py`'s "identity
+  for every family without the joint constraint" check now derives the
+  excluded set from the registry (`"delta" in PARAMETERS_SET_NAME`) instead
+  of naming only `CopulaEnum.BB1`. `test_copulas.py::test_available_count`
+  updated 25 → 27. `ruff check pmcprg` clean; the full fast suite passes
+  (3861 passed, 33 skipped, 298 deselected `slow`); every existing family
+  (including Clayton/GH/Joe's rotations and plain BB1) is untouched.
+
+### Added — exchangeability screening test, closing FR-10 (fourth and last item)
+
+- **`pmcprg/diagnostics/exchangeability.py`.** Tests H0: the copula of a
+  pair is exchangeable, `C(u,v) = C(v,u)`, with a Cramer-von Mises statistic
+  comparing the empirical copula `C_n` to its transpose,
+  `T_n = n * sum_i [C_n(u_i,v_i) - C_n(v_i,u_i)]^2`, calibrated by the same
+  parametric (Gaussian-surrogate) bootstrap as `radial_symmetry_test` —
+  chosen deliberately over a multiplier-bootstrap follow-up as the simpler,
+  faster-to-validate option for a first version (FR-10's own text leaves
+  that choice open for this item, unlike radial symmetry's explicit
+  multiplier-bootstrap ask). No internet access to verify Genest, Neslehova
+  & Quessy (2012, doi:10.1007/s10463-011-0337-6)'s exact statistic verbatim
+  — this is the natural, defensible CvM construction their citation calls
+  for ("compare `C_n` to its transpose"), built on the identical skeleton
+  `radial_symmetry.py` already uses for the same job, and validated by
+  simulation rather than by claimed fidelity to the paper's exact formula
+  (same posture as both prior FR-10 modules).
+- **Verified, not assumed.** Checked numerically before relying on either
+  claim: every bivariate Gauss copula is exchangeable unconditionally (its
+  CDF is `Phi_rho(Phi^-1(u), Phi^-1(v))`, symmetric in `u,v` for every
+  `rho` — max |C(u,v)-C(v,u)| at machine precision across 5 tau values and
+  3 points); the 180 degree survival rotation preserves exchangeability of
+  an exchangeable base (the transform commutes with the swap); the 90/270
+  degree rotations of FR-8 (`CopulaClayton90/270`, `CopulaGH90/270`,
+  `CopulaJoe90/270`) break it concretely, e.g. `CopulaClayton90(tau=-0.5)`:
+  `C(0.2,0.7) = 0.080221` vs `C(0.7,0.2) = 0.031237` (Delta ~= 0.049) — used
+  as the power study's test bed instead of a bespoke asymmetric copula.
+- **Size study** (alpha=0.05, N=200, 100 replicates, B=150): Gaussian
+  tau=0.3/0.6 rejects 4.0%/1.0%; Frank tau=0.3/0.6 rejects 5.0%/11.0%;
+  Clayton tau=0.3/0.6 rejects 8.0%/3.0% — all within Monte-Carlo noise of
+  the 5% nominal level (binomial sd ~= 2.2% at 100 replicates).
+- **Power study** (alpha=0.05, 100 replicates, B=150), rejection rate
+  growing with |tau| and N as expected: `CopulaClayton90` at tau=-0.2/-0.4/
+  -0.6, N=100 reaches 24%/61%/88% and N=300 reaches 61%/99%/100%;
+  `CopulaJoe90` reaches 31%/71%/86% (N=100) and 81%/100%/100% (N=300);
+  `CopulaGH90`, a visibly weaker alternative for this test, reaches
+  10%/20%/15% (N=100, noisy near the tau=-0.4/-0.6 boundary at only 100
+  replicates) and 25%/56%/61% (N=300).
+- **Tests.** `pmcprg/tests/test_exchangeability.py` — result shape,
+  independence never rejects, degenerate/tiny samples, mismatched shapes
+  and rejected weights raise, a concrete numerical check that the 90-degree
+  rotated families are and Gauss is not asymmetric at several points, fast
+  qualitative size/power studies plus the full-scale ones above
+  (`@pytest.mark.slow`, ~110s). Monte-Carlo seeds derived with the same
+  `zlib.crc32`-based `_stable_seed()` helper the FR-10 seed fix
+  (`5e56fda`) introduced for `test_radial_symmetry.py`/`test_rosenblatt.py`
+  — never Python's salted `hash()`. Fast suite run 3x in a row (including
+  once with `PYTHONHASHSEED=random`): identical pass, no flakes.
+
+### Added — 90°/270° rotations of GH and Joe, applying the FR-8 pilot's mechanism (FR-8, second round)
+
+- **Closing the pilot's own prediction.** The FR-8 pilot (`rotated.py`, one
+  round above) built the generic `RotatedCopula`/`RotatedCopula90`/
+  `RotatedCopula270` mechanism for Clayton and predicted that GH and Joe —
+  already exposing the *kernel interface* `_kcoord`, `_kcoord_reflected`,
+  `_k_logpdf`, `_k_cdf`, `_k_h`, `_k_inv_h` (used by `SurvivalGH`/
+  `SurvivalJoe` in `survival.py`) — would each be a two-line subclass, same
+  as Clayton's. This round adds `CopulaGH90`, `CopulaGH270`, `CopulaJoe90`,
+  `CopulaJoe270` and confirms that prediction: no change to `rotated.py`'s
+  wrapper machinery was needed, only four new `_base_class = CopulaGH` /
+  `CopulaJoe` subclasses. BB1, A12 and A14 remain out of scope — they do not
+  yet expose the kernel interface, the same prerequisite the pilot and
+  `survival.py` both stopped at.
+- **Registered τ ranges verified, not assumed.** GH and Joe are both
+  registered with `TAU_MIN_MAX = [EPS, 1.0]` (`CopulaEnum.GH`/`JOE`),
+  identical to Clayton's own range — so `GH90`/`GH270`/`JOE90`/`JOE270`
+  mirror it the same way Clayton90/270 did: `TAU_MIN_MAX = [-1.0, -EPS]`
+  (`CopulaEnum` IDs 22–25). Confirmed by reading the registry rather than
+  assumed from the family name.
+- **Correctness.** The VineCopula identity `C90(u,v) = v − C(1−u,v)` (and
+  the 270° analogue `C270(u,v) = u − C(u,1−v)`) holds to machine precision
+  for both families on a 25×25 grid at τ ∈ {−10⁻⁴, −0.3, −0.6, −0.95}: max
+  |ΔC| = 2.2×10⁻¹⁶ (GH), 1.7×10⁻¹⁶ (Joe). Densities match the base family's
+  own already-validated `pdf_array` at the reflected point directly (max
+  |Δc| = 2.8×10⁻¹⁰ for GH, 1.1×10⁻⁹ for Joe — cheaper and independent of
+  `test_copula_limits.py`'s decimal machinery). Against that decimal
+  reference file — extended by reflecting GH's and Joe's own
+  already-validated CDF formulas through the same `decimal` code the pilot
+  used for Clayton, rather than rebuilding fresh ground truth — the
+  package's closed forms reach, over the existing 6×6 grid × 6 τ (moderate,
+  strong and independence-limit, τ down to −10⁻¹²), for both 90°/270°:
+  GH max |Δ log c| = 1.1×10⁻¹³, max |ΔC| = 1.1×10⁻¹⁶, max |Δh| = 1.4×10⁻¹⁴;
+  Joe max |Δ log c| = 2.3×10⁻¹³, max |ΔC| = 1.1×10⁻¹⁶, max |Δh| = 6.5×10⁻¹⁵.
+  `inv_h(h(v|u), u)` round-trips to ≤2.3×10⁻¹⁶ for both. `fit(method='tau')`
+  and `fit(method='mle')` both recover τ̂ within 0.06 of τ ∈ {−0.2, −0.5,
+  −0.8} from n = 3000 simulated points, for all four new families (worst
+  case observed: |τ̂ − τ| = 8.3×10⁻³).
+  **The corner swap is the mirror image of the Clayton pilot's, not a
+  repeat of it**: GH and Joe are upper-tail families (mass at (1,1)), not
+  lower-tail like Clayton (mass at (0,0)), so reflecting through (1−U,V)
+  pushes that mass to the *upper-left* corner for the 90° rotation and the
+  *lower-right* corner for 270° — the opposite assignment from
+  `CopulaClayton90`/`CopulaClayton270`. Caught by actually running the
+  simulation rather than copying the pilot's assertion direction: a first
+  draft asserted Clayton's corner assignment for GH and failed immediately.
+  Simulating 40 000 points at τ = −0.6 confirms it for both new families —
+  Joe's own upper-tail asymmetry is sharper than GH's at the same τ (plain
+  Joe: corner mass ≈0.083 at (1,1) vs. ≈0.030 at (0,0); plain GH: ≈0.072 vs.
+  ≈0.047), so Joe reproduces the pilot's own ≈2.7× corner-mass ratio at the
+  pilot's own threshold (0.1), while GH needed a tighter corner threshold
+  (0.03) for the same ≥2× separation.
+- **Registration.** `CopulaEnum.GH90`/`GH270`/`JOE90`/`JOE270` (IDs 22–25);
+  `reachable_tau_bounds()` is `None` for all four (nothing narrows the
+  registered range). No hardcoded family list needed updating beyond the
+  count test: `pmcprg.copulas.__init__` derives its public API from
+  `CopulaEnum` directly, and `test_pdf_array.py`'s per-family τ picker
+  already handled a negative-τ wide-span family generically (the pilot's own
+  fix, `tau = 0.4 if tau_max > 0.0 else -0.4`, needed no further change).
+  `test_copulas.py::test_available_count` updated 21 → 25.
+- **Tests.** `pmcprg/tests/test_rotated_gh.py`, `pmcprg/tests/test_rotated_joe.py`
+  (registration, boundary rejection, the VineCopula identity, h/h⁻¹
+  round-trips, θ(τ) against the base family, sampling's realised τ and
+  corner asymmetry, `fit` recovery, `fit_best`); `test_copula_limits.py`
+  and its reference file extended with GH90/GH270/Joe90/Joe270 at the same
+  τ grid as GH/Joe themselves, negated (116 entries, 4176 rows total; the
+  regenerated file's diff against the pre-existing one is pure addition —
+  zero changed bytes in any prior entry, including Clayton90/270).
+  `ruff check pmcprg` clean; the full fast suite passes (3691 passed, 33
+  skipped, 267 deselected `slow`); every existing family (including plain
+  GH, Joe and Clayton90/270) is untouched.
+
+### Added — Godambe's (IFM) information for a copula τ fitted inside ICE alongside re-estimated margins (FR-4)
+
+- **`ice_godambe_tau_se(model, Y, pairs=None)`** (new module `pmcprg.pmc._godambe`),
+  the second of FR-4's "Reste" three ranked options for a copula parameter's
+  standard error inside ICE (after Oakes' identity, `pmcprg.pmc._oakes`;
+  Lystig & Hughes 2002 remains out of scope): Joe's (2005) Inference
+  Functions for Margins / Godambe sandwich, `Avar(η̂, θ̂) = D⁻¹ M D⁻ᵀ` for the
+  joint estimating-equation vector `g(η, θ)` stacking the margin
+  weighted-MLE scores (η, weighted by the ICE E-step's `γ_n(k)`) and the
+  copula score (θ = τ, weighted by `ξ_n(i, j)`). Unlike Oakes' identity,
+  which corrects for `ξ̂`'s own latent-state uncertainty but assumes margins
+  are fixed, this targets the complementary gap `pmcprg.copulas._stderr`'s
+  own docstring names explicitly: margins re-estimated inside ICE (`dist ==
+  "norm"` state margins, `fit_margins=True`) whose estimation error is
+  correlated with the copula score through the pseudo-observations they
+  build — the missing "IFM Godambe matrix" that module says it does not
+  provide. Pilot scope: K = 2, `margin_structure == "state"`, Gaussian
+  margins, **Gauss** copula only, one pair at a time; `D`'s margin block is
+  closed-form (elementary Gaussian weighted-MLE curvature), its
+  margin/copula cross-block (the correction itself) and copula block are
+  central finite differences in the same working coordinates
+  (`pmcprg.pmc._oakes`'s ψ for τ, `(μ, log σ)` for margins) the sibling
+  modules already use.
+- Monte-Carlo coverage (`pmcprg.tests.test_fr4_ice_godambe`, R = 300, N =
+  600, τ = 0.6, pair (0, 0), `fit_margins=True`): on the package's standard
+  K = 2 fixture (states overlap a great deal), SE ratio (RMS reported /
+  empirical SD) 0.58 (Godambe) vs 0.49 (Oakes) vs 0.40 (naive sandwich); 95 %
+  coverage 0.74 vs 0.68 vs 0.58; 90 % coverage 0.67 vs 0.60 vs 0.52. On a
+  well-separated-states variant (near-hard classification, isolating the
+  margin-reestimation channel from Oakes' latent-state channel), Godambe's
+  coverage is close to nominal: ratio 0.86, 95 % coverage 0.91, 90 %
+  coverage 0.83 — vs ratio ≈ 0.48 and coverage ≈ 0.53-0.64 for both Oakes
+  and the naive sandwich in that regime. Godambe beats both alternatives in
+  every case measured, and reaches near-nominal coverage once the E-step's
+  own latent-state ambiguity (Oakes' own channel, not extended here to the
+  margins) is not the dominant source of uncertainty — an identified,
+  documented next step, not a defect of the pilot.
+
 ### Added — Rosenblatt-transform goodness-of-fit test for a copula family (FR-10)
 
 - **`rosenblatt_gof_test(x, y, family_cls, ...)`** (new module

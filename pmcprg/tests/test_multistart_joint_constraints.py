@@ -79,8 +79,18 @@ def test_accepted_pairs_are_returned_untouched():
             assert (out is params) == (not _refused(float(tau), float(delta)))
             n_accepted += out is params
     assert n_accepted > 100
+    # Every family with BB1's joint δ/τ constraint — BB1 itself and its
+    # 90°/270° rotations (audit FR-8, BB1 round: RotatedCopula delegates
+    # constructible_params to the base class, τ negated both ways) — is
+    # excluded here: an arbitrary {"tau_k": 0.3, "df": 4.0} is off-domain
+    # for their δ-vs-τ formula (no "delta" key, and 0.3 is outside BB190/
+    # BB1270's own *negative* registered range), so it is not a case where
+    # the hook's identity contract is expected to hold. Derived from the
+    # registry (``PARAMETERS_SET_NAME``) rather than named one by one, so a
+    # future family with the same joint constraint is picked up here too.
+    _has_delta = [e for e in CopulaEnum if "delta" in e.value.PARAMETERS_SET_NAME]
     for entry in CopulaEnum:
-        if entry is not CopulaEnum.BB1:
+        if entry not in _has_delta:
             params = {"tau_k": 0.3, "df": 4.0}
             assert entry.klass.constructible_params(params) is params
 

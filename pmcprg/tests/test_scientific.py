@@ -40,7 +40,15 @@ def _registered_families() -> list:
         cls = getattr(importlib.import_module(meta.MODULE), meta.CLASS_NAME)
         tau_min, tau_max = meta.TAU_MIN_MAX
         tau = float(np.clip(_TARGET_TAU, tau_min, tau_max))
-        params.append(pytest.param(cls(tau_k=tau), id=meta.SHORT_NAME))
+        # constructible_params (identity for every family without a joint
+        # τ/extra-parameter constraint) repairs a clipped τ that lands where
+        # the default extra parameter is inadmissible — BB190/BB1270 (audit
+        # FR-8, BB1 round): clipping 0.5 into their negative range lands at
+        # −EPS, where the default δ = 1.5 needs θ_base > 0 at τ_base ≈ 0,
+        # i.e. δ ≈ 1, exactly the same joint constraint BB1 itself needed
+        # this hook for.
+        cop_params = cls.constructible_params({"tau_k": tau})
+        params.append(pytest.param(cls(**cop_params), id=meta.SHORT_NAME))
     return params
 
 

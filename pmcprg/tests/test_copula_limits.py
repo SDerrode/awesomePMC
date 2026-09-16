@@ -171,6 +171,9 @@ _REF_C = {
     "SGH": _survival(_c_gh), "SJoe": _survival(_c_joe),
     "Galambos": _c_galambos, "HuslerReiss": _c_husler_reiss,
     "Clayton90": _rotated_90(_c_clayton), "Clayton270": _rotated_270(_c_clayton),
+    "GH90": _rotated_90(_c_gh), "GH270": _rotated_270(_c_gh),
+    "Joe90": _rotated_90(_c_joe), "Joe270": _rotated_270(_c_joe),
+    "BB190": _rotated_90(_c_bb1), "BB1270": _rotated_270(_c_bb1),
 }
 
 
@@ -258,6 +261,9 @@ _TAIL_TAUS = {
     "Gauss": (-0.7, 0.3, 0.9), "Student": (-0.7, 0.3, 0.95),
     "Galambos": (0.3, 0.7, 0.95), "HuslerReiss": (0.3, 0.7, 0.95),
     "Clayton90": (-0.3, -0.7, -0.95), "Clayton270": (-0.3, -0.7, -0.95),
+    "GH90": (-0.3, -0.7, -0.95), "GH270": (-0.3, -0.7, -0.95),
+    "Joe90": (-0.3, -0.7, -0.95), "Joe270": (-0.3, -0.7, -0.95),
+    "BB190": (-0.4, -0.7, -0.9), "BB1270": (-0.4, -0.7, -0.9),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -268,6 +274,8 @@ _INDEP_TAUS = {
     "Gauss": (-1e-8, 1e-12, 1e-4),
     "Galambos": (1e-12, 1e-8, 1e-4), "HuslerReiss": (1e-12, 1e-8, 1e-4),
     "Clayton90": (-1e-4, -1e-8, -1e-12), "Clayton270": (-1e-4, -1e-8, -1e-12),
+    "GH90": (-1e-4, -1e-8, -1e-12), "GH270": (-1e-4, -1e-8, -1e-12),
+    "Joe90": (-1e-4, -1e-8, -1e-12), "Joe270": (-1e-4, -1e-8, -1e-12),
 }
 
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)

@@ -10,6 +10,7 @@ ones on the identical family/τ/N grid, plus a wall-clock comparison — see
 CHANGELOG.md for the full-scale numbers.
 """
 import time
+import zlib
 
 import numpy as np
 import pytest
@@ -23,11 +24,25 @@ from pmcprg.copulas import (
     CopulaPlackett,
     CopulaProduct,
 )
+
+
 from pmcprg.diagnostics.radial_symmetry import (
     RadialSymmetryResult,
     radial_symmetry_statistic,
     radial_symmetry_test,
 )
+
+
+def _stable_seed(*parts) -> int:
+    """A seed derived from ``parts``, stable across interpreter runs.
+
+    Python's ``hash()`` of a str (or a tuple containing one) is salted at
+    process start (``PYTHONHASHSEED``), so a test seeded from it draws a
+    different Monte-Carlo sample every run — a size/power study run close to
+    its threshold then fails intermittently for no code reason. CRC32 has no
+    such salt.
+    """
+    return zlib.crc32(repr(parts).encode()) % 1000
 
 
 def test_result_fields_and_types():
@@ -126,7 +141,7 @@ def _rejection_rate(family_cls, tau, n, n_reps, B, alpha, seed0, bootstrap="para
 ])
 def test_size_study_symmetric_families_near_nominal(family_cls, tau):
     rate = _rejection_rate(family_cls, tau, n=150, n_reps=60, B=60, alpha=0.10,
-                            seed0=hash((family_cls.__name__, tau)) % 1000)
+                            seed0=_stable_seed(family_cls.__name__, tau))
     # 60 replicates at nominal 10 %: binomial sd ~= 0.039, so a generous band.
     assert rate < 0.30, f"{family_cls.__name__} tau={tau}: over-rejected at {rate:.3f}"
 
@@ -137,7 +152,7 @@ def test_size_study_symmetric_families_near_nominal(family_cls, tau):
 ])
 def test_power_study_asymmetric_families_reject_more_often(family_cls, tau):
     rate = _rejection_rate(family_cls, tau, n=200, n_reps=60, B=60, alpha=0.10,
-                            seed0=hash((family_cls.__name__, tau, "power")) % 1000)
+                            seed0=_stable_seed(family_cls.__name__, tau, "power"))
     assert rate > 0.30, f"{family_cls.__name__} tau={tau}: power too low at {rate:.3f}"
 
 
@@ -249,7 +264,7 @@ def test_multiplier_bootstrap_is_much_faster_than_parametric():
 ])
 def test_multiplier_bootstrap_size_study_symmetric_families_near_nominal(family_cls, tau):
     rate = _rejection_rate(family_cls, tau, n=150, n_reps=60, B=60, alpha=0.10,
-                            seed0=hash((family_cls.__name__, tau, "mult-size")) % 1000,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-size"),
                             bootstrap="multiplier")
     # 60 replicates at nominal 10 %: binomial sd ~= 0.039, so a generous band.
     assert rate < 0.30, f"{family_cls.__name__} tau={tau}: over-rejected at {rate:.3f}"
@@ -262,7 +277,7 @@ def test_multiplier_bootstrap_size_study_symmetric_families_near_nominal(family_
 ])
 def test_multiplier_bootstrap_power_study_asymmetric_families_reject_more_often(family_cls, tau):
     rate = _rejection_rate(family_cls, tau, n=200, n_reps=60, B=60, alpha=0.10,
-                            seed0=hash((family_cls.__name__, tau, "mult-power")) % 1000,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-power"),
                             bootstrap="multiplier")
     assert rate > 0.30, f"{family_cls.__name__} tau={tau}: power too low at {rate:.3f}"
 
@@ -284,7 +299,7 @@ def test_multiplier_bootstrap_power_study_asymmetric_families_reject_more_often(
 ])
 def test_multiplier_bootstrap_full_size_study(family_cls, tau):
     rate = _rejection_rate(family_cls, tau, n=200, n_reps=100, B=150, alpha=0.05,
-                            seed0=hash((family_cls.__name__, tau, "mult-full-size")) % 1000,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-full-size"),
                             bootstrap="multiplier")
     assert 0.0 <= rate <= 0.15, f"{family_cls.__name__} tau={tau}: rate={rate:.3f}"
 
@@ -300,7 +315,7 @@ def test_multiplier_bootstrap_full_size_study(family_cls, tau):
 ])
 def test_multiplier_bootstrap_full_power_study(family_cls, tau, n):
     rate = _rejection_rate(family_cls, tau, n=n, n_reps=100, B=150, alpha=0.05,
-                            seed0=hash((family_cls.__name__, tau, n, "mult-full-power")) % 1000,
+                            seed0=_stable_seed(family_cls.__name__, tau, n, "mult-full-power"),
                             bootstrap="multiplier")
     # Power should grow with tau and N, as observed for the parametric
     # bootstrap (CHANGELOG.md); this is a sanity floor, not a precise claim.

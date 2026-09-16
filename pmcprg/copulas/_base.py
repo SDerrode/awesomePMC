@@ -127,6 +127,12 @@ class CopulaEnum(CopulaDataMixin, Enum):
     HUSLER_REISS     = 19, "HuslerReiss", "Hüsler-Reiss",          "CopulaHuslerReiss", True, ["tau_k"],        [0.0 + EPS, 1.0],              "pmcprg.copulas.extreme_value.husler_reiss"
     CLAYTON90        = 20, "Clayton90", "Clayton (90° rotation)",  "CopulaClayton90",   True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
     CLAYTON270       = 21, "Clayton270", "Clayton (270° rotation)", "CopulaClayton270", True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
+    GH90             = 22, "GH90", "Gumbel-Hougaard (90° rotation)",  "CopulaGH90",     True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
+    GH270            = 23, "GH270", "Gumbel-Hougaard (270° rotation)", "CopulaGH270",   True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
+    JOE90            = 24, "Joe90", "Joe (90° rotation)",              "CopulaJoe90",   True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
+    JOE270           = 25, "Joe270", "Joe (270° rotation)",            "CopulaJoe270",  True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
+    BB190            = 26, "BB190", "BB1 (90° rotation)",              "CopulaBB190",   True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],          "pmcprg.copulas.archimedean.rotated"
+    BB1270           = 27, "BB1270", "BB1 (270° rotation)",            "CopulaBB1270",  True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],          "pmcprg.copulas.archimedean.rotated"
 
     def describe(self):
         return self.name, self.value

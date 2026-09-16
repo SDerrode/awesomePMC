@@ -172,7 +172,22 @@ def _two_parameter_spec(cls, entry, tau_start: float):
       finds interior optima whatever the scale of θ; ``(θ, log δ)`` then
       reaches the Gumbel limit θ → θ_floor, which the logarithm puts at the
       end of a long flat valley (on Gumbel data, τ = 0.6, n = 1500, the first
-      stage alone stopped 7·10⁻³ nat short of it).
+      stage alone stopped 7·10⁻³ nat short of it). This ``τ = 1 − 2/(δ(θ+2))``
+      map is BB1's own — built for a *positive* τ range. A rotated BB1
+      (``CopulaBB190``/``CopulaBB1270``, audit FR-8, BB1 round) registers a
+      *negative* range (only τ's sign flips under a 90°/270° rotation), so
+      the θ/δ box is built on the shadow problem ``−τ`` and the fitted τ is
+      negated back in ``params_of``: without this, the θ-bound built from
+      the padded τ *ceiling* (``2/(1−τ_max) − 2``, meant to stay finite as
+      τ_max → 1) degenerates on a range whose "ceiling" is ≈0 instead, and
+      the optimiser can return a τ̂ outside the family's own registered
+      range (found in practice fitting ``CopulaBB190``, not merely
+      suspected: ``CopulaVirt.fit`` then failed to reconstruct the copula
+      from that τ̂). ``CopulaBB190``/``CopulaBB1270`` additionally override
+      ``fit`` to reuse BB1's own already-validated fit via the reflection
+      identity instead of this routine directly; this sign-awareness is
+      still needed here because ICE's M-step
+      (``pmcprg.pmc.ice._fit_copula_params``) calls this function directly.
     * any other extra parameter: ``p = (τ, extra)`` in the registered boxes,
       projected by ``cls.constrain_params``.
 
@@ -211,25 +226,34 @@ def _two_parameter_spec(cls, entry, tau_start: float):
         return p0, stages, params_of
 
     if name == "delta":
+        # BB1's own (θ, δ) ↔ τ map is built for a positive τ range; a rotated
+        # BB1 registers a negative one (module docstring above). Solve the
+        # shadow problem on −τ (sign = −1) when the registered range is
+        # entirely ≤ 0, and negate τ back in ``params_of`` — everything else
+        # below is exactly BB1's own positive-τ derivation, just applied to
+        # ``(lo_p, hi_p, t0_p) = (−hi, −lo, −t0)`` instead of ``(lo, hi, t0)``.
+        sign = -1.0 if hi <= 0.0 else 1.0
+        hi_p, t0_p = (-lo, -t0) if sign < 0.0 else (hi, t0)
         theta_floor = float(getattr(cls, "_THETA_FLOOR", 1e-6))
         # θ at the padded τ ceiling with δ = 1; a larger δ only raises τ, and
         # τ = 1 − 2/(δ(θ + 2)) stays < 1 on the whole box.
-        theta_b = (theta_floor, max(2.0 / (1.0 - hi) - 2.0, 10.0 * theta_floor))
+        theta_b = (theta_floor, max(2.0 / (1.0 - hi_p) - 2.0, 10.0 * theta_floor))
         delta_b = (xlo, xhi)
         # Start at (τ_start, δ_init) when that pair is admissible, else in the
         # middle of the admissible δ-interval [1, 1/(1 − τ_start)).
         delta0 = xinit
-        if 2.0 / (delta0 * (1.0 - t0)) - 2.0 <= 10.0 * theta_floor:
-            delta0 = 0.5 * (1.0 + 1.0 / (1.0 - t0))
+        if 2.0 / (delta0 * (1.0 - t0_p)) - 2.0 <= 10.0 * theta_floor:
+            delta0 = 0.5 * (1.0 + 1.0 / (1.0 - t0_p))
         delta0 = clip(delta0, delta_b)
-        p0 = (clip(2.0 / (delta0 * (1.0 - t0)) - 2.0, theta_b), delta0)
+        p0 = (clip(2.0 / (delta0 * (1.0 - t0_p)) - 2.0, theta_b), delta0)
 
         def params_of(p) -> dict:
             theta, delta = clip(p[0], theta_b), clip(p[1], delta_b)
             # τ = (δθ + 2(δ − 1)) / (δ(θ + 2)): the value of 1 − 2/(δ(θ + 2))
-            # without its cancellation near independence.
+            # without its cancellation near independence; negated back to the
+            # registered sign when solving the shadow (rotated) problem.
             tau = (delta * theta + 2.0 * (delta - 1.0)) / (delta * (theta + 2.0))
-            return {"tau_k": tau, "delta": delta}
+            return {"tau_k": sign * tau, "delta": delta}
 
         log_theta_b = (math.log(theta_b[0]), math.log(theta_b[1]))
         log_delta_b = (math.log(delta_b[0]), math.log(delta_b[1]))

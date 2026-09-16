@@ -7,6 +7,8 @@ fitted family is wrong), not enough to pin the level to two digits; the full
 study lives in the commit message, following the same convention as
 ``test_radial_symmetry.py``.
 """
+import zlib
+
 import numpy as np
 import pytest
 
@@ -23,6 +25,18 @@ from pmcprg.diagnostics.rosenblatt import (
     rosenblatt_statistic,
     rosenblatt_transform,
 )
+
+
+def _stable_seed(*parts) -> int:
+    """A seed derived from ``parts``, stable across interpreter runs.
+
+    Python's ``hash()`` of a str (or a tuple containing one) is salted at
+    process start (``PYTHONHASHSEED``), so a test seeded from it draws a
+    different Monte-Carlo sample every run — a size/power study run close to
+    its threshold then fails intermittently for no code reason. CRC32 has no
+    such salt.
+    """
+    return zlib.crc32(repr(parts).encode()) % 1000
 
 
 def test_result_fields_and_types():
@@ -161,7 +175,7 @@ def test_size_study_true_family_near_nominal(family_cls, tau):
     # is radially symmetric (Gauss, Frank) or not (Clayton) — unlike the
     # radial-symmetry test, this one is not targeted at symmetry.
     rate = _rejection_rate(family_cls, tau, family_cls, n=150, n_reps=60, B=60,
-                            alpha=0.10, seed0=hash((family_cls.__name__, tau)) % 1000)
+                            alpha=0.10, seed0=_stable_seed(family_cls.__name__, tau))
     # 60 replicates at nominal 10 %: binomial sd ~= 0.039, so a generous band.
     assert rate < 0.35, f"{family_cls.__name__} tau={tau}: over-rejected at {rate:.3f}"
 
@@ -173,7 +187,7 @@ def test_size_study_true_family_near_nominal(family_cls, tau):
 def test_power_study_wrong_family_rejects_more_often(true_cls, tau, fit_cls, n):
     rate = _rejection_rate(true_cls, tau, fit_cls, n=n, n_reps=60, B=60,
                             alpha=0.10,
-                            seed0=hash((true_cls.__name__, tau, fit_cls.__name__)) % 1000)
+                            seed0=_stable_seed(true_cls.__name__, tau, fit_cls.__name__))
     assert rate > 0.30, (
         f"true={true_cls.__name__} tau={tau} fit={fit_cls.__name__} n={n}: "
         f"power too low at {rate:.3f}"
@@ -189,7 +203,7 @@ def test_power_study_wrong_family_rejects_more_often(true_cls, tau, fit_cls, n):
 def test_full_size_study(family_cls, tau):
     rate = _rejection_rate(family_cls, tau, family_cls, n=200, n_reps=200, B=150,
                             alpha=0.05,
-                            seed0=hash((family_cls.__name__, tau, "full-size")) % 1000)
+                            seed0=_stable_seed(family_cls.__name__, tau, "full-size"))
     assert 0.0 <= rate <= 0.15, f"{family_cls.__name__} tau={tau}: rate={rate:.3f}"
 
 
@@ -204,7 +218,7 @@ def test_full_size_study(family_cls, tau):
 ])
 def test_full_power_study(true_cls, tau, fit_cls, n):
     rate = _rejection_rate(true_cls, tau, fit_cls, n=n, n_reps=200, B=150, alpha=0.05,
-                            seed0=hash((true_cls.__name__, tau, fit_cls.__name__, n, "full")) % 1000)
+                            seed0=_stable_seed(true_cls.__name__, tau, fit_cls.__name__, n, "full"))
     assert 0.0 <= rate <= 1.0, (
         f"true={true_cls.__name__} tau={tau} fit={fit_cls.__name__} N={n}: rate={rate:.3f}"
     )

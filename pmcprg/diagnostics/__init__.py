@@ -48,6 +48,14 @@ rosenblatt_gof_test               Beaudoin 2009, audit FR-10). Reduces "does
     square?", tested by a Cramer-von Mises statistic against Pi(u,v) = u*v,
     calibrated by a parametric bootstrap that refits theta on every
     replicate. Unweighted only, same reason as radial_symmetry_test.
+ExchangeabilityResult,          : screening test for exchangeability (Genest,
+exchangeability_statistic,        Neslehova & Quessy 2012, audit FR-10,
+exchangeability_test              fourth item) — C(u,v) = C(v,u)? A
+    Cramer-von Mises statistic on the empirical copula and its transpose,
+    calibrated by a parametric (Gaussian-surrogate) bootstrap, the same
+    skeleton as radial_symmetry_test with the reflected reference swapped
+    for the transposed one. Unweighted only, same reason as
+    radial_symmetry_test.
 margin_cdfs, copula_pseudo_obs, : pseudo-observations and margin samples of a
 margin_pit_dual, margin_keys,     fitted chain, for state margins f_i and for
 margin_of, margin_sample          the pair margins f_ij of a general PMC
@@ -60,6 +68,11 @@ margin_of, margin_sample          the pair margins f_ij of a general PMC
 from pmcprg.diagnostics.bootstrap import (
     BootstrapResult,
     parametric_bootstrap,
+)
+from pmcprg.diagnostics.exchangeability import (
+    ExchangeabilityResult,
+    exchangeability_statistic,
+    exchangeability_test,
 )
 from pmcprg.diagnostics.model_selection import (
     ComparisonMatrix,
@@ -137,4 +150,7 @@ __all__ = [
     "rosenblatt_gof_test",
     "rosenblatt_statistic",
     "rosenblatt_transform",
+    "ExchangeabilityResult",
+    "exchangeability_statistic",
+    "exchangeability_test",
 ]

@@ -61,14 +61,30 @@ never form the complement in floating point (same numerical motivation as
 so the loss of precision near u = 0 or v = 1 is half as severe as the 180°
 case's simultaneous (1−u, 1−v)).
 
-Concrete subclasses (this round, FR-8 pilot): ``CopulaClayton90``,
-``CopulaClayton270``. GH, Joe, BB1, A12 and A14 are explicitly out of scope
-this round; GH and Joe already expose the kernel interface (used by
-``SurvivalGH``/``SurvivalJoe``) and can be added as two-line subclasses, same
-as Clayton below. BB1, A12 and A14 do not yet expose it — that is the
-prerequisite for a fast follow, not a defect of this mechanism (see the
-module docstring of ``survival.py``, which stopped at the same three
-families for the same reason).
+Concrete subclasses: ``CopulaClayton90``/``CopulaClayton270`` (FR-8 pilot);
+``CopulaGH90``/``CopulaGH270``/``CopulaJoe90``/``CopulaJoe270`` (FR-8, second
+round) — both GH and Joe already exposed the kernel interface (used by
+``SurvivalGH``/``SurvivalJoe``), so each pair is the same two-line subclass
+as Clayton's, exactly as the pilot's module docstring predicted; and
+``CopulaBB190``/``CopulaBB1270`` (FR-8, third round) — BB1 did *not* expose
+the kernel interface, so ``pmcprg.copulas.archimedean.bb1`` was refactored
+first (its ``cdf``/``pdf``/``conditional_cdf`` are now built from
+``_kcoord``/``_k_logpdf``/``_k_cdf``/``_k_h``, exactly like GH/Joe, with the
+existing tests passing bit-identically) before the two-line subclass pattern
+below could apply to it too. BB1's own kernel coordinate turned out to
+coincide with GH's (``ka = log u``, not Joe's ``log(1 − u)``), since BB1's
+generator ``(t^{-θ} − 1)^δ`` is built from ``t`` directly; but BB1's
+``_k_inv_h`` has no closed form (module docstring of ``bb1.py``) and solves
+``h(v|u) = w`` by Brent's method on the kernel coordinate itself rather than
+a closed-form Newton step, which is still a genuine kernel-interface
+implementation, not a compromise on the mechanism here. Because BB1 carries
+a second parameter (``delta``), it also needed :meth:`RotatedCopula.
+constrain_params`/:meth:`RotatedCopula.constructible_params` overrides
+(below) that Clayton/GH/Joe's rotations never needed (their base classes'
+versions are the identity). A12 and A14 remain explicitly out of scope this
+round — they do not yet expose the kernel interface either, and were not
+touched (see the module docstring of ``survival.py``, which stopped at the
+same three families for the same reason).
 
 Reference: Brechmann, E. C. & Schepsmeier, U. (2013). *Journal of Statistical
 Software* 52(3); Joe, H. (2014). *Dependence Modeling with Copulas*, Chapman
@@ -83,7 +99,11 @@ import logging
 import numpy as np
 
 from pmcprg.copulas._base               import CopulaVirt
+from pmcprg.copulas._fit                import FitResult
+from pmcprg.copulas.archimedean.bb1     import CopulaBB1
 from pmcprg.copulas.archimedean.clayton import CopulaClayton
+from pmcprg.copulas.archimedean.gumbel  import CopulaGH
+from pmcprg.copulas.archimedean.joe     import CopulaJoe
 from pmcprg.numerics                 import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
@@ -141,6 +161,42 @@ class RotatedCopula(CopulaVirt):
         uv = np.asarray(uv, dtype=float)
         return (np.clip(uv[:, 0], EPS, ONE_MINUS_EPS),
                 np.clip(uv[:, 1], EPS, ONE_MINUS_EPS))
+
+    # ------------------------------------------------------------------
+    # Joint-constraint delegation (audit G1, needed once a base family has
+    # more than τ alone — BB1's ``delta``). ``tau_k`` is negated both ways
+    # around the base family's own hook, since the rotated family's public τ
+    # is minus the base's; for Clayton/GH/Joe, whose base ``constrain_params``/
+    # ``constructible_params`` are :class:`CopulaVirt`'s identity, this
+    # round-trips to the same dict (negation is exact), so nothing changes
+    # for the existing one-parameter rotations.
+    # ------------------------------------------------------------------
+    @classmethod
+    def constrain_params(cls, params: dict) -> dict:
+        base_params = dict(params)
+        base_params['tau_k'] = -base_params['tau_k']
+        base_params = cls._base_class.constrain_params(base_params)
+        base_params['tau_k'] = -base_params['tau_k']
+        return base_params
+
+    @classmethod
+    def constructible_params(cls, params: dict) -> dict:
+        """``params`` itself, unchanged, when the base's own hook would not
+        touch it either — :meth:`CopulaVirt.constructible_params`'s identity
+        contract (``params`` object returned as-is, no copy) matters to
+        callers that compare by identity (e.g. the multistart machinery's
+        own "was this pair repaired?" check), so it is preserved through the
+        τ-negation round-trip: only when the base's repaired dict actually
+        differs from what was handed to it is a new (negated) dict built and
+        returned."""
+        base_params = dict(params)
+        base_params['tau_k'] = -base_params['tau_k']
+        repaired = cls._base_class.constructible_params(base_params)
+        if repaired is base_params:
+            return params
+        repaired = dict(repaired)
+        repaired['tau_k'] = -repaired['tau_k']
+        return repaired
 
     # ------------------------------------------------------------------
     # Per-angle formulas — overridden by RotatedCopula90 / RotatedCopula270
@@ -296,12 +352,159 @@ class CopulaClayton270(RotatedCopula270):
     _base_class = CopulaClayton
 
 
+# ---------------------------------------------------------------------------
+# Concrete rotated copulas — GH and Joe (FR-8, second round)
+# ---------------------------------------------------------------------------
+#
+# Both already expose the kernel interface (used by SurvivalGH/SurvivalJoe
+# in survival.py), so — exactly as the pilot's own module docstring
+# predicted — each is the same two-line subclass as Clayton above.
+
+class CopulaGH90(RotatedCopula90):
+    """90°-rotated Gumbel-Hougaard copula — negative dependence, mass
+    concentrated near the lower-right corner (u→1, v→0).
+
+    τ = −τ_GH(θ), θ built from |τ| at the base GH. λ_L = λ_U = 0 in the
+    usual diagonal sense (see :meth:`RotatedCopula.tail_dependence`).
+    """
+    _base_class = CopulaGH
+
+
+class CopulaGH270(RotatedCopula270):
+    """270°-rotated Gumbel-Hougaard copula — negative dependence, mass
+    concentrated near the upper-left corner (u→0, v→1).
+
+    Same τ(θ) map as :class:`CopulaGH90` (both negate the base τ), but a
+    *different* copula: the reflection acts on the other margin, so the two
+    families put their residual asymmetric mass on opposite corners.
+    """
+    _base_class = CopulaGH
+
+
+class CopulaJoe90(RotatedCopula90):
+    """90°-rotated Joe copula — negative dependence, mass concentrated near
+    the lower-right corner (u→1, v→0).
+
+    τ = −τ_Joe(θ), θ built from |τ| at the base Joe. λ_L = λ_U = 0 in the
+    usual diagonal sense (see :meth:`RotatedCopula.tail_dependence`).
+    """
+    _base_class = CopulaJoe
+
+
+class CopulaJoe270(RotatedCopula270):
+    """270°-rotated Joe copula — negative dependence, mass concentrated near
+    the upper-left corner (u→0, v→1).
+
+    Same τ(θ) map as :class:`CopulaJoe90` (both negate the base τ), but a
+    *different* copula: the reflection acts on the other margin, so the two
+    families put their residual asymmetric mass on opposite corners.
+    """
+    _base_class = CopulaJoe
+
+
+# ---------------------------------------------------------------------------
+# Concrete rotated copulas — BB1 (FR-8, third round)
+# ---------------------------------------------------------------------------
+#
+# BB1 needed its kernel interface added first (``bb1.py``, this round) before
+# the same two-line subclass pattern above could apply. Unlike Clayton/GH/Joe,
+# BB1 carries a second free parameter (``delta``), passed through unchanged by
+# ``RotatedCopula._update_params``, and its ``constrain_params``/
+# ``constructible_params`` (module docstring) are genuinely exercised here —
+# BB1 is the first base family for which they are not the identity.
+#
+# BB1's own (unrotated) tail asymmetry is *two-sided* (λ_L, λ_U both > 0 in
+# general — a Joe-Clayton hybrid, module docstring of ``bb1.py``), unlike
+# Clayton (pure lower) or GH/Joe (pure upper): a plain BB1 sample therefore
+# has mass concentrated near *both* (0,0) and (1,1), in a ratio set by
+# (τ, δ) rather than fixed. The 90°/270° rotations still each reflect only
+# one margin, so BB190 pushes the (0,0) mass to (1,0) and the (1,1) mass to
+# (0,1) — both corners populated, mirrored across the anti-diagonal from
+# BB1270 — rather than concentrating in a single corner the way Clayton90/270
+# or GH90/270/Joe90/270 do. See ``test_rotated_bb1.py`` for the sampling
+# check that measures this directly instead of assuming a single-corner
+# signature.
+
+class CopulaBB190(RotatedCopula90):
+    """90°-rotated BB1 copula — negative dependence, with residual mass in
+    *both* the lower-right (u→1, v→0) and upper-left (u→0, v→1) corners (the
+    90° reflection of BB1's own two-sided tail asymmetry — see the section
+    docstring above), not a single dominant corner as for the one-signed
+    rotated families.
+    """
+    _base_class = CopulaBB1
+
+    @classmethod
+    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+        """Delegate to :meth:`CopulaBB1.fit` on the ``(1 − u, v)``-reflected
+        data — module docstring: ``(U,V) ~ BB190`` iff ``(1−U,V) ~ BB1`` — τ̂
+        negated back and rewrapped as ``CopulaBB190``.
+
+        This sidesteps ``pmcprg.copulas._fit._fit_two_parameter_mle``'s
+        ``delta`` branch, whose ``τ = (δθ + 2(δ−1))/(δ(θ+2))`` parametrisation
+        (and its θ-bound built from the padded τ *ceiling*) is BB1's own,
+        hardcoded to a positive τ range; on BB190/BB1270's negative range it
+        returned a τ̂ *outside the registered range* (found in practice while
+        exercising this fit, exactly what this round set out to check) rather
+        than raising, because the box it searches never matches the sign of
+        the family it is fitting. Reusing BB1's own already-validated 2-D
+        MLE via the reflection identity avoids that mismatch entirely instead
+        of teaching the generic two-parameter fit about a rotation's sign.
+        """
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
+        reflected = np.column_stack([1.0 - data[:, 0], data[:, 1]])
+        base_fit = CopulaBB1.fit(reflected, method=method)
+        tau_k = -base_fit.tau_k
+        cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
+        uv = np.column_stack([1.0 - base_fit.uv[:, 0], base_fit.uv[:, 1]])
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            log_lik = float(np.sum(cop.logpdf_array(uv)))
+        return FitResult(copula=cop, method='mle', tau_k=tau_k,
+                         log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
+                         converged=base_fit.converged)
+
+
+class CopulaBB1270(RotatedCopula270):
+    """270°-rotated BB1 copula — same τ(θ, δ) map as :class:`CopulaBB190`
+    (both negate the base τ, δ unchanged), but a *different* copula: the
+    reflection acts on the other margin, so the two corner masses are
+    mirrored across the anti-diagonal relative to BB190's.
+    """
+    _base_class = CopulaBB1
+
+    @classmethod
+    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+        """Delegate to :meth:`CopulaBB1.fit` on the ``(u, 1 − v)``-reflected
+        data, mirroring :meth:`CopulaBB190.fit` (see its docstring for why)."""
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
+        reflected = np.column_stack([data[:, 0], 1.0 - data[:, 1]])
+        base_fit = CopulaBB1.fit(reflected, method=method)
+        tau_k = -base_fit.tau_k
+        cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
+        uv = np.column_stack([base_fit.uv[:, 0], 1.0 - base_fit.uv[:, 1]])
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            log_lik = float(np.sum(cop.logpdf_array(uv)))
+        return FitResult(copula=cop, method='mle', tau_k=tau_k,
+                         log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
+                         converged=base_fit.converged)
+
+
 if __name__ == '__main__':
     from pathlib import Path
 
     for cls, name in [
         (CopulaClayton90,  'CopulaClayton90'),
         (CopulaClayton270, 'CopulaClayton270'),
+        (CopulaGH90,       'CopulaGH90'),
+        (CopulaGH270,      'CopulaGH270'),
+        (CopulaJoe90,      'CopulaJoe90'),
+        (CopulaJoe270,     'CopulaJoe270'),
+        (CopulaBB190,      'CopulaBB190'),
+        (CopulaBB1270,     'CopulaBB1270'),
     ]:
         cop = cls(tau_k=-0.5)
         print(f'\n--- {name} ---')
