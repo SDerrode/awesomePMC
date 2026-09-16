@@ -35,7 +35,10 @@ def _params_for(entry: CopulaEnum) -> dict:
         # τ ∈ [1/3, 1) — use a safely interior value
         tau = 0.5
     elif tau_max - tau_min > 0.5:
-        tau = 0.4   # generic positive dependence
+        # Generic interior value, same sign as the family's own dependence:
+        # positive for a one-sided family like Clayton, negative for its
+        # 90°/270° rotations (audit FR-8), whose range is [-1, -EPS].
+        tau = 0.4 if tau_max > 0.0 else -0.4
 
     kwargs: dict = {"tau_k": float(tau)}
     for name in entry.value.PARAMETERS_SET_NAME:

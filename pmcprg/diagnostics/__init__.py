@@ -40,6 +40,14 @@ radial_symmetry_test              at once excludes Gauss, Student, Frank, FGM
     reflection, calibrated by a parametric (Gaussian-surrogate) bootstrap.
     Unweighted only — see the module docstring on why ξ-weighting has no
     defensible form for this statistic.
+RosenblattGoFResult,            : goodness-of-fit test for a candidate copula
+rosenblatt_transform,             family via its Rosenblatt transform
+rosenblatt_statistic,             (Rosenblatt 1952; Genest, Remillard &
+rosenblatt_gof_test               Beaudoin 2009, audit FR-10). Reduces "does
+    (x, y) follow C_theta?" to "is (u, h(v|u)) independent-uniform on the
+    square?", tested by a Cramer-von Mises statistic against Pi(u,v) = u*v,
+    calibrated by a parametric bootstrap that refits theta on every
+    replicate. Unweighted only, same reason as radial_symmetry_test.
 margin_cdfs, copula_pseudo_obs, : pseudo-observations and margin samples of a
 margin_pit_dual, margin_keys,     fitted chain, for state margins f_i and for
 margin_of, margin_sample          the pair margins f_ij of a general PMC
@@ -83,6 +91,12 @@ from pmcprg.diagnostics.radial_symmetry import (
     radial_symmetry_statistic,
     radial_symmetry_test,
 )
+from pmcprg.diagnostics.rosenblatt import (
+    RosenblattGoFResult,
+    rosenblatt_gof_test,
+    rosenblatt_statistic,
+    rosenblatt_transform,
+)
 from pmcprg.diagnostics.smooth import (
     COMPONENT_NAMES,
     NeymanResult,
@@ -119,4 +133,8 @@ __all__ = [
     "RadialSymmetryResult",
     "radial_symmetry_statistic",
     "radial_symmetry_test",
+    "RosenblattGoFResult",
+    "rosenblatt_gof_test",
+    "rosenblatt_statistic",
+    "rosenblatt_transform",
 ]

@@ -9,6 +9,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Rosenblatt-transform goodness-of-fit test for a copula family (FR-10)
+
+- **`rosenblatt_gof_test(x, y, family_cls, ...)`** (new module
+  `pmcprg.diagnostics.rosenblatt`), the third FR-10 item: a GoF test that
+  "reuses h and h⁻¹" (Rosenblatt 1952; Genest, Rémillard & Beaudoin 2009,
+  doi:10.1016/j.insmatheco.2007.10.005). For pseudo-observations `(û, v̂)`
+  the Rosenblatt transform `(Û, V̂) = (û, h(v̂|û))` — `h(v|u) =
+  copula.conditional_cdf(v, u)`, already implemented for every family — is
+  i.i.d. Uniform([0,1]²) and mutually independent under H0, so testing a
+  candidate family reduces to testing the transformed sample against the
+  independent-uniform reference `Π(u,v) = u·v`. The statistic is a
+  Cramér–von Mises functional evaluated at the sample's own points, `Sₙ = n ·
+  mean_i[Ĝₙ(Ûᵢ,V̂ᵢ) − Ûᵢ·V̂ᵢ]²` (`Ĝₙ` the empirical CDF of the transformed
+  sample), the same skeleton as `radial_symmetry_statistic`'s own CvM
+  statistic with the reflected-empirical-copula reference replaced by the
+  fixed `Π`. Calibrated by a **parametric bootstrap that refits the
+  candidate family on every replicate** (fit `θ̂`, simulate `n` points from
+  `C_θ̂`, refit `θ̂_b`, Rosenblatt-transform with `C_θ̂_b`, recompute `Sₙ⁽ᵇ⁾`) —
+  this is the calibration GRB (2009) themselves use for their own CvM
+  statistics, not a simplification borrowed from elsewhere in this codebase.
+  `mks_1samp` (already in the package, and able to test against any
+  reference CDF including `Π`) was considered and **not** used: it is a
+  Kolmogorov–Smirnov (max-deviation) statistic, with materially lower power
+  than a CvM (average-deviation) statistic against a wrong copula family's
+  diffuse departure from `Π`, and it is not what GRB (2009) actually propose
+  for the Rosenblatt variant the audit cites — see the module docstring's
+  "The test statistic" section for the full reasoning, and its "Honesty
+  about fidelity" section for what is verified by citation vs. by the
+  simulation study below (the exact GRB 2009 formula for this variant is not
+  reproduced verbatim — no internet access from this worktree — the CvM
+  construction here is the natural one their general framework calls for,
+  validated by simulation as the radial-symmetry pilot's own statistic was).
+  New typed result `RosenblattGoFResult` (`statistic, p_value, reject, alpha,
+  n, family, tau_hat, B, n_valid`), unweighted only (same reasoning as
+  `radial_symmetry_test` — no published weighted form of this empirical-CDF
+  functional).
+  **Size study** (N_reps=150, B=100, N=200, true family fitted to itself —
+  by design this test's size should not depend on whether the true family is
+  radially symmetric, unlike `radial_symmetry_test`): Gauss τ=0.3/0.6 →
+  0.053/0.053 at α=0.05, 0.120/0.100 at α=0.10; Clayton τ=0.3/0.6 →
+  0.047/0.053 at α=0.05, 0.087/0.093 at α=0.10; Frank τ=0.3/0.6 →
+  0.067/0.073 at α=0.05, 0.160/0.107 at α=0.10 — all within Monte-Carlo
+  reach of nominal (150 reps: binomial sd ≈ 0.018 at 5%, ≈ 0.024 at 10%),
+  including for Clayton, the one asymmetric family tested, confirming size
+  is not tied to radial symmetry here.
+  **Power study** (N_reps=150, B=100, α=0.05, wrong family fitted): true
+  Clayton / fit Gauss, τ∈{0.2,0.4,0.6} → 0.193/0.520/0.853 at N=100,
+  0.447/0.980/1.000 at N=300 — power rising sharply with both τ and N; true
+  Gumbel-Hougaard / fit Gauss, τ∈{0.2,0.4,0.6} → 0.060/0.073/0.113 at N=100,
+  0.107/0.173/0.160 at N=300 — much weaker (Gauss and GH share the same
+  correlation-driven bulk dependence at moderate τ, so this is the harder
+  misspecification, as expected); true Gauss / fit Frank, τ∈{0.4,0.6} →
+  0.107/0.207 at N=200 — weak but nonzero, again two nearly-radially-similar
+  families. See `pmcprg/tests/test_rosenblatt.py` for fast, reduced-budget
+  versions of both studies (`test_size_study_true_family_near_nominal`,
+  `test_power_study_wrong_family_rejects_more_often`) plus a
+  `@pytest.mark.slow` full-grid mirror of these numbers.
+
+### Added — 90°/270° rotations of Clayton, as a reusable mechanism (FR-8 pilot)
+
+- **The gap.** Clayton, GH, Joe, BB1, A12 and A14 are one-signed: their θ maps
+  only reach τ ≥ 0 (or τ ≥ 1/3 for A12/A14), so none of them can represent
+  negative dependence — the same limitation VineCopula (its rotation codes
+  23–40), vinecopulib, GJRM, VC2copula and gofCopula's `flip` all correct via
+  90°/180°/270° rotations. The 180° case (the survival copula, negating
+  neither margin) was already in this codebase (`archimedean/survival.py`);
+  90° and 270° (negating one margin) were not. This round adds them for
+  **Clayton only**, as a pilot for the generic mechanism the other five
+  families still need.
+- **Generic mechanism, not six one-off classes.** New module
+  `pmcprg/copulas/archimedean/rotated.py`: `RotatedCopula` (shared parameter
+  plumbing — τ negated, every other parameter, e.g. a future BB1 `delta`,
+  passed through unchanged) plus two one-method-per-formula mixins,
+  `RotatedCopula90`/`RotatedCopula270`, composing any base family's existing
+  *kernel interface* (`_kcoord`, `_kcoord_reflected`, `_k_logpdf`, `_k_cdf`,
+  `_k_h`, `_k_inv_h` — the same interface `survival.py`'s 180° rotation
+  already requires) with the (1−u, v) / (u, 1−v) reflection, so the
+  complement is never formed in floating point (same numerical motivation as
+  `survival.py`'s module docstring). `CopulaClayton90`/`CopulaClayton270` are
+  each a two-line subclass setting `_base_class = CopulaClayton`. GH and Joe
+  already expose the kernel interface (used by `SurvivalGH`/`SurvivalJoe`)
+  and would need the same two lines each; BB1, A12 and A14 do not yet expose
+  it (same prerequisite the 180° rotation already stopped at) and are the
+  actual remaining cost of a fast follow, not a limitation of this mechanism.
+- **The two rotations were derived, not assumed, and verified to differ.**
+  C90(u,v) = v − C(1−u,v) and C270(u,v) = u − C(u,1−v) both give
+  τ_rot = −τ_base, but only 270°'s h-function carries a genuine "1 −" term
+  (h270(v|u) = 1 − h(1−v|u)); 90°'s does not (h90(v|u) = h(v|1−u) — the two
+  sign flips from differentiating through the reflected argument cancel).
+  Confirmed numerically: simulating 40 000 points from each at τ = −0.6,
+  Clayton90 concentrates near the lower-right corner (u→1, v→0; corner mass
+  0.082 vs. 0.030 for the mirror corner) and Clayton270 near the upper-left
+  (u→0, v→1; 0.080 vs. 0.030) — not the same joint law despite the same τ.
+- **Correctness.** The VineCopula identity C90(u,v) = v − C(1−u,v) (and the
+  270° analogue) holds to machine precision (max |ΔC| = 1.1×10⁻¹⁶ on a
+  25×25 grid at τ ∈ {−10⁻⁴, −0.3, −0.6, −0.95}); the density likewise matches
+  c_base(1−u,v) / c_base(u,1−v) directly (max |Δc| ≈ 2×10⁻¹⁵). Against
+  `test_copula_limits.py`'s high-precision decimal references — extended by
+  reflecting Clayton's own already-validated CDF formula, `v − C(1−u,v)`,
+  through the same `decimal` machinery rather than rebuilding fresh ground
+  truth — the package's closed forms reach max |Δ log c| = 2.3×10⁻¹³,
+  max |ΔC| = 1.2×10⁻¹⁶, max |Δh| = 1.1×10⁻¹⁴ over the existing
+  6×6 grid × 6 τ (including the two independence-limit tails, τ down to
+  −10⁻¹²). `inv_h(h(v|u), u)` round-trips to ≤3×10⁻¹⁰. `fit(method='tau')`
+  and `fit(method='mle')` both recover τ̂ within 0.06 of τ ∈ {−0.2, −0.5,
+  −0.8} from n = 3000 simulated points.
+- **Registration.** `CopulaEnum.CLAYTON90` / `CLAYTON270` (IDs 20–21),
+  `TAU_MIN_MAX = [-1.0, -EPS]` — the mirror image of Clayton's own
+  `[EPS, 1.0]`; `reachable_tau_bounds()` is `None` for both (nothing narrows
+  the registered range, unlike Frank/Plackett/Galambos). No hardcoded family
+  list needed updating: `pmcprg.copulas.__init__` derives its public API from
+  `CopulaEnum` directly, and `tail_dependence()` returns `(0, 0)` for both —
+  a 90°/270° rotation's negative dependence sits on the anti-diagonal, which
+  the base class's diagonal-probe default (built for the 180°/positive case)
+  does not see, matching VineCopula's own convention for its rotated
+  one-parameter families.
+- Tests: `pmcprg/tests/test_rotated_clayton.py` (registration, boundary
+  rejection, the VineCopula identity, h/h⁻¹ round-trips, θ(τ) against the
+  base family, sampling's realised τ and corner asymmetry, `fit` recovery,
+  `fit_best`); `pmcprg/tests/test_copula_limits.py` and its reference file
+  extended with `Clayton90`/`Clayton270` at the same τ grid as `Clayton`
+  itself, negated. `ruff check pmcprg` clean; the full fast suite passes;
+  Clayton (unrotated) and every other family's cached references are
+  bit-for-bit unchanged.
+
 ### Added — Oakes' observed information inside ICE, generalised to BB1 and Student (FR-4)
 
 - **Two-parameter Oakes' information.** `ice_oakes_tau_se` now also accepts

@@ -112,6 +112,16 @@ def _survival(base):
     return lambda u, v, th, de: u + v - _ONE + base(_ONE - u, _ONE - v, th, de)
 
 
+def _rotated_90(base):
+    """C90(u,v) = v − C_base(1−u, v) (FR-8; ``pmcprg.copulas.archimedean.rotated``)."""
+    return lambda u, v, th, de: v - base(_ONE - u, v, th, de)
+
+
+def _rotated_270(base):
+    """C270(u,v) = u − C_base(u, 1−v) (FR-8; ``pmcprg.copulas.archimedean.rotated``)."""
+    return lambda u, v, th, de: u - base(u, _ONE - v, th, de)
+
+
 def _c_galambos(u, v, th, _):
     w, z = -u.ln(), -v.ln()
     s = _pw(_pw(w, -th) + _pw(z, -th), -_ONE / th)
@@ -160,6 +170,7 @@ _REF_C = {
     "A14": _c_a14, "BB1": _c_bb1, "SClayton": _survival(_c_clayton),
     "SGH": _survival(_c_gh), "SJoe": _survival(_c_joe),
     "Galambos": _c_galambos, "HuslerReiss": _c_husler_reiss,
+    "Clayton90": _rotated_90(_c_clayton), "Clayton270": _rotated_270(_c_clayton),
 }
 
 
@@ -246,6 +257,7 @@ _TAIL_TAUS = {
     "A12": (0.4, 0.7, 0.9), "A14": (0.4, 0.7, 0.9), "BB1": (0.4, 0.7, 0.9),
     "Gauss": (-0.7, 0.3, 0.9), "Student": (-0.7, 0.3, 0.95),
     "Galambos": (0.3, 0.7, 0.95), "HuslerReiss": (0.3, 0.7, 0.95),
+    "Clayton90": (-0.3, -0.7, -0.95), "Clayton270": (-0.3, -0.7, -0.95),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -255,6 +267,7 @@ _INDEP_TAUS = {
     "AMH": (-1e-8, 1e-12, 1e-4), "FGM": (-1e-8, 1e-12, 1e-4),
     "Gauss": (-1e-8, 1e-12, 1e-4),
     "Galambos": (1e-12, 1e-8, 1e-4), "HuslerReiss": (1e-12, 1e-8, 1e-4),
+    "Clayton90": (-1e-4, -1e-8, -1e-12), "Clayton270": (-1e-4, -1e-8, -1e-12),
 }
 
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)
