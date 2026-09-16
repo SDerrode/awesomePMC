@@ -93,8 +93,8 @@ def test_student_cdf_raises_not_implemented():
 
 def test_available_count():
     # 10 originals (FRANK now enabled) + JOE + 3 Survival + BB1 + AMH + Plackett
-    # + Galambos (FR-9) = 18
-    assert len(CopulaEnum.available()) == 18
+    # + Galambos (FR-9) + Hüsler-Reiss (FR-9 round 2) = 19
+    assert len(CopulaEnum.available()) == 19
 
 
 def test_cubsec_long_name_english():

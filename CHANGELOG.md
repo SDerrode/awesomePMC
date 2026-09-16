@@ -9,6 +9,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Oakes' observed information inside ICE, generalised to BB1 and Student (FR-4)
+
+- **Two-parameter Oakes' information.** `ice_oakes_tau_se` now also accepts
+  BB1 and Student copula blocks (`pmcprg.pmc._oakes.SUPPORTED_FAMILIES` is
+  now `("Gauss", "Clayton", "BB1", "Student")`), generalising every scalar
+  quantity of the FR-4 pilot below to its 2×2-matrix equivalent in the
+  family's 2-D working coordinate ψ (`log θ, log(δ − 1)` for BB1;
+  `atanh τ, log(ν − 2)` for Student — the same ψ, and the same analytic
+  Jacobian to τ/δ/θ or τ/ν/ρ, that `pmcprg.copulas._stderr` already uses for
+  its "outside ICE" sandwich on these families, reused rather than
+  reimplemented). The complete-data curvature (term 1) needs no extra
+  E-step, same as the scalar case; Oakes' correction (term 2) needs one
+  E-step per perturbed working coordinate, 4 total for a two-parameter
+  family (vs. 2 for one parameter) — the resulting 2×2 "missing
+  information" matrix is symmetrised (Oakes' theorem guarantees the *sum*
+  with term 1 is symmetric; the antisymmetric part measured in validation
+  is 1–2 orders of magnitude below the symmetric part, i.e. noise).
+  Two-parameter results are returned as a new `OakesResultMulti`
+  (`pair, family, names, estimate, se, se_naive, cov, cov_naive,
+  info_complete, info_missing, info_psi, n_eff, at_boundary, boundary`),
+  mirroring `pmcprg.copulas._stderr.StandardErrors`'s
+  `names`/`estimate`/`se`/`cov` convention rather than diverging in shape;
+  the original scalar `OakesResult` (Gauss/Clayton) is untouched, bit-for-bit
+  — same functions, same code path, verified by the full pre-existing
+  `pmcprg/tests/test_fr4_ice_oakes.py` suite passing unchanged, plus a new
+  cross-check that the matrix code, run on a one-parameter family (ψ of size
+  1), reproduces the scalar path's numbers to a relative difference of
+  ~4·10⁻¹⁶.
+  Monte-Carlo validation (K = 2 HMC-DN, N = 600, margins known, R = 150 —
+  fewer replicates than the one-parameter pilot's R = 300–400, since a
+  two-parameter ICE fit plus 4 extra E-steps per Oakes call costs more per
+  replicate; reported with the resulting wider bands):
+  BB1 τ = 0.5, δ = 1.5 (n = 150/150) — SE ratio (RMS reported / empirical
+  SD) τ: 1.010 Oakes vs 0.782 naive, δ: 0.982 vs 0.681; 95 %/90 % coverage
+  τ: 0.907/0.900 Oakes vs 0.860/0.813 naive, δ: 0.960/0.900 vs 0.833/0.760.
+  Student τ = 0.5, ν = 6 (n = 139/150, after excluding replicates where ν̂
+  hit the fitting box, mostly its upper Gaussian-limit end) — 95 %/90 %
+  coverage τ: 0.935/0.885 Oakes vs 0.827/0.734 naive, ν: 0.906/0.892 Oakes
+  vs 0.885/0.856 naive (the SE-ratio diagnostic is unreliable for ν at this
+  replicate count — its sampling distribution is heavy right-tailed — and
+  is not reported for it; coverage, the more robust diagnostic and the one
+  FR-4 is actually about, is unaffected). Both studies confirm the FR-4
+  hypothesis for the second parameter too: the naive sandwich under-covers
+  more than Oakes' matrix SE. See
+  `pmcprg/tests/test_fr4_ice_oakes_bb1_student.py`. Still out of scope:
+  margins re-estimated inside ICE, gap variants, joint covariance of several
+  pairs.
+
+### Added — multiplier bootstrap for the radial symmetry test (FR-10 round 2)
+
+- **`radial_symmetry_test(..., bootstrap="multiplier")`** (`pmcprg.diagnostics.radial_symmetry`),
+  alongside the unchanged `bootstrap="parametric"` default from the FR-10
+  pilot. Implements the multiplier bootstrap FR-10 actually asks for
+  (Kojadinovic & Yan 2011, doi:10.1007/s11222-009-9142-y; Kojadinovic, Yan &
+  Holmes 2011, doi:10.5705/ss.2011.037a) instead of the parametric bootstrap's
+  per-replicate refit-free resample-and-rerank: under H0 the deterministic
+  `u + v − 1` term cancels, so `√n D_n(u,v) = α_n(u,v) − α_n(1−u,1−v) + o_P(1)`
+  with `α_n` the empirical copula process; its standard multiplier-CLT
+  linearisation (Rémillard & Scaillet 2009 — the same construction underlying
+  this codebase's own `Ẇ₁, Ẇ₂` score corrections in `copulas/_stderr.py`)
+  replaces `α_n` by `α_n^ξ(u,v) = n^{-1/2} Σᵢ ξᵢ[1{ûᵢ≤u,v̂ᵢ≤v} − Cₙ(u,v) −
+  Ċ₁(u,v)(1{ûᵢ≤u}−u) − Ċ₂(u,v)(1{v̂ᵢ≤v}−v)]`, i.i.d. `ξᵢ` (mean 0, variance 1;
+  standard normal by default, `multiplier="rademacher"` optionally) resampled
+  fresh per replicate, `Ċ₁, Ċ₂` plug-in partial derivatives of `Cₙ` by a
+  central finite difference (bandwidth `h = min(0.5, n^{-1/2})`). `Cₙ`, ranks
+  and `Ċ₁, Ċ₂` are computed once; every replicate is then only a fresh draw of
+  `ξ` and a matrix–vector product, all `B` replicates produced by one
+  `(2n×n) @ (n×B)` matrix multiplication — no resampling, no rank
+  recomputation, no refit. This is a derivation worked out for this
+  statistic's particular reflected-difference form, not a transcription of a
+  published formula specific to radial symmetry (see the module docstring's
+  "Honesty about fidelity" section) — validated by simulation, not by claimed
+  fidelity to a paper, exactly as the pilot's own statistic was.
+  **Speed**: N=200, B=150, same seed — 1.95 ms/call (multiplier) vs 40.4
+  ms/call (parametric), a **20.7× speed-up**.
+  **Size** (N_reps=100, B=150, α=0.05, N=200): Gauss τ=0.3/0.6 → 0.02/0.03;
+  Frank τ=0.3/0.6 → 0.06/0.07; Plackett τ=0.3/0.6 → 0.06/0.08 — all at or
+  below the pilot's parametric-bootstrap range (0.03–0.07 at nominal 5%),
+  i.e. comparable, if anything slightly conservative.
+  **Power** (N_reps=100, B=150, α=0.05, same grid as the pilot): Clayton
+  τ∈{0.2,0.4,0.6} → 0.11/0.46/0.69 at N=100, 0.49/0.95/1.00 at N=300; Gumbel/GH
+  τ∈{0.2,0.4,0.6} → 0.15/0.29/0.37 at N=100, 0.30/0.65/0.69 at N=300; Joe
+  τ∈{0.2,0.4,0.6} → 0.43/0.84/0.99 at N=100, 0.83/1.00/1.00 at N=300 — the same
+  ordering and comparable magnitude to the parametric bootstrap's own study
+  (0.08 to 1.00 over the identical grid), power growing with τ and N in every
+  family tested, as before. See `pmcprg/tests/test_radial_symmetry.py`
+  (`test_multiplier_bootstrap_*`, `@pytest.mark.slow` for the full-grid
+  studies) for the reduced-budget versions of these numbers.
+
 ### Added — standard errors of a copula τ fitted inside ICE, pilot (FR-4, "Reste")
 
 - **Oakes' (1999) observed information inside ICE.** `pmcprg.pmc._oakes.ice_oakes_tau_se(model, Y, pairs=None)`
@@ -97,6 +186,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   6 new (θ, δ) entries in `test_copula_limits.py`'s high-precision reference
   file (216 grid rows); every pre-existing family's cached reference is
   byte-for-byte unchanged.
+
+### Added — Hüsler–Reiss copula, second extreme-value family (FR-9, round 2)
+
+- **`CopulaHuslerReiss`** (`pmcprg.copulas.extreme_value.husler_reiss`,
+  `SHORT_NAME` "HuslerReiss"), the second of the four extreme-value families
+  audited as missing (FR-9: Galambos done, Tawn and t-EV still open). Single
+  parameter λ > 0, Pickands function
+  A(t) = t·Φ(g(t)) + (1−t)·Φ(h(t)), g(t) = 1/λ + (λ/2)ln(t/(1−t)),
+  h(t) = 2/λ − g(t), Φ the standard normal CDF (Hüsler & Reiss 1989). CDF,
+  pdf and h-function re-derived from scratch from the general EV-copula
+  identities (not transcribed), yielding a closed pdf
+  c(u,v) = (C/(uv))·[Φ(g)Φ(h) + λφ(g)/(2z)] with a striking simplification
+  ℓ_w = Φ(g), ℓ_z = Φ(h) — cross-checked against an independent 40–240-digit
+  `mpmath` ground truth (finite differences of C, and of the Pickands
+  function A): pdf, cdf and h agree to relative/absolute error ≤ 2·10⁻¹³
+  across u, v ∈ [10⁻¹², 1 − 10⁻¹²] and λ spanning 0.3 to 10⁶.
+- **The direction of λ was mis-stated in the initial task brief and
+  corrected here after independent re-derivation.** A plausible first
+  reading of the Pickands formula's `1/λ` term suggests λ → 0 is the
+  comonotone copula; direct limit analysis (and cross-checked against the
+  textbook tail-dependence formula λ_U = 2Φ(−1/λ)) shows the opposite:
+  **λ → 0 is independence, λ → ∞ is comonotone** — the *same* direction as
+  Galambos's θ, not the opposite. See the module docstring's "Direction of
+  λ" section for the full derivation and the two independent checks
+  (limit of A(t) at fixed t; conversion to the alternative η = 1/λ
+  parametrisation used in some references).
+- **Kendall's τ has no closed form** (confirmed, not assumed — same
+  situation as Galambos). τ(λ) is computed by the same adaptive-quadrature
+  Genest & MacKay (1986) machinery as Galambos, now factored into a small
+  shared module `pmcprg.copulas.extreme_value._pickands`
+  (`tau_from_A_terms`, `invert_tau` — just the quadrature-with-breakpoints
+  and Brent-inversion pattern; each family keeps its own closed-form A, A',
+  A'', pdf, cdf and h, since Hüsler–Reiss's formulas do not share enough
+  structure with Galambos's to force a common implementation). Galambos's
+  module was refactored to use the same shared helpers — its own 34
+  non-slow tests pass bit-identically, unchanged. Hüsler–Reiss's own τ(λ)
+  cross-checked by a 20,000-pair Monte-Carlo Kendall's τ at λ = 1, 2, 5:
+  quadrature 0.2554/0.5387/0.7914 vs Monte-Carlo 0.2503/0.5434/0.7915
+  (agreement within 1–2 Monte-Carlo standard errors, ≈ 0.0055 at n=20,000).
+  Registered τ range [0 + ε, 1); reachable up to τ ≈ 1 − 1.13·10⁻⁶ (λ capped
+  at 1e6), beyond which the package stores the τ that λ realises (RB-10
+  convention, as Frank/Plackett/Galambos).
+- `fit` recovers τ within 0.02 of the truth from n=3000 simulated pairs at
+  τ = 0.2, 0.5, 0.8, by both `method='tau'` and `method='mle'`.
+- `inv_h` has no closed form either and uses `CopulaVirt`'s Brent-bracketed
+  default, same scope tradeoff as Galambos.
+- New `pmcprg/tests/test_husler_reiss.py` (mirrors `test_galambos.py`'s
+  depth: boundary rejection, the λ-direction checks above, τ(λ) against the
+  quadrature and a simulated τ, A/A'/A'' against numerical differentiation,
+  h/h⁻¹ round-trip, sampling's marginal uniformity and realised τ, `fit`
+  recovery by both methods) and 6 new (λ) entries in
+  `test_copula_limits.py`'s high-precision reference file (216 new grid
+  rows; Hüsler–Reiss's own decimal reference CDF uses `mpmath` for Φ, lazily
+  imported so the `min-versions` CI job — which does not install the `dev`
+  extra — is unaffected as long as the reference file covers every case, as
+  it now does). Every pre-existing family's cached reference is
+  byte-for-byte unchanged (verified: 6 entries added, 0 removed, 0 changed).
+  `CopulaEnum.available()` count: 19 (18 + Hüsler–Reiss).
+- Scoping note for the two remaining FR-9 families: Tawn (asymmetry
+  parameters + λ) and t-EV (a Student-style degrees-of-freedom parameter)
+  are genuinely two/three-parameter families whose τ does not identify the
+  extra parameter(s) — they will need `CopulaVirt`'s joint MLE machinery
+  (`pmcprg.copulas._fit._fit_two_parameter_mle`, already used by BB1 and
+  Student) rather than the single-parameter Brent search used here and by
+  Galambos. Not attempted this round.
 
 ## [1.0.0] - 2026-09-15
 

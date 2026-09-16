@@ -113,11 +113,9 @@ if __name__ == '__main__':
 import logging
 
 import numpy as np
-from scipy.integrate import quad
-from scipy.optimize import brentq
 
 from pmcprg.copulas._base import CopulaVirt
-from pmcprg.exceptions import CopulaParameterError
+from pmcprg.copulas.extreme_value._pickands import invert_tau, tau_from_A_terms
 from pmcprg.numerics import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
@@ -226,11 +224,6 @@ def _galambos_A_terms(t, theta):
     return A, Ap, App
 
 
-def _galambos_tau_integrand(t, theta):
-    A, _, App = _galambos_A_terms(t, theta)
-    return t * (1.0 - t) * App / A
-
-
 def _galambos_tau_from_theta(theta: float) -> float:
     """τ(θ) by adaptive quadrature of the Genest & MacKay (1986) identity.
 
@@ -240,16 +233,13 @@ def _galambos_tau_from_theta(theta: float) -> float:
     a wrong (too small, even negative) integral for θ beyond a few
     thousand — this was caught by comparing against a 10,000-node
     Gauss–Legendre grid during development, not by ``quad``'s own error
-    estimate, which stays small even when wrong.
+    estimate, which stays small even when wrong. The quadrature and
+    breakpoint logic itself now lives in
+    :func:`pmcprg.copulas.extreme_value._pickands.tau_from_A_terms`, shared
+    with Hüsler–Reiss (FR-9): this function is unchanged numerically, only
+    its plumbing moved.
     """
-    theta = float(theta)
-    if theta <= 0.0:
-        return 0.0
-    eps = min(5.0 / theta, 0.49)
-    points = sorted({0.5 - eps, 0.5, 0.5 + eps} & {p for p in (0.5 - eps, 0.5, 0.5 + eps) if 0.0 < p < 1.0})
-    val, _ = quad(_galambos_tau_integrand, 0.0, 1.0, args=(theta,),
-                  points=points, limit=200)
-    return float(np.clip(val, 0.0, 1.0))
+    return tau_from_A_terms(_galambos_A_terms, theta)
 
 
 _THETA_LO = 1.0e-4    # tau_from_theta(_THETA_LO) underflows to 0.0 (« EPS)
@@ -262,20 +252,12 @@ def _galambos_theta_from_tau(tau_target: float) -> float:
     τ(θ) is strictly increasing (checked numerically, not proved) from
     ≈ 0 to τ(_THETA_HI) < 1. A target beyond that reachable maximum is
     clamped to ``_THETA_HI`` (module docstring; ``reachable_tau_bounds``
-    keeps the package from ever requesting more).
+    keeps the package from ever requesting more). The Brent-bracket logic
+    is :func:`pmcprg.copulas.extreme_value._pickands.invert_tau`, shared
+    with Hüsler–Reiss (FR-9).
     """
-    tau_target = float(tau_target)
-    if tau_target <= 0.0:
-        raise CopulaParameterError(
-            f'Galambos: tau_k={tau_target!r} must be > 0 (no negative or '
-            f'zero dependence in an extreme-value copula; independence is '
-            f'the θ → 0 limit, never attained).')
-    hi_tau = _galambos_tau_from_theta(_THETA_HI)
-    if tau_target >= hi_tau:
-        return _THETA_HI
-    return float(brentq(lambda th: _galambos_tau_from_theta(th) - tau_target,
-                        _THETA_LO, _THETA_HI, xtol=1e-12, rtol=4.0 * np.finfo(float).eps,
-                        maxiter=200))
+    return invert_tau(_galambos_tau_from_theta, tau_target, _THETA_LO, _THETA_HI,
+                      family_name='Galambos')
 
 
 # ---------------------------------------------------------------------------

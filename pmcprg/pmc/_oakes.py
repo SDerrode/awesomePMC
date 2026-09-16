@@ -2,15 +2,34 @@
 pmcprg.pmc._oakes — Oakes' (1999) observed information for a copula τ fitted
 *inside* ICE (AUDIT_COPULES FR-4, "Reste": standard errors inside ICE).
 
-Scope (pilot)
--------------
-One-parameter copula families only, validated for **Gauss** and **Clayton**;
+Scope
+-----
 K = 2 state models; one pair (i, j) of :meth:`PMCModel.copula_blocks` at a
 time. Margins are held fixed at the model handed in (``fit_margins=False``
 in the ICE run that produced it) — extending this to margins re-estimated
-inside ICE, to two-parameter families (BB1, Student), or to the prior /
-other pairs' τ is future work; see the module docstring of
-:mod:`pmcprg.pmc.ice` for how those enter the M-step.
+inside ICE, or to the prior / other pairs' parameters, is future work; see
+the module docstring of :mod:`pmcprg.pmc.ice` for how those enter the M-step.
+
+Two families of copula are supported, in two code paths:
+
+* **one-parameter** (Gauss, Clayton) — the original pilot, scalar
+  throughout: a scalar ψ, a scalar curvature and mixed term, a scalar
+  :class:`OakesResult`. This path is untouched by the generalisation below
+  (same functions, same numbers, to the last bit).
+* **two-parameter** (BB1, Student) — generalises every scalar quantity of
+  the pilot to its 2×2 matrix equivalent (see "Generalisation to two
+  parameters" below), returning an :class:`OakesResultMulti` that mirrors
+  the ``names``/``estimate``/``se``/``cov`` convention of
+  :class:`pmcprg.copulas._stderr.StandardErrors` — the "outside ICE"
+  sibling this pilot already extends. It reuses that module's ``_Spec`` /
+  ``_spec_of`` (the same working coordinate ψ — ``(log θ, log(δ − 1))`` for
+  BB1, ``(atanh τ, log(ν − 2))`` for Student — and the same analytic
+  Jacobian ``jac_psi`` from ψ to the reported quantities) rather than
+  reimplementing that bookkeeping. The dispatch between the two paths is by
+  family in :func:`ice_oakes_tau_se` / :func:`_oakes_one_pair`; callers only
+  need to know that a result for a one-parameter family is an
+  :class:`OakesResult` and for a two-parameter family an
+  :class:`OakesResultMulti`.
 
 Why the outside-ICE sandwich (:mod:`pmcprg.copulas._stderr`) is not enough
 ---------------------------------------------------------------------------
@@ -58,8 +77,52 @@ One E-step (:func:`~pmcprg.pmc.inference.precompute_weights`,
 :func:`~pmcprg.pmc.inference.forward`, :func:`~pmcprg.pmc.inference.backward`,
 :func:`~pmcprg.pmc.inference.joint_posteriors`) at the fitted model — to get
 ξ̂_n(i, j) if the caller has not already got it — plus two more at
-τ′ = τ(ψ̂ ± h_ψ) for the mixed term. For K = 2 forward-backward is O(N),
-so this is a handful of extra passes over the data, not an extra ICE run.
+τ′ = τ(ψ̂ ± h_ψ) for the mixed term (one-parameter families), or four more,
+one pair per working coordinate, for two-parameter families (below). For
+K = 2 forward-backward is O(N), so this is a handful of extra passes over
+the data, not an extra ICE run.
+
+Generalisation to two parameters (BB1, Student)
+------------------------------------------------
+Both scalar terms of Oakes' identity become 2×2 matrices in the working
+coordinate ψ = (ψ₁, ψ₂) of the family (BB1: ``log θ, log(δ − 1)``; Student:
+``atanh τ, log(ν − 2)`` — :func:`pmcprg.copulas._stderr._spec_of`):
+
+* **term 1** (complete-data curvature) — the Hessian of
+  ``Q(θ|θ̂) = Σ_n ξ̂_n(i,j) log c_ψ(û_n, v̂_n)`` in ψ at ψ̂, a 2×2 matrix
+  whose diagonal is the same central second difference as the scalar case
+  (one extra pair of ``logpdf_array`` evaluations per coordinate) and whose
+  off-diagonal is the standard 4-point mixed central difference (one extra
+  quadruple of evaluations) — no extra E-step, exactly as term 1 needs none
+  in the scalar case (:func:`_hessian_and_phi`).
+* **term 2** (Oakes' correction) — for two parameters the correction is the
+  Jacobian of ``S(ψ') = Σ_n ξ_n(ψ') φ_n`` (now a 2-vector) with respect to
+  ψ' (now 2-dimensional): a 2×2 matrix, ``M[a, c] = ∂S_a/∂ψ'_c``. Each
+  *column* c needs one E-step at ψ' = ψ̂ ± h·e_c with the density held at
+  ψ̂ (:func:`_mixed_info`) — 2 columns × 2 perturbations = 4 extra E-steps,
+  vs. 2 for a one-parameter family, as the pilot's own report anticipated
+  ("up to 4 extra E-step evaluations per pair instead of 2"). A smarter
+  scheme (e.g. a one-sided difference, halving the E-step count at the cost
+  of O(h) instead of O(h²) truncation error) was not needed: even 4 extra
+  full forward-backward passes at K = 2, N in the hundreds, is a small
+  fraction of one ICE iteration's cost, and the coverage study below shows
+  no sign that the O(h²) central scheme needs improving. ``M`` is not
+  symmetric by construction (unlike term 1, it is a directional derivative
+  of a vector-valued map, not a Hessian) but Oakes' theorem implies the
+  *combined* observed information ``info_complete + info_missing`` is
+  symmetric; ``M`` is symmetrised, ``0.5·(M + Mᵀ)``, before use — the
+  antisymmetric part measured in the validation below is consistently two
+  to three orders of magnitude below the symmetric part, i.e. numerical
+  noise, not a sign of a genuine asymmetry the averaging would hide.
+
+The resulting 2×2 observed information in ψ is inverted (after an
+eigenvalue check, as :mod:`pmcprg.copulas._stderr` does for its own
+sandwich) and carried to the reported quantities — τ, δ, θ for BB1; τ, ν, ρ
+for Student — by :attr:`pmcprg.copulas._stderr._Spec.jac_psi`, the same
+analytic Jacobian the naive sandwich already uses. This is the one part of
+the two-parameter path that is *not* reimplemented: reusing it is exactly
+what keeps :mod:`pmcprg.pmc._oakes` a sibling of
+:mod:`pmcprg.copulas._stderr` rather than a divergent copy.
 
 Step size and error
 --------------------
@@ -95,6 +158,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pmcprg.copulas._base import TAU_PAD_ABS, TAU_PAD_REL
+from pmcprg.copulas._stderr import _spec_of
 from pmcprg.copulas._stderr import standard_errors as _naive_standard_errors
 from pmcprg.pmc.ice import _margin_cdfs, _pair_pseudo_obs, _resolve_candidate
 from pmcprg.pmc.inference import backward, forward, joint_posteriors, precompute_weights
@@ -102,14 +166,26 @@ from pmcprg.pmc.model import PMCModel
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["OakesResult", "ice_oakes_tau_se"]
+__all__ = ["OakesResult", "OakesResultMulti", "ice_oakes_tau_se"]
 
 #: Central-difference step in the working coordinate ψ — same value as
 #: :data:`pmcprg.copulas._stderr._H_PSI` (see the module docstring).
 H_PSI: float = 1e-4
 
-#: Families this pilot supports (audit FR-4 scope: one-parameter, validated).
-SUPPORTED_FAMILIES: tuple[str, ...] = ("Gauss", "Clayton")
+#: One-parameter families — the original pilot's scalar code path
+#: (:func:`_oakes_one_pair_scalar`, :class:`OakesResult`), untouched.
+_ONE_PARAM_FAMILIES: tuple[str, ...] = ("Gauss", "Clayton")
+
+#: Two-parameter families — the 2×2-matrix generalisation
+#: (:func:`_oakes_one_pair_multi`, :class:`OakesResultMulti`).
+_TWO_PARAM_FAMILIES: tuple[str, ...] = ("BB1", "Student")
+
+#: Every family this module supports (audit FR-4 scope).
+SUPPORTED_FAMILIES: tuple[str, ...] = _ONE_PARAM_FAMILIES + _TWO_PARAM_FAMILIES
+
+#: Extra (non-τ) copula-block keys of each two-parameter family, in the order
+#: :func:`pmcprg.copulas._stderr._spec_of` reports them after ``tau_k``.
+_EXTRA_PARAM_KEYS: dict[str, tuple[str, ...]] = {"BB1": ("delta",), "Student": ("df",)}
 
 #: τ̂ within this many optimiser pads (:data:`pmcprg.copulas._base.TAU_PAD_REL`)
 #: of a range end is "at the boundary" — same convention as
@@ -155,6 +231,83 @@ class OakesResult:
     at_boundary: bool
 
 
+@dataclass(frozen=True)
+class OakesResultMulti:
+    """Oakes' observed information for a two-parameter ICE copula (BB1, Student).
+
+    The 2×2-matrix generalisation of :class:`OakesResult` (see the module
+    docstring, "Generalisation to two parameters"). Its shape mirrors
+    :class:`pmcprg.copulas._stderr.StandardErrors` — ``names``/``estimate``/
+    ``se``/``cov`` — rather than a bespoke layout, since this *is* that
+    class's sibling computation, one level deeper (accounting for the
+    ICE weights' own sampling uncertainty).
+
+    Fields
+    ------
+    pair        : (i, j) of the copula block.
+    family      : SHORT_NAME of the copula (``"BB1"`` or ``"Student"``).
+    names       : reported quantities, in the order of ``estimate``/``se``/
+                  ``cov`` — ``("tau_k", "delta", "theta")`` for BB1,
+                  ``("tau_k", "df", "rho")`` for Student (same order and
+                  names :attr:`pmcprg.copulas._stderr.StandardErrors.names`
+                  uses for these families).
+    estimate    : ``{name: value}`` at the ICE fit.
+    se          : Oakes' standard error of each quantity (NaN at a boundary,
+                  or where the observed information is not positive-definite).
+    se_naive    : the naive :mod:`pmcprg.copulas._stderr` sandwich applied to
+                  the final ICE weights ξ̂_n(i, j) as if they were fixed —
+                  the quantity FR-4 flags as understating the uncertainty.
+    cov         : Oakes' covariance matrix of ``names`` (NaN where ``se`` is).
+    cov_naive   : the naive sandwich's covariance matrix of ``names``.
+    info_complete : − ∂²Q(θ|θ̂)/∂ψ∂ψᵀ |_{θ̂} — the complete-data term, 2×2,
+                  in the family's working coordinate ψ.
+    info_missing  : − ∂²Q(θ|θ')/∂ψ∂ψ'ᵀ |_{θ̂} — Oakes' correction, 2×2, in ψ
+                  (symmetrised; see the module docstring for why it need not
+                  be symmetric before that).
+    info_psi    : ``info_complete + info_missing`` — the observed information
+                  in ψ, 2×2. ``cov`` is this inverted and carried to
+                  ``names`` by the family's analytic Jacobian
+                  (:attr:`pmcprg.copulas._stderr._Spec.jac_psi`).
+    n_eff       : Σ_n ξ̂_n(i, j).
+    at_boundary : the estimate is within the boundary tolerance of
+                  :func:`pmcprg.copulas._stderr._spec_of` on any of its
+                  coordinates — ψ̂ is not usable (Self & Liang 1987).
+    boundary    : one sentence per boundary condition met (empty if interior)
+                  — same convention and wording as
+                  :attr:`pmcprg.copulas._stderr.StandardErrors.boundary`.
+    """
+
+    pair: tuple[int, int]
+    family: str
+    names: tuple
+    estimate: dict
+    se: dict
+    se_naive: dict
+    cov: np.ndarray
+    cov_naive: np.ndarray
+    info_complete: np.ndarray
+    info_missing: np.ndarray
+    info_psi: np.ndarray
+    n_eff: float
+    at_boundary: bool
+    boundary: tuple
+
+    def ci(self, level: float = 0.95, name: str = "tau_k") -> tuple[float, float]:
+        """Wald interval for ``name`` — see :meth:`StandardErrors.ci`."""
+        from scipy.stats import norm
+
+        if not 0.0 < level < 1.0:
+            raise ValueError(f"level must lie in (0, 1), got {level!r}.")
+        if name not in self.se:
+            raise KeyError(f"{name!r} is not one of {self.names}.")
+        se = self.se[name]
+        if self.at_boundary or not np.isfinite(se):
+            return float("nan"), float("nan")
+        z = float(norm.ppf(0.5 + 0.5 * level))
+        est = self.estimate[name]
+        return est - z * se, est + z * se
+
+
 def _psi_of_tau(tau: float, a: float, b: float) -> float:
     return math.log(tau - a) - math.log(b - tau)
 
@@ -191,6 +344,51 @@ def _with_pair_tau(model: PMCModel, ii: int, jj: int, tau: float) -> PMCModel:
     return PMCModel.from_dict(raw)
 
 
+def _with_pair_params(
+    model: PMCModel, ii: int, jj: int, tau: float, extra: dict | None = None,
+) -> PMCModel:
+    """Deep-copy ``model``'s raw dict with pair (ii, jj)'s copula τ and any
+    extra (non-τ) parameters (BB1's δ, Student's ν) replaced.
+
+    Generalises :func:`_with_pair_tau` to two-parameter families; the
+    one-parameter path keeps using :func:`_with_pair_tau` directly (bit-
+    identical to the pilot — see the module docstring).
+    """
+    raw = model.raw
+    found = False
+    for blk in raw.get("copulas", []):
+        if int(blk["i"]) == ii and int(blk["j"]) == jj:
+            blk["tau"] = float(tau)
+            for k, v in (extra or {}).items():
+                blk[k] = float(v)
+            found = True
+            break
+    if not found:
+        raise KeyError(f"No copula block for pair (i={ii}, j={jj}) in this model.")
+    return PMCModel.from_dict(raw)
+
+
+def _tau_extra_of_copula(cop, family: str) -> tuple[float, dict]:
+    """``(τ, {extra params})`` of a fitted copula instance, keyed as the raw
+    ``[[copulas]]`` block would store them (:data:`_EXTRA_PARAM_KEYS`)."""
+    tau = float(cop.params["tau_k"])
+    if family == "BB1":
+        return tau, {"delta": float(cop.delta)}
+    if family == "Student":
+        return tau, {"df": float(cop.df)}
+    return tau, {}
+
+
+def _build_copula_from_blk(cls, family: str, blk: dict):
+    """A copula instance from a raw ``[[copulas]]`` block — τ plus any of
+    :data:`_EXTRA_PARAM_KEYS` present."""
+    kwargs = {"tau_k": float(blk["tau"])}
+    for k in _EXTRA_PARAM_KEYS.get(family, ()):
+        if k in blk:
+            kwargs[k] = float(blk[k])
+    return cls(**kwargs)
+
+
 def _oakes_one_pair(
     model: PMCModel,
     Y: np.ndarray,
@@ -198,17 +396,40 @@ def _oakes_one_pair(
     jj: int,
     *,
     h_psi: float,
+) -> "OakesResult | OakesResultMulti":
+    """Dispatch to the scalar (one-parameter) or matrix (two-parameter) path."""
+    blocks = {(int(b["i"]), int(b["j"])): b for b in model.copula_blocks()}
+    if (ii, jj) not in blocks:
+        raise KeyError(f"No copula block for pair (i={ii}, j={jj}).")
+    family = str(blocks[(ii, jj)]["name"])
+    if family in _ONE_PARAM_FAMILIES:
+        return _oakes_one_pair_scalar(model, Y, ii, jj, h_psi=h_psi)
+    if family in _TWO_PARAM_FAMILIES:
+        return _oakes_one_pair_multi(model, Y, ii, jj, h_psi=h_psi)
+    raise NotImplementedError(
+        f"ice_oakes_tau_se: family {family!r} for pair ({ii}, {jj}) is not "
+        f"one of the supported families {SUPPORTED_FAMILIES} (audit FR-4 scope)."
+    )
+
+
+def _oakes_one_pair_scalar(
+    model: PMCModel,
+    Y: np.ndarray,
+    ii: int,
+    jj: int,
+    *,
+    h_psi: float,
 ) -> OakesResult:
+    """One-parameter families (Gauss, Clayton) — the original pilot, unchanged."""
     blocks = {(int(b["i"]), int(b["j"])): b for b in model.copula_blocks()}
     if (ii, jj) not in blocks:
         raise KeyError(f"No copula block for pair (i={ii}, j={jj}).")
     blk = blocks[(ii, jj)]
     family = str(blk["name"])
-    if family not in SUPPORTED_FAMILIES:
+    if family not in _ONE_PARAM_FAMILIES:
         raise NotImplementedError(
-            f"ice_oakes_tau_se: family {family!r} for pair ({ii}, {jj}) is not "
-            f"one of the validated one-parameter families {SUPPORTED_FAMILIES} "
-            f"(audit FR-4 pilot scope)."
+            f"_oakes_one_pair_scalar: family {family!r} for pair ({ii}, {jj}) is not "
+            f"one of the one-parameter families {_ONE_PARAM_FAMILIES}."
         )
     entry, cls = _resolve_candidate(family)
     a, b = (float(x) for x in entry.value.TAU_MIN_MAX)
@@ -285,6 +506,153 @@ def _oakes_one_pair(
     )
 
 
+# ---------------------------------------------------------------------------
+# Two-parameter families (BB1, Student): the matrix generalisation
+# ---------------------------------------------------------------------------
+
+def _hessian_and_phi(spec, uv: np.ndarray, xi: np.ndarray, h: float) -> tuple[np.ndarray, np.ndarray]:
+    """φ_n (n, p) and the ξ-weighted complete-data curvature (p, p) at ``spec.psi``.
+
+    ``p = spec.psi.size`` — 1 for a one-parameter family, 2 for BB1/Student
+    (this function is generic in p; only the two-parameter path calls it in
+    production, but the one-parameter case is exercised by the sanity check
+    of :mod:`pmcprg.tests.test_fr4_ice_oakes_bb1_student` that this matrix
+    code reproduces :func:`_oakes_one_pair_scalar`'s numbers). Central
+    differences of ``spec.build(psi).logpdf_array(uv)``, same stencil (and,
+    for a one-parameter family, same step ``h``) as the scalar path and as
+    :func:`pmcprg.copulas._stderr._derivatives`, which this mirrors — dotted
+    with ``xi`` (a *sum*, "term 1" of Oakes' identity) rather than averaged
+    with weights ``w`` (a *mean*, :mod:`pmcprg.copulas._stderr`'s sandwich
+    curvature ``B``), and without that module's ``ranks`` margin corrections
+    (not needed here: this pilot holds margins fixed).
+    """
+    psi = spec.psi
+    p = psi.size
+    eye = np.eye(p)
+
+    def ll(pp: np.ndarray) -> np.ndarray:
+        return np.asarray(spec.build(pp).logpdf_array(uv), dtype=float)
+
+    l0 = ll(psi)
+    lp = [ll(psi + h * eye[a]) for a in range(p)]
+    lm = [ll(psi - h * eye[a]) for a in range(p)]
+    n = uv.shape[0]
+    phi = np.empty((n, p))
+    curvature = np.empty((n, p, p))
+    for a in range(p):
+        phi[:, a] = (lp[a] - lm[a]) / (2.0 * h)
+        curvature[:, a, a] = (lp[a] - 2.0 * l0 + lm[a]) / (h * h)
+        for c in range(a + 1, p):
+            mixed = (ll(psi + h * (eye[a] + eye[c])) - ll(psi + h * (eye[a] - eye[c]))
+                     - ll(psi - h * (eye[a] - eye[c])) + ll(psi - h * (eye[a] + eye[c])))
+            curvature[:, a, c] = curvature[:, c, a] = mixed / (4.0 * h * h)
+    info_complete = -np.einsum("n,nab->ab", xi, curvature)
+    info_complete = 0.5 * (info_complete + info_complete.T)
+    return phi, info_complete
+
+
+def _mixed_info(
+    model: PMCModel, Y: np.ndarray, ii: int, jj: int, family: str, spec, phi: np.ndarray, h: float,
+) -> np.ndarray:
+    """Oakes' correction, − ∂²Q(θ|θ')/∂ψ∂ψ'ᵀ at θ = θ' = θ̂, as a (p, p) matrix.
+
+    Column c is one central difference of ``S(ψ') = ξ(ψ')ᵀ φ`` (a p-vector)
+    across ψ'_c ± h — one E-step per perturbation, ``2p`` in total (``p = 2``
+    for BB1/Student: 4 extra E-steps, vs. 2 for a one-parameter family — see
+    the module docstring). The result is not symmetric by construction
+    (unlike ``info_complete``, it differentiates a vector map in one
+    direction only); it is symmetrised before use, on the grounds given in
+    the module docstring (Oakes' theorem: the sum with ``info_complete`` is
+    symmetric; the antisymmetric part measured here is noise, not signal).
+    """
+    p = spec.psi.size
+    eye = np.eye(p)
+    s_plus = np.empty((p, p))   # s_plus[c, a] = S_a(ψ' = ψ̂ + h·e_c)
+    s_minus = np.empty((p, p))
+    for c in range(p):
+        cop_p = spec.build(spec.psi + h * eye[c])
+        cop_m = spec.build(spec.psi - h * eye[c])
+        tau_p, extra_p = _tau_extra_of_copula(cop_p, family)
+        tau_m, extra_m = _tau_extra_of_copula(cop_m, family)
+        xi_p = _e_step_xi_pair(_with_pair_params(model, ii, jj, tau_p, extra_p), Y, ii, jj)
+        xi_m = _e_step_xi_pair(_with_pair_params(model, ii, jj, tau_m, extra_m), Y, ii, jj)
+        s_plus[c, :] = xi_p @ phi
+        s_minus[c, :] = xi_m @ phi
+    # mixed[c, a] = ∂S_a/∂ψ'_c  →  info_missing[a, c] = −mixed[c, a]
+    mixed = (s_plus - s_minus) / (2.0 * h)
+    info_missing = -mixed.T
+    return 0.5 * (info_missing + info_missing.T)
+
+
+def _oakes_one_pair_multi(
+    model: PMCModel,
+    Y: np.ndarray,
+    ii: int,
+    jj: int,
+    *,
+    h_psi: float,
+) -> OakesResultMulti:
+    """Two-parameter families (BB1, Student) — the 2×2-matrix generalisation.
+
+    Generic in the number of working coordinates ``p`` (see
+    :func:`_hessian_and_phi`'s docstring): production only calls this for
+    BB1/Student (``p = 2``), but nothing here assumes ``p = 2`` specifically.
+    """
+    blocks = {(int(b["i"]), int(b["j"])): b for b in model.copula_blocks()}
+    if (ii, jj) not in blocks:
+        raise KeyError(f"No copula block for pair (i={ii}, j={jj}).")
+    blk = blocks[(ii, jj)]
+    family = str(blk["name"])
+    _entry, cls = _resolve_candidate(family)
+    copula0 = _build_copula_from_blk(cls, family, blk)
+    spec = _spec_of(copula0)
+    m = len(spec.names)
+
+    u, v = _pseudo_obs(model, Y, ii, jj)
+    uv = np.column_stack((u, v))
+    xi_hat = _e_step_xi_pair(model, Y, ii, jj)
+    n_eff = float(xi_hat.sum())
+
+    naive = _naive_standard_errors(copula0, uv, weights=xi_hat, method="mle", ranks=False)
+
+    if spec.boundary:
+        logger.warning(
+            "ice_oakes_tau_se: pair (i=%d, j=%d) %s estimate is at a boundary "
+            "(%s) — Oakes' SE is not defined there (Self & Liang 1987); "
+            "returning NaN.", ii, jj, family, "; ".join(spec.boundary),
+        )
+        nan_pp = np.full((spec.psi.size, spec.psi.size), math.nan)
+        return OakesResultMulti(
+            (ii, jj), family, spec.names, dict(spec.estimate),
+            {k: math.nan for k in spec.names}, dict(naive.se),
+            np.full((m, m), math.nan), naive.cov,
+            nan_pp, nan_pp, nan_pp, n_eff, True, spec.boundary,
+        )
+
+    phi, info_complete = _hessian_and_phi(spec, uv, xi_hat, h_psi)
+    info_missing = _mixed_info(model, Y, ii, jj, family, spec, phi, h_psi)
+    info_psi = info_complete + info_missing
+
+    eig = np.linalg.eigvalsh(info_psi)
+    if np.all(eig > 0.0):
+        cov_psi = np.linalg.inv(info_psi)
+        cov = spec.jac_psi @ cov_psi @ spec.jac_psi.T
+        se = {name: (float(math.sqrt(cov[k, k])) if cov[k, k] >= 0.0 else math.nan)
+              for k, name in enumerate(spec.names)}
+    else:
+        logger.warning(
+            "ice_oakes_tau_se: pair (i=%d, j=%d) %s observed information is not "
+            "positive-definite (eigenvalues %s) — returning NaN.", ii, jj, family, eig,
+        )
+        cov = np.full((m, m), math.nan)
+        se = {name: math.nan for name in spec.names}
+
+    return OakesResultMulti(
+        (ii, jj), family, spec.names, dict(spec.estimate), se, dict(naive.se),
+        cov, naive.cov, info_complete, info_missing, info_psi, n_eff, False, (),
+    )
+
+
 def _pseudo_obs(model: PMCModel, Y: np.ndarray, ii: int, jj: int) -> tuple[np.ndarray, np.ndarray]:
     f_cdf = _margin_cdfs(model, Y)
     return _pair_pseudo_obs(model, f_cdf, ii, jj)
@@ -296,8 +664,8 @@ def ice_oakes_tau_se(
     pairs: list[tuple[int, int]] | None = None,
     *,
     h_psi: float = H_PSI,
-) -> dict[tuple[int, int], OakesResult]:
-    """Oakes' (1999) standard error of the copula τ of each pair in ``pairs``.
+) -> "dict[tuple[int, int], OakesResult | OakesResultMulti]":
+    """Oakes' (1999) standard error(s) of the copula parameter(s) of each pair.
 
     Parameters
     ----------
@@ -314,13 +682,15 @@ def ice_oakes_tau_se(
 
     Returns
     -------
-    ``{(i, j): OakesResult}``.
+    ``{(i, j): result}`` — an :class:`OakesResult` for a one-parameter pair
+    (Gauss, Clayton) or an :class:`OakesResultMulti` for a two-parameter one
+    (BB1, Student); see the module docstring for which is which.
 
     Raises
     ------
     NotImplementedError : a requested pair's family is not
-        :data:`SUPPORTED_FAMILIES` (BB1, Student, Frank, … — the audit's
-        cheapest-option pilot is one-parameter Gauss/Clayton only).
+        :data:`SUPPORTED_FAMILIES` (Frank, Joe, GH, … — every family other
+        than Gauss, Clayton, BB1, Student is out of this audit's scope).
     """
     if not model.variant.uses_copula:
         raise ValueError(f"Variant {model.variant.value} does not use copulas.")

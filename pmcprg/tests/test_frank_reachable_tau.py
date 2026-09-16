@@ -70,10 +70,13 @@ def test_frank_constructible_range_is_the_reachable_range():
 # Plackett declares its own bounds since G2 (test_plackett_reachable_tau.py);
 # Galambos declares its own since FR-9 (test_galambos.py) — θ is capped at 1e6,
 # so τ = 1.0 (a registered bound refused by the constructor, RB-6, but still
-# checked here) reaches only ≈ 1 − 1e-6, not itself.
+# checked here) reaches only ≈ 1 − 1e-6, not itself. Hüsler-Reiss declares its
+# own for the same reason since FR-9 round 2 (test_husler_reiss.py) — λ capped
+# at 1e6, reaching τ ≈ 1 − 1.13e-6.
 @pytest.mark.parametrize("entry", [e for e in CopulaEnum if e.value.AVAILABLE and e is not FRANK
                                    and e is not CopulaEnum.PLACKETT
-                                   and e is not CopulaEnum.GALAMBOS],
+                                   and e is not CopulaEnum.GALAMBOS
+                                   and e is not CopulaEnum.HUSLER_REISS],
                          ids=lambda e: e.value.SHORT_NAME)
 def test_other_families_are_unchanged(entry):
     assert entry.klass.reachable_tau_abs is None

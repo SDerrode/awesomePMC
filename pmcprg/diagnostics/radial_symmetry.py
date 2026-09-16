@@ -88,6 +88,75 @@ reusing one. This module therefore takes a single, fully-observed sample of
 pairs — e.g. the hard-label pseudo-observations of one state pair — and
 raises rather than silently accepting a weight argument.
 
+Null distribution: multiplier bootstrap (FR-10 round 2)
+--------------------------------------------------------
+FR-10 actually asks for the **multiplier bootstrap** of Kojadinovic & Yan
+(2011, doi:10.1007/s11222-009-9142-y; Kojadinovic, Yan & Holmes 2011,
+doi:10.5705/ss.2011.037a) instead of the parametric bootstrap above: same
+asymptotics for the null of ``T_n``, without refitting or resampling a
+surrogate copula ``B`` times. ``bootstrap="multiplier"`` implements it.
+
+The derivation, worked out here (no published formula for *this* statistic
+to transcribe — see the caveat below): under H0 the deterministic term
+``u + v − 1`` cancels between ``T_n``'s two empirical-copula evaluations, so
+
+    √n D_n(u, v) := √n [C_n(u, v) − u − v + 1 − C_n(1 − u, 1 − v)]
+                  = α_n(u, v) − α_n(1 − u, 1 − v) + o_P(1),
+
+where ``α_n = √n(C_n − C)`` is the empirical copula process. Its standard
+multiplier-CLT linearisation (Rémillard & Scaillet 2009; Kojadinovic & Yan
+2011; the same construction underlies the ``copula`` R package's
+``gofCopula(sim = "mult")`` and, in this codebase, the score corrections
+``Ẇ₁, Ẇ₂`` of :func:`pmcprg.copulas._stderr.standard_errors` — a plug-in
+empirical partial derivative reweighted by an i.i.d. term per observation)
+replaces ``α_n(u, v)`` by
+
+    α_n^ξ(u, v) = n^{-1/2} Σ_{i=1}^n ξ_i [1{û_i ≤ u, v̂_i ≤ v} − C_n(u, v)
+                  − Ċ_1(u, v)(1{û_i ≤ u} − u) − Ċ_2(u, v)(1{v̂_i ≤ v} − v)],
+
+with ``ξ_1, …, ξ_n`` i.i.d., mean 0, variance 1 (independent of the data,
+resampled fresh per replicate — standard normal by default, ``±1``
+Rademacher optionally), and ``Ċ_1, Ċ_2`` the partial derivatives of ``C_n``
+in each argument, estimated by a central finite difference with a one-sided
+correction at the boundary (:func:`_empirical_copula_partials`; bandwidth
+``h = min(0.5, n^{-1/2})``, the same order Rémillard & Scaillet and
+Kojadinovic & Yan use for this plug-in). One bootstrap replicate is
+
+    T_n^ξ = mean_i [α_n^ξ(û_i, v̂_i) − α_n^ξ(1 − û_i, 1 − v̂_i)]².
+
+Because ``C_n``, its ranks and ``Ċ_1, Ċ_2`` are computed **once** from the
+observed sample, a replicate is only a fresh draw of ``ξ`` and a
+matrix–vector product — no resampling, no rank recomputation, no refit. All
+``B`` replicates are produced by one ``(2n × n) @ (n × B)`` matrix product,
+which is what makes this the fast alternative FR-10 asks for (see the
+speed-up measured in ``CHANGELOG.md`` and ``test_radial_symmetry.py``).
+
+**Honesty about fidelity.** This is a derivation from the general multiplier
+CLT for the empirical copula process, applied by hand to *this* statistic's
+particular reflected-difference form — not a transcription of a published
+formula for the radial-symmetry statistic specifically (Kojadinovic & Yan
+2011 give the general recipe for a CvM statistic built from ``C_n`` against
+a fixed or parametrically-estimated reference; here the "reference" is the
+sample's own reflection, which needed working out). It is offered with the
+same posture as the parametric-bootstrap statistic itself: the shape of the
+construction is principled and directly parallels machinery this codebase
+already trusts (``_stderr.py``'s ``Ẇ₁, Ẇ₂``), but it is validated here by
+simulation (size and power, matched against the parametric bootstrap's own
+numbers on the same family/τ/N grid) rather than by claimed fidelity to a
+specific paper's exact statistic.
+
+References (multiplier bootstrap)
+----------------------------------
+* Kojadinovic, I. & Yan, J. (2011). A goodness-of-fit test for multivariate
+  multiplicative models with unspecified marginals. *Stat. Comput.* 21,
+  17–30. doi:10.1007/s11222-009-9142-y
+* Kojadinovic, I., Yan, J. & Holmes, M. (2011). Fast large-sample
+  goodness-of-fit tests for copulas. *Statist. Sinica* 21, 841–871.
+  doi:10.5705/ss.2011.037a
+* Rémillard, B. & Scaillet, O. (2009). Testing for equality between two
+  copulas. *J. Multivariate Anal.* 100(3), 377–386 — the multiplier-CLT
+  linearisation of the empirical copula process this module reuses.
+
 References
 ----------
 * Genest, C. & Nešlehová, J. G. (2014). On tests of radial symmetry for
@@ -104,6 +173,7 @@ References
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -120,6 +190,12 @@ __all__ = ["RadialSymmetryResult", "radial_symmetry_statistic", "radial_symmetry
 #: package's diagnostics are used on, only to avoid a crash on a malformed call.
 MIN_N = 4
 
+#: Bootstrap calibration methods accepted by :func:`radial_symmetry_test`.
+BOOTSTRAP_METHODS = ("parametric", "multiplier")
+#: Multiplier laws accepted for ``bootstrap="multiplier"`` — both i.i.d.,
+#: mean 0, variance 1, as the multiplier CLT requires.
+MULTIPLIER_LAWS = ("normal", "rademacher")
+
 
 @dataclass(frozen=True)
 class RadialSymmetryResult:
@@ -135,10 +211,14 @@ class RadialSymmetryResult:
                  False whenever ``p_value`` is NaN.
     alpha      : float — significance level used for ``reject``.
     n          : int   — number of pairs the statistic was computed on.
-    tau_hat    : float — Kendall's τ of the sample, the bootstrap surrogate's
-                 only fitted parameter.
+    tau_hat    : float — Kendall's τ of the sample. For ``bootstrap='parametric'``
+                 it is also the calibrating Gaussian surrogate's only fitted
+                 parameter; for ``bootstrap='multiplier'`` it is reported for
+                 diagnostics only (the multiplier bootstrap fits nothing).
     B          : int   — bootstrap replicates requested.
     n_valid    : int   — replicates that produced a finite statistic.
+    bootstrap  : str   — ``'parametric'`` (default) or ``'multiplier'``, the
+                 calibration method actually used — see the module docstring.
     """
 
     statistic: float
@@ -149,6 +229,7 @@ class RadialSymmetryResult:
     tau_hat: float
     B: int
     n_valid: int
+    bootstrap: str = "parametric"
 
 
 def _pseudo_obs(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -194,6 +275,88 @@ def _fit_gaussian_surrogate(tau_hat: float):
     return CopulaGaussian(tau_k=tau)
 
 
+# ---------------------------------------------------------------------------
+# Multiplier bootstrap (FR-10 round 2) — see the module docstring for the
+# derivation. Everything below operates on pseudo-observations already in
+# (0, 1); ``u, v`` is always the observed sample the linearisation is built
+# from, ``uq, vq`` the (possibly different) points it is evaluated at.
+# ---------------------------------------------------------------------------
+
+def _empirical_copula_partials(
+    u: np.ndarray, v: np.ndarray, uq: np.ndarray, vq: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Plug-in estimates of ``∂C_n/∂u`` and ``∂C_n/∂v`` at ``(uq, vq)``.
+
+    Central finite difference with bandwidth ``h = min(0.5, n^{-1/2})``
+    (Rémillard & Scaillet 2009; Kojadinovic & Yan 2011 use the same order for
+    this plug-in), one-sided within ``h`` of the boundary by construction:
+    clipping the shifted argument to ``[0, 1]`` and dividing by the *actual*
+    (possibly shrunk) step reduces to a one-sided difference there without a
+    separate branch, exactly the trick :mod:`pmcprg.copulas._stderr` uses for
+    its own central differences near a boundary.
+    """
+    n = u.size
+    h = min(0.5, 1.0 / math.sqrt(n))
+    u_hi, u_lo = np.minimum(uq + h, 1.0), np.maximum(uq - h, 0.0)
+    v_hi, v_lo = np.minimum(vq + h, 1.0), np.maximum(vq - h, 0.0)
+    dC_du = (_empirical_copula_at(u_hi, vq, u, v)
+             - _empirical_copula_at(u_lo, vq, u, v)) / (u_hi - u_lo)
+    dC_dv = (_empirical_copula_at(uq, v_hi, u, v)
+             - _empirical_copula_at(uq, v_lo, u, v)) / (v_hi - v_lo)
+    return dC_du, dC_dv
+
+
+def _multiplier_kernel(
+    u: np.ndarray, v: np.ndarray, uq: np.ndarray, vq: np.ndarray,
+) -> np.ndarray:
+    """``K`` such that ``α_n^ξ(uq, vq) = K @ ξ / √n`` (module docstring).
+
+    Returns an ``(m, n)`` matrix, ``m = uq.size``. Built once per observed
+    sample; every bootstrap replicate then only needs a fresh ``ξ`` and one
+    matrix–vector product.
+    """
+    Cn_q = _empirical_copula_at(uq, vq, u, v)                     # (m,)
+    dC_du, dC_dv = _empirical_copula_partials(u, v, uq, vq)       # (m,)
+    le_u = (u[None, :] <= uq[:, None]).astype(float)              # (m, n)
+    le_v = (v[None, :] <= vq[:, None]).astype(float)              # (m, n)
+    indicator = le_u * le_v
+    K = (indicator - Cn_q[:, None]
+         - dC_du[:, None] * (le_u - uq[:, None])
+         - dC_dv[:, None] * (le_v - vq[:, None]))
+    return K
+
+
+def _draw_multipliers(n: int, B: int, rng: np.random.Generator, law: str) -> np.ndarray:
+    """``(n, B)`` i.i.d. mean-0, variance-1 multipliers."""
+    if law == "normal":
+        return rng.standard_normal(size=(n, B))
+    if law == "rademacher":
+        return rng.choice(np.array([-1.0, 1.0]), size=(n, B))
+    raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {law!r}.")
+
+
+def _multiplier_bootstrap_draws(
+    u: np.ndarray, v: np.ndarray, *, B: int, seed: int, multiplier: str,
+) -> np.ndarray:
+    """``T_n^ξ`` for ``B`` multiplier replicates, vectorised over all of them at once.
+
+    Cost: one ``(2n × n)`` kernel built once (``O(n²)``, the same order as the
+    observed statistic itself), then one ``(2n × n) @ (n × B)`` matrix
+    product for all ``B`` replicates together — no resampling, no rank
+    recomputation, no refit (contrast :func:`radial_symmetry_test`'s
+    parametric-bootstrap loop, which pays for all three, B times).
+    """
+    n = u.size
+    uq = np.concatenate([u, 1.0 - u])
+    vq = np.concatenate([v, 1.0 - v])
+    K = _multiplier_kernel(u, v, uq, vq)               # (2n, n)
+    rng = np.random.default_rng(seed)
+    xi = _draw_multipliers(n, B, rng, multiplier)      # (n, B)
+    alpha = (K @ xi) / math.sqrt(n)                    # (2n, B)
+    diff = alpha[:n, :] - alpha[n:, :]                 # (n, B): √n D_n^ξ(û_i, v̂_i)
+    return np.mean(diff ** 2, axis=0)                  # (B,): T_n^ξ
+
+
 def radial_symmetry_test(
     x: np.ndarray,
     y: np.ndarray,
@@ -202,23 +365,34 @@ def radial_symmetry_test(
     seed: int = 0,
     alpha: float = 0.05,
     weights=None,
+    bootstrap: str = "parametric",
+    multiplier: str = "normal",
 ) -> RadialSymmetryResult:
     """Test H0: the copula of ``(x, y)`` is radially symmetric (FR-10).
 
     Parameters
     ----------
-    x, y     : array-like, shape ``(n,)`` — one fully-observed sample of
-               pairs (raw data or pseudo-observations both work: ranks are
-               recomputed here either way).
-    B        : bootstrap replicates. Cost is ``O(B n²)``, the same order as
-               the observed statistic.
-    seed     : bootstrap RNG seed.
-    alpha    : significance level for :attr:`RadialSymmetryResult.reject`.
-    weights  : must be ``None``. Kept as a keyword, not silently dropped, so
-               that a caller passing ICE posteriors ``ξ`` gets an explicit
-               error rather than a silently-wrong answer — see "Weighting"
-               in the module docstring for why this statistic has no
-               defensible weighted form here.
+    x, y       : array-like, shape ``(n,)`` — one fully-observed sample of
+                 pairs (raw data or pseudo-observations both work: ranks are
+                 recomputed here either way).
+    B          : bootstrap replicates. ``bootstrap='parametric'`` costs
+                 ``O(B n²)`` with a per-replicate refit-free resample and
+                 rerank; ``bootstrap='multiplier'`` costs the same ``O(n²)``
+                 once plus one ``O(n² B)`` matrix product for *all* replicates
+                 together — see the module docstring for why this is
+                 dramatically faster in practice.
+    seed       : bootstrap RNG seed.
+    alpha      : significance level for :attr:`RadialSymmetryResult.reject`.
+    weights    : must be ``None``. Kept as a keyword, not silently dropped, so
+                 that a caller passing ICE posteriors ``ξ`` gets an explicit
+                 error rather than a silently-wrong answer — see "Weighting"
+                 in the module docstring for why this statistic has no
+                 defensible weighted form here.
+    bootstrap  : ``'parametric'`` (default, unchanged from FR-10 round 1) or
+                 ``'multiplier'`` (FR-10 round 2, see the module docstring).
+    multiplier : ``'normal'`` (default) or ``'rademacher'`` — the i.i.d.
+                 mean-0, variance-1 law of the multiplier bootstrap's ``ξ_i``.
+                 Ignored when ``bootstrap='parametric'``.
 
     Returns
     -------
@@ -233,6 +407,10 @@ def radial_symmetry_test(
         )
     if not (0.0 < alpha < 1.0):
         raise ValueError(f"alpha must be in (0, 1), got {alpha}.")
+    if bootstrap not in BOOTSTRAP_METHODS:
+        raise ValueError(f"bootstrap must be one of {BOOTSTRAP_METHODS}, got {bootstrap!r}.")
+    if bootstrap == "multiplier" and multiplier not in MULTIPLIER_LAWS:
+        raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {multiplier!r}.")
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -245,6 +423,7 @@ def radial_symmetry_test(
         return RadialSymmetryResult(
             statistic=float("nan"), p_value=float("nan"), reject=False,
             alpha=float(alpha), n=int(n), tau_hat=float("nan"), B=int(B), n_valid=0,
+            bootstrap=bootstrap,
         )
 
     u, v = _pseudo_obs(x, y)
@@ -252,17 +431,21 @@ def radial_symmetry_test(
 
     tau_hat, _ = kendalltau(x, y)
     tau_hat = float(tau_hat) if np.isfinite(tau_hat) else 0.0
-    surrogate = _fit_gaussian_surrogate(tau_hat)
 
-    rng = np.random.default_rng(seed)
-    draws = []
-    for _ in range(int(B)):
-        xb, yb = surrogate.sample(n, seed=int(rng.integers(0, 2**31 - 1))).T
-        ub, vb = _pseudo_obs(xb, yb)
-        tb = radial_symmetry_statistic(ub, vb)
-        if np.isfinite(tb):
-            draws.append(tb)
-    draws = np.asarray(draws, dtype=float)
+    if bootstrap == "multiplier":
+        draws = _multiplier_bootstrap_draws(u, v, B=int(B), seed=seed, multiplier=multiplier)
+        draws = draws[np.isfinite(draws)]
+    else:
+        surrogate = _fit_gaussian_surrogate(tau_hat)
+        rng = np.random.default_rng(seed)
+        raw_draws = []
+        for _ in range(int(B)):
+            xb, yb = surrogate.sample(n, seed=int(rng.integers(0, 2**31 - 1))).T
+            ub, vb = _pseudo_obs(xb, yb)
+            tb = radial_symmetry_statistic(ub, vb)
+            if np.isfinite(tb):
+                raw_draws.append(tb)
+        draws = np.asarray(raw_draws, dtype=float)
 
     p_value = (
         float((1 + np.sum(draws >= stat)) / (draws.size + 1))
@@ -271,10 +454,11 @@ def radial_symmetry_test(
     reject = bool(np.isfinite(p_value) and p_value < alpha)
 
     logger.debug(
-        "radial_symmetry_test: n=%d tau_hat=%.4f T_n=%.4f p=%.4f alpha=%.3f reject=%s",
-        n, tau_hat, stat, p_value, alpha, reject,
+        "radial_symmetry_test: n=%d tau_hat=%.4f T_n=%.4f p=%.4f alpha=%.3f reject=%s "
+        "bootstrap=%s",
+        n, tau_hat, stat, p_value, alpha, reject, bootstrap,
     )
     return RadialSymmetryResult(
         statistic=float(stat), p_value=p_value, reject=reject, alpha=float(alpha),
-        n=int(n), tau_hat=tau_hat, B=int(B), n_valid=int(draws.size),
+        n=int(n), tau_hat=tau_hat, B=int(B), n_valid=int(draws.size), bootstrap=bootstrap,
     )

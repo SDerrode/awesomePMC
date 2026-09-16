@@ -38,7 +38,7 @@ import math
 import os
 import random
 import warnings
-from decimal import Decimal as D, localcontext
+from decimal import Decimal as D, getcontext, localcontext
 from pathlib import Path
 
 import numpy as np
@@ -118,12 +118,48 @@ def _c_galambos(u, v, th, _):
     return u * v * s.exp()
 
 
+def _ndtr_decimal(x: D) -> D:
+    """Standard normal CDF Φ(x) as a ``Decimal``, at the *current* decimal
+    context's precision.
+
+    ``decimal`` has no erf/normal-CDF of its own, unlike every other
+    family's reference CDF above (elementary functions only); ``mpmath``
+    is this reference's ground truth for Φ, exactly as the FR-9
+    Hüsler-Reiss module's own docstring uses it — imported lazily so a
+    ``mpmath``-less install (the ``min-versions`` CI job, which does not
+    install the ``dev`` extra) only fails if this is actually called, which
+    it is not on the fast suite once the reference file below covers every
+    case (``_decimal_records`` reads the file first).
+    """
+    import mpmath
+    prec = getcontext().prec
+    mpmath.mp.dps = prec + 15   # guard digits beyond the decimal context's own
+    x_mp = mpmath.mpf(str(x))
+    phi = (1 + mpmath.erf(x_mp / mpmath.sqrt(2))) / 2
+    return D(mpmath.nstr(phi, prec + 10, strip_zeros=False))
+
+
+def _c_husler_reiss(u, v, lam, _):
+    """Hüsler-Reiss CDF, C(u,v) = exp(-(w·Φ(g) + z·Φ(h))) — see
+    ``pmcprg.copulas.extreme_value.husler_reiss`` module docstring for the
+    derivation and its own independent ``mpmath`` cross-checks; this is an
+    independent re-implementation (not a shared helper import) so the
+    reference does not silently inherit a bug from the family's own code."""
+    w, z = -u.ln(), -v.ln()
+    r = w.ln() - z.ln()
+    two = D(2)
+    g = _ONE / lam + lam / two * r
+    h = _ONE / lam - lam / two * r
+    neg_log_c = w * _ndtr_decimal(g) + z * _ndtr_decimal(h)
+    return (-neg_log_c).exp()
+
+
 _REF_C = {
     "Clayton": _c_clayton, "GH": _c_gh, "Joe": _c_joe, "Frank": _c_frank,
     "AMH": _c_amh, "Plackett": _c_plackett, "FGM": _c_fgm, "A12": _c_a12,
     "A14": _c_a14, "BB1": _c_bb1, "SClayton": _survival(_c_clayton),
     "SGH": _survival(_c_gh), "SJoe": _survival(_c_joe),
-    "Galambos": _c_galambos,
+    "Galambos": _c_galambos, "HuslerReiss": _c_husler_reiss,
 }
 
 
@@ -209,7 +245,7 @@ _TAIL_TAUS = {
     "AMH": (-0.15, 0.2, 0.3), "FGM": (-0.2, 0.2),
     "A12": (0.4, 0.7, 0.9), "A14": (0.4, 0.7, 0.9), "BB1": (0.4, 0.7, 0.9),
     "Gauss": (-0.7, 0.3, 0.9), "Student": (-0.7, 0.3, 0.95),
-    "Galambos": (0.3, 0.7, 0.95),
+    "Galambos": (0.3, 0.7, 0.95), "HuslerReiss": (0.3, 0.7, 0.95),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -218,7 +254,7 @@ _INDEP_TAUS = {
     "Frank": (-1e-8, 1e-12, 1e-4), "Plackett": (-1e-8, 1e-12, 1e-4),
     "AMH": (-1e-8, 1e-12, 1e-4), "FGM": (-1e-8, 1e-12, 1e-4),
     "Gauss": (-1e-8, 1e-12, 1e-4),
-    "Galambos": (1e-12, 1e-8, 1e-4),
+    "Galambos": (1e-12, 1e-8, 1e-4), "HuslerReiss": (1e-12, 1e-8, 1e-4),
 }
 
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)
