@@ -91,6 +91,52 @@ Testing a parameter *at* such a boundary by likelihood ratio uses the
 mixture ½χ²₀ + ½χ²₁: :func:`independence_lr_test` does it for the
 one-parameter families.
 
+Two-parameter sub-model tests
+------------------------------
+:func:`submodel_lr_test` is the analogous likelihood-ratio test of a
+**two**-parameter family's one-parameter sub-model — H0: the extra
+parameter sits at the sub-model's value, H1: the full two-parameter family
+— for the three nestings this package registers: BB1 ⊃ {Clayton, Gumbel},
+Student ⊃ Gauss, and Tawn (types 1 and 2) ⊃ Gumbel. Each was verified
+against the family's own module docstring, not assumed:
+
+* **BB1 → Clayton** (δ = 1) and **BB1 → Gumbel** (θ → 0, i.e. the floor
+  ``CopulaBB1._THETA_FLOOR``): ``pmcprg.copulas.archimedean.bb1``'s module
+  docstring states both limits explicitly (and documents a K-10 correction
+  of an earlier, crossed statement of the θ/δ ↔ tail-dependence limits — a
+  reminder that these nestings are exactly the kind of claim to re-derive,
+  not transcribe). Both δ = 1 and θ = 0 are the *lower ends* of BB1's
+  registered ranges δ ≥ 1 and θ > 0: **boundary** sub-models.
+* **Student → Gauss** (ν → ∞): ``pmcprg.copulas.elliptical.student``'s
+  docstring states it directly, and ν → ∞ is not reachable by a numerical
+  optimiser — the joint fit already treats ν's fitting box
+  (``EXTRA_PARAM_BOUNDS_BY_PARAM['df'] = (2.001, 100.0, 4.0)``) as standing
+  in for it, exactly as this module's own boundary flag for standard errors
+  does (module docstring above). The test below fits the Gaussian sub-model
+  directly (closed form, not a limit of the Student log-likelihood) and
+  compares it with BB1-style two-parameter MLE, treating ν = 100 (the box's
+  upper end) as the boundary the ν̂ → ∞ limit sits at: **boundary**
+  sub-model.
+* **Tawn → Gumbel** (ψ = 1): ``pmcprg.copulas.extreme_value.tawn``'s
+  docstring states ψ_u = ψ_v = 1 → Gumbel–Hougaard, and this package's Tawn
+  types 1/2 fix the *other* weight at 1 and free ψ ∈ (0, 1] — so ψ = 1 is
+  the *upper end* of the registered range, not an interior point:
+  **boundary** sub-model. (Re-verified numerically, not just by citation of
+  the FR-9 commit message that introduced Tawn: ``CopulaTawn1(psi=1.0)``
+  reproduces ``CopulaGH``'s log-density to machine precision at matched τ —
+  see ``pmcprg/tests/test_fr4_submodel_lr.py``.)
+
+All three sub-models are therefore boundary cases of the *same* kind
+:func:`independence_lr_test` already handles for one parameter: the
+constrained (2-D) MLE, under H0, sits on the boundary of the admissible
+extra-parameter box about half the time, so ``LR → ½χ²₀ + ½χ²₁`` (Self &
+Liang 1987) — not the plain ``χ²₁`` that would apply were the sub-model
+interior to the two-parameter family's range. :func:`submodel_lr_test`
+therefore always reports the mixture for these three pairs (the boundary
+is a fact of the parametrisation, not of the data, so it is not
+recomputed per call — unlike the one-parameter ``independence_lr_test``,
+whose H0 can be either interior or boundary depending on family).
+
 The observations are assumed **i.i.d.** Serially dependent pairs
 (consecutive states of a Markov chain share y_n) need FR-5.
 
@@ -131,8 +177,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "IndependenceLRTest",
     "StandardErrors",
+    "SubmodelLRTest",
     "independence_lr_test",
     "standard_errors",
+    "submodel_lr_test",
 ]
 
 # Central-difference steps in the working coordinate ψ and in logit(u).
@@ -250,6 +298,49 @@ class IndependenceLRTest:
     boundary: bool
     tau_k: float
     log_likelihood: float
+    n_obs: int
+    n_eff: float
+
+
+@dataclass(frozen=True)
+class SubmodelLRTest:
+    """Likelihood-ratio test of a one-parameter sub-model of a two-parameter family.
+
+    H0: the extra parameter sits at the sub-model's value (module docstring
+    lists the three implemented nestings and why each is a boundary case);
+    H1: the full two-parameter family.
+
+    Fields
+    ------
+    family             : class name of the two-parameter family (H1).
+    submodel           : class name of the one-parameter sub-model (H0).
+    statistic          : ``2 (ℓ_full − ℓ_sub) ≥ 0``, ``ℓ = Σ w log c`` at each
+                        model's own (weighted) pseudo-MLE.
+    p_value            : from ``null_distribution``.
+    null_distribution  : ``'0.5*chi2(0) + 0.5*chi2(1)'`` for every pair this
+                        module implements — the sub-model sits at a boundary
+                        of the full family's admissible extra-parameter range
+                        in all three cases (Self & Liang 1987).
+    boundary           : always ``True`` here (see ``null_distribution``).
+    boundary_note      : one sentence identifying which bound the sub-model
+                        is (module docstring).
+    full_params        : the full family's fitted ``{'tau_k': ..., extra: ...}``.
+    sub_params         : the sub-model's fitted ``{'tau_k': ...}``.
+    log_likelihood_full, log_likelihood_sub : ``Σ w log c`` at each fit.
+    n_obs, n_eff       : positive-weight observations and Σ w.
+    """
+
+    family: str
+    submodel: str
+    statistic: float
+    p_value: float
+    null_distribution: str
+    boundary: bool
+    boundary_note: str
+    full_params: dict
+    sub_params: dict
+    log_likelihood_full: float
+    log_likelihood_sub: float
     n_obs: int
     n_eff: float
 
@@ -819,4 +910,161 @@ def independence_lr_test(family, uv, weights=None) -> IndependenceLRTest:
         family=cls.__name__, statistic=float(stat), p_value=float(p_value),
         null_distribution=null, boundary=boundary, tau_k=tau_hat,
         log_likelihood=float(ll_hat), n_obs=int(uv.shape[0]), n_eff=float(w.sum()),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Two-parameter sub-model LR test (module docstring, "Two-parameter
+# sub-model tests")
+# ---------------------------------------------------------------------------
+
+# (full family CLASS_NAME, sub-model CLASS_NAME) -> where the sub-model sits.
+# Every entry here is a *boundary* of the full family's registered
+# extra-parameter range (verified against each family's own module
+# docstring — module docstring above); none is interior, so there is no
+# branch for a plain chi2(1) null below. Adding a genuinely interior
+# nesting later would need one.
+_SUBMODEL_NESTING: dict[tuple[str, str], str] = {
+    ("CopulaBB1", "CopulaClayton"): (
+        "delta = 1 is the lower end of BB1's registered delta >= 1 range "
+        "(the Clayton limit; pmcprg.copulas.archimedean.bb1 module docstring)."
+    ),
+    ("CopulaBB1", "CopulaGH"): (
+        "theta -> 0 is the lower end of BB1's registered theta > 0 range "
+        "(the floor CopulaBB1._THETA_FLOOR stands in for it in the joint fit; "
+        "the Gumbel-Hougaard limit; pmcprg.copulas.archimedean.bb1 module "
+        "docstring)."
+    ),
+    ("CopulaStudent", "CopulaGaussian"): (
+        "nu -> infinity is not reachable by the optimiser; the upper end of "
+        "the fitting box EXTRA_PARAM_BOUNDS_BY_PARAM['df'] = (2.001, 100.0) "
+        "stands in for it (the Gaussian limit; "
+        "pmcprg.copulas.elliptical.student module docstring)."
+    ),
+    ("CopulaTawn1", "CopulaGH"): (
+        "psi = 1 is the upper end of Tawn's registered psi in (0, 1] range "
+        "(the Gumbel-Hougaard limit; pmcprg.copulas.extreme_value.tawn module "
+        "docstring)."
+    ),
+    ("CopulaTawn2", "CopulaGH"): (
+        "psi = 1 is the upper end of Tawn's registered psi in (0, 1] range "
+        "(the Gumbel-Hougaard limit; pmcprg.copulas.extreme_value.tawn module "
+        "docstring)."
+    ),
+}
+
+
+def _fit_one_parameter_profile(cls, uv: np.ndarray, weights) -> tuple[float, float]:
+    """``(τ̂, ℓ(τ̂))`` maximising ``Σ w log c`` over a one-parameter family.
+
+    Same Brent search, over the padded τ-range, as the inline profile
+    :func:`independence_lr_test` runs against independence — reused here
+    against a sub-model's own free parameter instead.
+    """
+    from scipy.optimize import minimize_scalar
+
+    from pmcprg.copulas._base import padded_tau_range
+    from pmcprg.copulas._fit import MLE_FAIL_PENALTY, _weighted_log_density_sum
+
+    entry = _registry_entry(cls)
+    a, b = (float(t) for t in entry.value.TAU_MIN_MAX)
+    lo, hi = padded_tau_range(a, b)
+
+    def loglik(tau: float) -> float:
+        try:
+            ld = cls(tau_k=entry.reachable_tau(float(tau))).logpdf_array(uv)
+        except Exception:
+            return -math.inf
+        return _weighted_log_density_sum(ld, weights)
+
+    def neg(tau: float) -> float:
+        ll = loglik(tau)
+        return -ll if np.isfinite(ll) else MLE_FAIL_PENALTY
+
+    res = minimize_scalar(neg, bounds=(lo, hi), method="bounded")
+    tau_hat = entry.reachable_tau(float(res.x))
+    ll_hat = loglik(tau_hat)
+    if not np.isfinite(ll_hat):
+        raise ValueError(f"{cls.__name__}: the pseudo-likelihood is not finite at any τ "
+                         "the search evaluated.")
+    return tau_hat, ll_hat
+
+
+def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTest:
+    """Likelihood-ratio test of a two-parameter family's one-parameter sub-model.
+
+    ``H0``: ``sub_family`` (the extra parameter at its sub-model value);
+    ``H1``: ``full_family``. The (weighted) pseudo-likelihoods
+    ``ℓ = Σ w log c(û, v̂; ·)`` are maximised separately over each model —
+    the full family by the same joint 2-D MLE as
+    :meth:`CopulaVirt.fit(method='mle')` on a two-parameter family
+    (:func:`pmcprg.copulas._fit._fit_two_parameter_mle`), the sub-model by
+    the 1-D profile of :func:`independence_lr_test` — and compared:
+    ``LR = 2 max(ℓ_full − ℓ_sub, 0)``.
+
+    Implemented nestings (module docstring, "Two-parameter sub-model tests",
+    verifies each against the family's own module docstring): BB1 → Clayton,
+    BB1 → Gumbel (``CopulaGH``), Student → Gauss (``CopulaGaussian``), Tawn
+    type 1 or 2 → Gumbel (``CopulaGH``). Every one is a **boundary** of the
+    full family's admissible extra-parameter range, so ``LR → ½χ²₀ + ½χ²₁``
+    (Self & Liang 1987), unlike the plain ``χ²₁`` an interior sub-model would
+    give.
+
+    Parameters
+    ----------
+    full_family : the two-parameter ``CopulaVirt`` subclass (or an instance)
+                  — H1.
+    sub_family  : the one-parameter ``CopulaVirt`` subclass (or an instance)
+                  — H0. Must be one of the nestings ``full_family`` registers
+                  above.
+    uv          : (n, 2) pseudo-observations in (0, 1)².
+    weights     : optional (n,) non-negative frequency weights.
+
+    Raises
+    ------
+    ValueError for a ``(full_family, sub_family)`` pair this module does not
+    implement, or when either pseudo-likelihood is not finite at any
+    evaluated parameter value.
+    """
+    from scipy.stats import chi2, kendalltau
+
+    from pmcprg.copulas._fit import _fit_two_parameter_mle
+
+    full_cls = full_family if isinstance(full_family, type) else type(full_family)
+    sub_cls = sub_family if isinstance(sub_family, type) else type(sub_family)
+    key = (full_cls.__name__, sub_cls.__name__)
+    if key not in _SUBMODEL_NESTING:
+        raise ValueError(
+            f"{sub_cls.__name__} is not an implemented sub-model of {full_cls.__name__}; "
+            f"the pairs this module implements are {sorted(_SUBMODEL_NESTING)}.")
+    note = _SUBMODEL_NESTING[key]
+
+    uv, w, weighted = _prepare(uv, weights)
+    w_arg = w if weighted else None
+
+    full_entry = _registry_entry(full_cls)
+    tau0, _ = kendalltau(uv[:, 0], uv[:, 1])
+    tau_start = float(tau0) if np.isfinite(tau0) else 0.0
+    pfit = _fit_two_parameter_mle(full_cls, full_entry, uv, w_arg, tau_start)
+    if not pfit.converged:
+        logger.warning("%s vs %s submodel LR test: the full model's joint MLE did not "
+                       "converge (%s); using the best point found %s.",
+                       full_cls.__name__, sub_cls.__name__, pfit.message, pfit.params)
+    ll_full = float(pfit.log_likelihood)
+    if not np.isfinite(ll_full):
+        raise ValueError(f"{full_cls.__name__}: the pseudo-likelihood is not finite at any "
+                         "evaluated (θ, δ)/(τ, extra) point.")
+
+    tau_sub, ll_sub = _fit_one_parameter_profile(sub_cls, uv, w_arg)
+
+    stat = max(2.0 * (ll_full - ll_sub), 0.0)
+    p_value = 1.0 if stat <= 0.0 else 0.5 * float(chi2.sf(stat, 1))
+
+    return SubmodelLRTest(
+        family=full_cls.__name__, submodel=sub_cls.__name__,
+        statistic=float(stat), p_value=float(p_value),
+        null_distribution="0.5*chi2(0) + 0.5*chi2(1)", boundary=True, boundary_note=note,
+        full_params=dict(pfit.params), sub_params={"tau_k": float(tau_sub)},
+        log_likelihood_full=ll_full, log_likelihood_sub=float(ll_sub),
+        n_obs=int(uv.shape[0]), n_eff=float(w.sum()),
     )

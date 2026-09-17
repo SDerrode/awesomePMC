@@ -208,6 +208,8 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 from scipy import stats
 
+from pmcprg.copulas._stderr import _expit, _logit, _upper_weighted_sums
+
 __all__ = [
     "CORRECTIONS",
     "N_EFF_KINDS",
@@ -215,6 +217,7 @@ __all__ = [
     "ComparisonMatrix",
     "ComparisonResult",
     "ConfidenceSet",
+    "Omega2Test",
     "PairComparison",
     "clarke_test",
     "comparison_matrix",
@@ -223,7 +226,9 @@ __all__ = [
     "fit_best_confidence_set",
     "hac_variance",
     "ice_pair_comparisons",
+    "margin_correction_derivatives",
     "newey_west_bandwidth",
+    "omega2_test",
     "vuong_test",
 ]
 
@@ -278,6 +283,10 @@ class ComparisonResult:
     correction, n_eff_kind : the options used.
     count, n_trials : Clarke only — weighted count of positive differences and
                  weighted number of non-zero differences.
+    ranks      : Vuong only — whether the Chen & Fan (2006) rank-margin
+                 correction was applied (see :func:`vuong_test`'s ``ranks``).
+    omega2     : Vuong only, when ``pretest_omega2=True`` — the
+                 :class:`Omega2Test` of ``H0: ω² = 0`` that gated the decision.
     """
     test:        str
     names:       tuple[str, str]
@@ -296,6 +305,8 @@ class ComparisonResult:
     n_eff_kind:  str
     count:       float = math.nan
     n_trials:    float = math.nan
+    ranks:       bool = False
+    omega2:      "Omega2Test | None" = None
 
     @property
     def tie(self) -> bool:
@@ -671,6 +682,164 @@ def _infinite_result(test, names, status, alpha, correction, n_eff_kind, w, pos)
 
 
 # ---------------------------------------------------------------------------
+# Chen & Fan (2006) rank-margin correction
+# ---------------------------------------------------------------------------
+
+def margin_correction_derivatives(copula_a, copula_b, uv, h: float = 1e-4):
+    """∂/∂u and ∂/∂v of ``log c_A − log c_B`` at each pseudo-observation.
+
+    Central finite differences in ``logit(u)`` / ``logit(v)`` — the same
+    construction :func:`pmcprg.copulas._stderr.standard_errors` uses for its
+    ``ranks=True`` ``W₁, W₂`` margin correction, applied here to the
+    log-density *difference* of two fitted families instead of one family's
+    score. Feed the result to :func:`vuong_test`'s ``ranks=True`` option
+    (the Chen & Fan 2006 correction).
+
+    Parameters
+    ----------
+    copula_a, copula_b : fitted copula objects (``.logpdf_array(uv)``).
+    uv                  : pseudo-observations, shape ``(N, 2)`` — the same
+                          ones ``logc_a`` / ``logc_b`` were evaluated on.
+    h                   : central-difference step in logit space (as
+                          ``pmcprg.copulas._stderr._H_Z``).
+
+    Returns
+    -------
+    ``(dm_du, dm_dv)``, each shape ``(N,)``.
+    """
+    uv = np.asarray(uv, dtype=float)
+
+    def m(pts):
+        la = np.asarray(copula_a.logpdf_array(pts), dtype=float)
+        lb = np.asarray(copula_b.logpdf_array(pts), dtype=float)
+        return la - lb
+
+    out = []
+    for col in (0, 1):
+        x = uv[:, col]
+        z = _logit(x)
+        up, dn = uv.copy(), uv.copy()
+        up[:, col] = _expit(z + h)
+        dn[:, col] = _expit(z - h)
+        d = (m(up) - m(dn)) / (2.0 * h)
+        out.append(d / (x * (1.0 - x)))          # ∂/∂u = (∂/∂z) / (du/dz)
+    return out[0], out[1]
+
+
+def _chen_fan_correction(la, lb, w, pos, uv, dm_du, dm_dv, sw):
+    """The two ``Ŵ₁(û) + Ŵ₂(v̂)``-style terms, applied to ``m = la − lb``."""
+    if uv is None or dm_du is None or dm_dv is None:
+        raise ValueError("vuong_test(ranks=True) needs uv, dm_du and dm_dv — "
+                         "see margin_correction_derivatives().")
+    uv_arr = np.asarray(uv, dtype=float)
+    if uv_arr.shape != (la.shape[0], 2):
+        raise ValueError(f"uv must have shape {(la.shape[0], 2)}, got {uv_arr.shape}.")
+    du = np.zeros_like(la)
+    dv = np.zeros_like(la)
+    du[pos] = np.asarray(dm_du, dtype=float).ravel()[pos]
+    dv[pos] = np.asarray(dm_dv, dtype=float).ravel()[pos]
+    corr_u = _upper_weighted_sums(uv_arr[:, 0], du[:, None], w)[:, 0] / sw
+    corr_v = _upper_weighted_sums(uv_arr[:, 1], dv[:, None], w)[:, 0] / sw
+    return corr_u + corr_v
+
+
+# ---------------------------------------------------------------------------
+# Vuong's (1989) ω² = 0 pre-test
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Omega2Test:
+    """Pre-test of ``H0: ω² = 0`` — are the two models observationally
+    equivalent on this sample? (Vuong 1989, §5).
+
+    Vuong (1989) recommends testing this *before* trusting the normal-based
+    Z-test: when ω² = 0 (nested or overlapping models at a degenerate point,
+    e.g. Student's ν̂ at its upper bound) the normal limit of the Z-statistic
+    breaks down and Vuong's own construction re-weights the test as a
+    weighted sum of χ² variables built from the score covariance and
+    information matrices of *both* fitted models.
+
+    That construction is **not implemented here**: it needs the score
+    vectors and Hessians of both models, which are not part of this
+    function's inputs (only the pointwise log-densities are). What is
+    implemented instead is a directly derivable, weaker substitute: a
+    one-sided HAC test of ``H0: E[d_n²] = 0`` where ``d_n = m_n − m̄_w`` is
+    the same centred series the main test's ``σ̂²`` is built from — i.e. a
+    delta-method test of whether the *estimated* long-run variance is
+    statistically distinguishable from zero, always in the frequency-weight
+    (``n_eff="sum"``) convention regardless of the caller's ``n_eff``. This
+    is a legitimate test of the same null (``ω² = 0``), but its asymptotic
+    behaviour is not Vuong's exact weighted-χ² law; treat ``reject=False``
+    as "the data cannot rule out ω² = 0, be careful with the normal
+    Z-test", not as a certified equivalent of Vuong's construction. Its
+    honest level was checked by simulation, not claimed from the reference
+    (``pmcprg/tests/test_model_selection_mc.py``): it reliably has
+    ``reject=False`` only when ω² is *exactly* zero (a family compared
+    against itself at identical fitted parameters, ``m_n ≡ 0``); on Vuong's
+    own "overlapping models" example (Gaussian vs Student, ν̂ often at its
+    upper bound) ω² is small but strictly positive, and this HAC-based
+    pre-test has enough power at a few hundred observations to reject
+    ``H0: ω² = 0`` there about 95 % of the time (n = 1000, 100 replicates) —
+    it does not, in practice, screen out that classic near-degenerate case
+    the way Vuong's exact construction would.
+
+    Fields
+    ------
+    statistic : one-sided Z-statistic ``√Σw · E_w[d²] / sd(d²)``.
+    p_value   : one-sided p-value of ``H0: ω² = 0`` against ``ω² > 0``.
+    alpha     : level of ``reject``.
+    reject    : ``True`` — ω² is significantly positive, the normal Vuong
+                Z-test is on solid ground; ``False`` — it is not, treat the
+                main test's decision with caution (or read it as a tie).
+    omega2    : the lag-0 second moment estimate ``E_w[d²]`` (not the HAC
+                ``σ̂²`` of the main test — see the module note above).
+    sd        : ``√omega2``.
+    n_eff     : ``Σw`` (frequency-weight convention, used throughout).
+    bandwidth : HAC lag truncation used for the variance of ``E_w[d²]``.
+    """
+    statistic: float
+    p_value:   float
+    alpha:     float
+    reject:    bool
+    omega2:    float
+    sd:        float
+    n_eff:     float
+    bandwidth: int
+
+
+def omega2_test(logc_a, logc_b, weights=None, *, alpha: float = 0.05,
+                bandwidth: int | str = "auto") -> Omega2Test:
+    """Vuong's (1989) ``H0: ω² = 0`` pre-test — see :class:`Omega2Test`."""
+    la, lb, w, pos, status = _prepare(logc_a, logc_b, weights)
+    if status is not None:
+        return Omega2Test(statistic=math.nan, p_value=math.nan, alpha=alpha,
+                          reject=False, omega2=math.nan, sd=math.nan,
+                          n_eff=_n_eff(w, "sum"), bandwidth=0)
+    m = np.zeros_like(la)
+    m[pos] = la[pos] - lb[pos]
+    sw = float(np.sum(w))
+    mean = float(np.dot(w, m)) / sw
+    d = np.zeros_like(m)
+    d[pos] = m[pos] - mean
+
+    z2 = d * d
+    mean_z2 = float(np.dot(w, z2)) / sw
+    zc = np.zeros_like(m)
+    zc[pos] = z2[pos] - mean_z2
+    var_z2, L = _long_run_variance(zc, w, "sum", bandwidth)
+    sd_z2 = math.sqrt(max(var_z2, 0.0))
+    if not sd_z2 > 0.0:
+        stat = math.inf if mean_z2 > 0.0 else 0.0
+        p = 0.0 if mean_z2 > 0.0 else 1.0
+    else:
+        stat = math.sqrt(sw) * mean_z2 / sd_z2
+        p = float(stats.norm.sf(stat))
+    return Omega2Test(statistic=float(stat), p_value=p, alpha=alpha,
+                      reject=bool(p <= alpha), omega2=float(max(mean_z2, 0.0)),
+                      sd=math.sqrt(max(mean_z2, 0.0)), n_eff=sw, bandwidth=int(L))
+
+
+# ---------------------------------------------------------------------------
 # Vuong
 # ---------------------------------------------------------------------------
 
@@ -686,6 +855,11 @@ def vuong_test(
     bandwidth: int | str = "auto",
     n_eff: str = "sum",
     names: tuple[str, str] = ("A", "B"),
+    ranks: bool = False,
+    uv=None,
+    dm_du=None,
+    dm_dv=None,
+    pretest_omega2: bool = False,
 ) -> ComparisonResult:
     """Weighted Vuong (1989) test of family ``A`` against family ``B``.
 
@@ -702,6 +876,33 @@ def vuong_test(
                      (Newey–West 1994, at least 1).
     n_eff          : ``"sum"`` (``Σw``, the package convention) or ``"kish"``.
     names          : labels of the two families in the result.
+    ranks          : apply the Chen & Fan (2006) rank-margin correction to
+                     the variance (default ``False``, the historical
+                     behaviour — margins treated as known, as documented in
+                     the "Estimated pseudo-observations" caveat of the
+                     module docstring). Needs ``uv``, ``dm_du``, ``dm_dv``
+                     (see :func:`margin_correction_derivatives`); the point
+                     estimate ``m̄_w`` is unaffected, only ``σ̂²`` is. Adapted
+                     from the ``W₁, W₂`` sandwich correction of
+                     ``pmcprg.copulas._stderr.standard_errors(ranks=True)``,
+                     applied to the log-density *difference* instead of one
+                     family's score — the same kind of extra variance term
+                     from the margins' own estimation, not a term re-derived
+                     from Chen & Fan's paper directly (offline; see the
+                     module docstring's honesty note and
+                     ``test_model_selection_mc.py`` for the measured level
+                     improvement on rank pseudo-observations).
+    uv, dm_du, dm_dv : required when ``ranks=True`` — the pseudo-observations
+                     and the pointwise ``∂m/∂u``, ``∂m/∂v`` from
+                     :func:`margin_correction_derivatives`.
+    pretest_omega2 : run Vuong's (1989) ``H0: ω² = 0`` pre-test (see
+                     :func:`omega2_test`; not the exact weighted-χ²
+                     construction, a documented substitute) and attach it as
+                     ``result.omega2``; when it does **not** reject, the
+                     decision is short-circuited to ``"tie"`` (method
+                     ``"omega2_pretest"``) instead of trusting the normal
+                     Z-test, following Vuong's own recommendation. Default
+                     ``False``: unchanged behaviour.
 
     Returns
     -------
@@ -722,24 +923,40 @@ def vuong_test(
     mean = float(np.dot(w, m)) / sw
     ne = _n_eff(w, n_eff)
     pen = _penalty(k_a, k_b, correction, ne)
+
+    if ranks:
+        infl = m.copy()
+        infl[pos] += _chen_fan_correction(la, lb, w, pos, uv, dm_du, dm_dv, sw)[pos]
+        center = float(np.dot(w, infl)) / sw
+    else:
+        infl = m
+        center = mean
     d = np.zeros_like(m)
-    d[pos] = m[pos] - mean
+    d[pos] = infl[pos] - center
     var, L = _long_run_variance(d, w, n_eff, bandwidth)
     sd = math.sqrt(max(var, 0.0))
     scale = max(1.0, float(np.max(np.abs(la[pos]))), float(np.max(np.abs(lb[pos]))))
     common = dict(test="vuong", names=names, alpha=alpha, estimate=mean,
                   penalty=pen, sd=sd, n_eff=ne, sum_weights=sw, bandwidth=L,
-                  correction=correction, n_eff_kind=n_eff)
+                  correction=correction, n_eff_kind=n_eff, ranks=ranks)
     if not sd > _DEGENERATE_SD_REL * scale:
         # ω̂² = 0: the two fitted densities coincide on the sample — the
         # models are observationally equivalent there (Vuong 1989).
-        return ComparisonResult(statistic=0.0, p_value=1.0, decision="tie",
-                                method="degenerate", **common)
-    stat = math.sqrt(ne) * (mean - pen / ne) / sd
-    p = float(2.0 * stats.norm.sf(abs(stat)))
-    return ComparisonResult(statistic=float(stat), p_value=p,
-                            decision=_decide(stat, p, alpha), method="normal",
-                            **common)
+        result = ComparisonResult(statistic=0.0, p_value=1.0, decision="tie",
+                                  method="degenerate", **common)
+    else:
+        stat = math.sqrt(ne) * (mean - pen / ne) / sd
+        p = float(2.0 * stats.norm.sf(abs(stat)))
+        result = ComparisonResult(statistic=float(stat), p_value=p,
+                                  decision=_decide(stat, p, alpha), method="normal",
+                                  **common)
+    if pretest_omega2:
+        om = omega2_test(logc_a, logc_b, weights, alpha=alpha, bandwidth=bandwidth)
+        if not om.reject and result.decision not in ("undetermined", "tie"):
+            result = replace(result, decision="tie", method="omega2_pretest", omega2=om)
+        else:
+            result = replace(result, omega2=om)
+    return result
 
 
 # ---------------------------------------------------------------------------

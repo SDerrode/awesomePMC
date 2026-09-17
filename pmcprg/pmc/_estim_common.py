@@ -791,9 +791,12 @@ def ice_missing_defaults() -> dict:
     * ``gap_nodes``        — quadrature nodes of the grid variants.
 
     Merged by ``_parse_ice_cfg`` on top of :func:`ice_estim_defaults`, but
-    kept out of it: that dict is also the GUI's list of keys that need a
-    widget (``test_ice_tab_exposes_every_api_config_key``), and the GUI has
-    no missing-data widget yet — it runs with these defaults.
+    kept out of it: that dict is also the ``test_ice_tab_exposes_every_api_config_key``
+    contract for keys that *must* get a widget from ``ice_estim_defaults`` /
+    ``sem_estim_defaults`` alone. ``missing_strategy``, ``missing_draws`` and
+    ``missing_seed`` do have their own widgets in ``_IceTab`` (``gap_nodes``
+    does not — it runs with its default here), sourced from this function's
+    defaults rather than duplicated as literals.
     """
     from pmcprg.pmc.gaps import DEFAULT_GAP_NODES
     return {

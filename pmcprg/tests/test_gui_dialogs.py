@@ -1642,6 +1642,69 @@ def test_ice_tab_round_trips_the_new_keys(qapp):
 
 
 # ---------------------------------------------------------------------------
+# _IceTab — missing-observations widgets (missing_strategy / missing_draws /
+# missing_seed)
+# ---------------------------------------------------------------------------
+
+def test_ice_tab_missing_widgets_default_from_ice_missing_defaults(qapp):
+    """The three widgets exist and start at ``ice_missing_defaults()``'s values."""
+    from pmcprg.pmc._estim_common import ice_missing_defaults
+    from pmcprg.pmc.gui.tabs import _IceTab
+    from pmcprg.pmc.ice import MISSING_STRATEGIES
+
+    defaults = ice_missing_defaults()
+    tab = _IceTab()
+    assert set(tab._combo_missing_strategy.itemText(i)
+               for i in range(tab._combo_missing_strategy.count())) == set(MISSING_STRATEGIES)
+    assert tab._combo_missing_strategy.currentText() == defaults["missing_strategy"]
+    assert tab._spn_missing_draws.value() == defaults["missing_draws"]
+    assert tab._spn_missing_seed.value() == defaults["missing_seed"]
+    cfg = tab.get_cfg()
+    assert cfg["missing_strategy"] == defaults["missing_strategy"]
+    assert cfg["missing_draws"]    == defaults["missing_draws"]
+    assert cfg["missing_seed"]     == defaults["missing_seed"]
+
+
+@pytest.mark.parametrize("strategy", ["available", "impute"])
+def test_ice_tab_missing_widgets_round_trip(qapp, strategy):
+    """load() -> get_cfg() preserves the missing-data keys for both strategies."""
+    from pmcprg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    tab.load({"missing_strategy": strategy, "missing_draws": 11, "missing_seed": 7})
+    cfg = tab.get_cfg()
+    assert cfg["missing_strategy"] == strategy
+    assert cfg["missing_draws"]    == 11
+    assert cfg["missing_seed"]     == 7
+
+
+def test_ice_tab_missing_draws_and_seed_disabled_unless_impute(qapp):
+    """Imputation-only widgets are enabled iff missing_strategy == 'impute'."""
+    from pmcprg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    assert tab._combo_missing_strategy.currentText() == "available"
+    assert not tab._spn_missing_draws.isEnabled()
+    assert not tab._spn_missing_seed.isEnabled()
+
+    tab._combo_missing_strategy.setCurrentText("impute")
+    assert tab._spn_missing_draws.isEnabled()
+    assert tab._spn_missing_seed.isEnabled()
+
+    tab._combo_missing_strategy.setCurrentText("available")
+    assert not tab._spn_missing_draws.isEnabled()
+    assert not tab._spn_missing_seed.isEnabled()
+
+    # load() must re-apply the enable/disable rule too, not only the combo signal.
+    tab.load({"missing_strategy": "impute"})
+    assert tab._spn_missing_draws.isEnabled()
+    assert tab._spn_missing_seed.isEnabled()
+    tab.load({"missing_strategy": "available"})
+    assert not tab._spn_missing_draws.isEnabled()
+    assert not tab._spn_missing_seed.isEnabled()
+
+
+# ---------------------------------------------------------------------------
 # Multivariate observations (d ≥ 2) — audit G-4, G-5, G-6
 # ---------------------------------------------------------------------------
 

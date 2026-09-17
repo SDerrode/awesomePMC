@@ -58,7 +58,10 @@ def test_missing_keys_have_defaults_but_stay_out_of_the_gui_key_list():
     assert cfg["missing_draws"] == 5 and cfg["missing_seed"] == 0
     assert cfg["gap_nodes"] == gaps.DEFAULT_GAP_NODES
     assert SEM._parse_sem_cfg(_model("hmc_in_gauss_k2.toml"), None)["gap_nodes"] == 64
-    # ice_estim_defaults() is the GUI's widget contract: no missing-data widget yet.
+    # ice_estim_defaults() / sem_estim_defaults() is the *mandatory* GUI widget
+    # contract (test_ice_tab_exposes_every_api_config_key); missing-data keys
+    # are covered by _IceTab's own dedicated widgets instead (sourced from
+    # ice_missing_defaults(), see test_ice_tab_round_trips_missing_keys).
     assert not set(ice_missing_defaults()) & (set(ice_estim_defaults()) | set(sem_estim_defaults()))
 
 
@@ -314,8 +317,17 @@ def test_multivariate_rows_missing():
 
 
 @pytest.mark.parametrize("algo", ["ice", "sem"])
-def test_gui_estimation_entry_point_accepts_missing_values(algo, monkeypatch):
-    """The GUI worker entry (``_do_estimate``) runs on NaN data and its result is taken in."""
+@pytest.mark.parametrize("missing_strategy", ["available", "impute"])
+def test_gui_estimation_entry_point_accepts_missing_values(algo, missing_strategy, monkeypatch):
+    """The GUI worker entry (``_do_estimate``) runs on NaN data and its result is taken in.
+
+    ``missing_strategy`` is set on the actual ``_IceTab`` widgets (the combo
+    and the imputation-draws spinbox — see ``_IceTab``'s missing-observations
+    section), then read back through ``get_cfg()``, exactly as the real
+    "Estimate" action does. SEM ignores ``missing_strategy`` (it always
+    completes by one joint posterior draw), so both values must run cleanly
+    for it too.
+    """
     pytest.importorskip("PyQt6")
     from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -327,7 +339,10 @@ def test_gui_estimation_entry_point_accepts_missing_values(algo, monkeypatch):
     path = MODELS / "pmc_pair_gauss_k2.toml"
     mdl, _, _, Ym = _data(path.name, N=300)
     w = PMCMainWindow(str(path))
+    w._tab_ice._combo_missing_strategy.setCurrentText(missing_strategy)
+    w._tab_ice._spn_missing_draws.setValue(2)
     cfg = w._tab_ice.get_cfg()
+    assert cfg["missing_strategy"] == missing_strategy
     cfg.update(max_iter=2, algorithm=algo)
     result = PMCMainWindow._do_estimate(mdl, Ym, cfg)
     assert np.isfinite(result.trace.log_liks).all()

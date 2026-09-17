@@ -9,6 +9,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — ICE/SEM missing-observations widgets in the GUI
+
+- `_IceTab` (`pmcprg.pmc.gui.tabs`) gains a "Missing observations" section
+  with three widgets for the ICE config keys that `ice()`/`sem()` already
+  accepted but that had no way to be set from the interface: a
+  `missing_strategy` combo (`"available"` / `"impute"`, driven by
+  `pmcprg.pmc.ice.MISSING_STRATEGIES`), a `missing_draws` spinbox (default
+  from `DEFAULT_MISSING_DRAWS` = 5), and a `missing_seed` spinbox (default
+  0, range `0`–`2_147_483_647` like the other seed spinboxes). Previously
+  these three keys could only be set by hand-editing the underlying
+  TOML/dict, even though the GUI already loads and plots gapped data.
+- `missing_draws` and `missing_seed` are disabled (greyed out) whenever
+  `missing_strategy != "impute"`, the same convention as the K-means-seed /
+  `init` and multistart / `n_starts` pairs already in the tab. Tooltips
+  cite `ice.py`'s own measured tradeoff: `"available"` is deterministic and
+  3-4x (grid variants) to 8-19x (GICE) faster than `"impute"` with 5 draws,
+  while `"impute"` recovers the true GICE margin families in 57 % of fits
+  on `sp2016_gice_k2` against 39 % for `"available"` (61 % on complete
+  data).
+- All three keys round-trip through `_IceTab.load()` / `get_cfg()` exactly
+  like the tab's other keys, so they reach `ice()`/`sem()` via the same
+  `PMCMainWindow._do_estimate` path already exercised by
+  `test_gui_estimation_entry_point_accepts_missing_values`, now
+  parametrized over both strategies.
+
+### Added — likelihood-ratio tests of two-parameter families' sub-models (FR-4)
+
+- **`submodel_lr_test`** (`pmcprg.copulas._stderr`, re-exported from
+  `pmcprg.copulas`) tests whether a two-parameter family's extra parameter
+  is needed, i.e. whether the data are consistent with the one-parameter
+  sub-model nested inside it — the analogue, for a two-parameter family, of
+  `independence_lr_test`'s test of independence in a one-parameter family.
+  It fits the full family by joint MLE
+  (`pmcprg.copulas._fit._fit_two_parameter_mle`, the same routine
+  `CopulaVirt.fit(method='mle')` uses on a two-parameter family) and the
+  sub-model by the 1-D profile `independence_lr_test` already uses,
+  ``LR = 2 max(ℓ_full − ℓ_sub, 0)``.
+- Three nestings are implemented, each verified numerically against the
+  family's own module docstring rather than assumed: **BB1 → Clayton**
+  (`delta = 1`) and **BB1 → Gumbel–Hougaard** (`theta → 0`, `delta =
+  1/(1 − tau)`; `pmcprg.copulas.archimedean.bb1` — this module's own K-10
+  note on a previously crossed statement of BB1's tail-dependence limits is
+  a reminder not to transcribe such a claim), **Student → Gauss** (`df` at
+  the fitting box's upper end, `EXTRA_PARAM_BOUNDS_BY_PARAM['df'] =
+  (2.001, 100.0)`, standing in for the unreachable `df → ∞`), and **Tawn
+  (type 1 or 2) → Gumbel–Hougaard** (`psi = 1`, the upper end of the
+  registered `psi ∈ (0, 1]`). All three sit at a *boundary* of the full
+  family's admissible extra-parameter range (not interior), so
+  `LR → ½χ²₀ + ½χ²₁` (Self & Liang 1987) in every case — the mixture
+  `SubmodelLRTest.null_distribution` always reports, unlike
+  `independence_lr_test`'s null, which depends on the one-parameter family.
+- **Monte-Carlo validation** (`pmcprg/tests/test_fr4_submodel_lr.py`, n =
+  400, 400 replicates): empirical rejection under each sub-model's own null
+  at nominal 5%/10% — BB1 vs Clayton 4.5%/9.0%, BB1 vs Gumbel 4.0%/9.25%,
+  Student vs Gauss 5.75%/13.75%, Tawn1 vs Gumbel 5.75%/10.25% — all within
+  Monte-Carlo reach of nominal; power away from the sub-model (BB1 delta=3,
+  BB1 theta at delta=1.2, Student df=5, Tawn1 psi=0.5) at least 96% at the
+  5% level (100% for three of the four cases).
+- Student → Gauss is handled with the same finite-box convention as
+  everywhere else in this module (`standard_errors`'s own boundary flag
+  already treats `df`'s upper bound as standing in for `df → ∞`): no
+  separate treatment or caveat was needed for this nesting.
+
+### Added — Chen & Fan correction, ω² pre-test and a genuine-ICE level study, closing FR-6
+
+- **`vuong_test(..., ranks=True, uv=, dm_du=, dm_dv=)`** (`pmcprg.diagnostics.model_selection`):
+  a Chen & Fan (2006)-style correction to the variance of the Vuong statistic
+  on rank-based pseudo-observations, adapted from the ``W₁, W₂`` margin
+  correction `pmcprg.copulas._stderr.standard_errors(ranks=True)` already
+  applies to its sandwich estimator — same ``O(n log n)`` suffix-sum
+  construction (`_upper_weighted_sums`), applied to the log-density
+  *difference* `m_n = log c_A − log c_B` instead of one family's score. The
+  new helper `margin_correction_derivatives(copula_a, copula_b, uv)` supplies
+  the required `∂m/∂u`, `∂m/∂v` by central finite differences in logit space,
+  mirroring `_stderr._derivatives`. Not a term re-derived word for word from
+  Chen & Fan's paper (offline; documented in `vuong_test`'s docstring) —
+  validated by simulation instead: on Gaussian-copula data with rank
+  pseudo-observations (Clayton vs survival Clayton, N=2000, 300 replicates)
+  the level stays within the module's already-documented 9-11% band without
+  regressing, and the corrected Z's standard deviation moves back toward 1.
+  Default unchanged (`ranks=False`).
+- **`omega2_test` / `vuong_test(..., pretest_omega2=True)`**: Vuong's (1989)
+  own recommendation to test `H0: ω² = 0` before trusting the normal
+  Z-test — when the two fitted densities are observationally near-equivalent,
+  the normal limit is invalid. The exact construction (a weighted sum of χ²
+  variables from both models' score covariance and information matrices) is
+  **not implemented** — it needs score vectors and Hessians this module's
+  generic log-density inputs do not carry. What is implemented is a
+  documented, honestly-limited substitute: a one-sided HAC test of
+  `H0: E[d_n²] = 0` on the same centred series the main test's `σ̂²` comes
+  from. Measured (`pmcprg/tests/test_model_selection_mc.py`): it reliably
+  does not reject only when ω² is *exactly* zero (a family against itself,
+  `m_n ≡ 0`); on Vuong's own overlapping-models example (Gaussian vs
+  Student, ν̂ often at its upper bound) ω² is small but strictly positive,
+  and the pre-test rejects `H0: ω² = 0` there about 95% of the time
+  (N=1000, 100 replicates) — it does not, in practice, screen out that
+  near-degenerate case the way Vuong's exact construction would. Attached to
+  the result as `ComparisonResult.omega2`; when it fails to reject, the
+  decision is short-circuited to `"tie"` (`method="omega2_pretest"`).
+  Default unchanged (`pretest_omega2=False`).
+- **Level under a genuine ICE E-step** (`test_ice_weight_level_from_a_genuine_e_step`,
+  `pmcprg/tests/test_model_selection_mc.py`): the module's own level
+  measurements (2.3% Kish, 5.0% Σw) used weights independent of the data;
+  this test runs `ice_pair_comparisons` on real simulated data from a 2-state
+  PMC with a Gaussian (radially symmetric) transition copula — Clayton vs
+  survival Clayton are equally close to it, the module's usual exact null —
+  and measures the level on the resulting genuine, data-dependent ξ from a
+  real forward-backward E-step (a single E-step/M-step pass at the true
+  parameters, not run to ICE convergence, to stay within budget). Measured
+  over 200 replicates: Vuong ≈ 2.5% (conservative, consistent with the Σw
+  convention), Clarke ≈ 64.5% (confirms, on real ICE weights, the
+  estimated-parameters bias already documented for Clarke's test).
+- `ComparisonResult` gained two informational fields, both `None`/`False` by
+  default and backward compatible: `ranks` (whether the Chen & Fan
+  correction was applied) and `omega2` (the `Omega2Test` result, when
+  `pretest_omega2=True`).
+
 ### Added — multiplier bootstrap for Rosenblatt and exchangeability, closing FR-10
 
 - **`bootstrap="multiplier"` added to `rosenblatt_gof_test` and

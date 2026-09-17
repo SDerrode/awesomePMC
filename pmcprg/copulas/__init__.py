@@ -12,8 +12,8 @@ import pmcprg.plot_style  # noqa: F401
 
 from pmcprg.copulas._base     import CopulaEnum, CopulaVirt, FitResult, GoFResult
 from pmcprg.copulas.bivariate import BivariateLaw, ConditionalLaw, BivariateFitResult, BivariateBootstrapCI
-from pmcprg.copulas._stderr   import (IndependenceLRTest, StandardErrors,
-                                   independence_lr_test, standard_errors)
+from pmcprg.copulas._stderr   import (IndependenceLRTest, StandardErrors, SubmodelLRTest,
+                                   independence_lr_test, standard_errors, submodel_lr_test)
 
 # --- CopulaEnum-driven auto-import ---------------------------------------
 # Every member with a MODULE set is imported and exposed in this namespace
@@ -36,11 +36,13 @@ __all__ = [
     'ConditionalLaw',
     'BivariateFitResult',
     'BivariateBootstrapCI',
-    # Standard errors and the independence LR test (audit FR-4)
+    # Standard errors and the independence / sub-model LR tests (audit FR-4)
     'IndependenceLRTest',
     'StandardErrors',
+    'SubmodelLRTest',
     'independence_lr_test',
     'standard_errors',
+    'submodel_lr_test',
     # Copula families (source: CopulaEnum)
     *(m.CLASS_NAME for m in CopulaEnum if m.MODULE),
 ]
