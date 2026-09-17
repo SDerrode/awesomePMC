@@ -102,7 +102,9 @@ def test_available_count():
     # + A1290 + A12270 + A1490 + A14270 (FR-8, last round) = 34
     # + SurvivalBB1 + SurvivalBB190 + SurvivalBB1270 (FR-8, closing round,
     #   the audit's own "BB1 de survie") = 37
-    assert len(CopulaEnum.available()) == 37
+    # + BB6 (FR-9, the outer power of Joe: Joe at δ = 1, Gumbel at θ = 1)
+    # + Tawn3, the full asymmetric-logistic model (FR-9) = 39
+    assert len(CopulaEnum.available()) == 39
 
 
 def test_cubsec_long_name_english():

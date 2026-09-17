@@ -145,6 +145,25 @@ simulation (size and power, matched against the parametric bootstrap's own
 numbers on the same family/τ/N grid) rather than by claimed fidelity to a
 specific paper's exact statistic.
 
+Serial dependence: dependent multiplier bootstrap (FR-5)
+---------------------------------------------------------
+The ``ξ_i`` above are i.i.d., which is valid only for an i.i.d. sample of
+pairs. The pseudo-observations of a *state pair* of a Markov chain are not:
+``(y_n, y_{n+1})`` and ``(y_{n+1}, y_{n+2})`` share ``y_{n+1}`` (audit FR-5;
+Darsow, Nguyen & Olsen 1992; Chen & Fan 2006), and an i.i.d. multiplier
+bootstrap then reproduces only the short-run variance of ``α_n``, calibrating
+``T_n`` against a null that is too narrow — the test over-rejects.
+``bootstrap="dependent-multiplier"`` replaces the i.i.d. ``ξ`` by the
+serially dependent, kernel-smoothed multiplier sequence of
+:mod:`pmcprg.diagnostics.dependent_multiplier` (Bücher & Ruppert 2013;
+Bücher & Kojadinovic 2016), whose dependence length ``block_length = ℓ``
+defaults to the package's own Newey–West plug-in. Nothing else changes: the
+kernel ``K``, the query points and the statistic are identical, and ``ℓ = 1``
+gives back ``bootstrap="multiplier"`` bit for bit. See that module for the
+construction, the normalisation and what is verified rather than cited; see
+``pmcprg/tests/test_fr5_dependent_multiplier.py`` for the measured size and
+power on chains simulated from a fitted PMC.
+
 References (multiplier bootstrap)
 ----------------------------------
 * Kojadinovic, I. & Yan, J. (2011). A goodness-of-fit test for multivariate
@@ -179,6 +198,12 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.stats import kendalltau, rankdata
 
+from pmcprg.diagnostics.dependent_multiplier import (
+    MULTIPLIER_KERNELS,
+    MULTIPLIER_LAWS,
+    draw_multipliers,
+    resolve_block_length,
+)
 from pmcprg.numerics import EPS_MINUS_ONE, ONE_MINUS_EPS
 
 logger = logging.getLogger(__name__)
@@ -191,10 +216,18 @@ __all__ = ["RadialSymmetryResult", "radial_symmetry_statistic", "radial_symmetry
 MIN_N = 4
 
 #: Bootstrap calibration methods accepted by :func:`radial_symmetry_test`.
-BOOTSTRAP_METHODS = ("parametric", "multiplier")
-#: Multiplier laws accepted for ``bootstrap="multiplier"`` — both i.i.d.,
-#: mean 0, variance 1, as the multiplier CLT requires.
-MULTIPLIER_LAWS = ("normal", "rademacher")
+#: ``"dependent-multiplier"`` is FR-5's serially dependent variant of
+#: ``"multiplier"``; it coincides with it exactly at ``block_length=1``.
+BOOTSTRAP_METHODS = ("parametric", "multiplier", "dependent-multiplier")
+#: Multiplier laws accepted for the multiplier bootstraps — both i.i.d.,
+#: mean 0, variance 1, as the multiplier CLT requires (for
+#: ``"dependent-multiplier"`` this is the law of the *underlying* variates,
+#: before the kernel smoothing). Defined in
+#: :mod:`pmcprg.diagnostics.dependent_multiplier`, imported above and
+#: re-exported here so that ``radial_symmetry.MULTIPLIER_LAWS`` keeps working.
+#:
+#: Smoothing kernels for ``bootstrap="dependent-multiplier"``: see
+#: :data:`pmcprg.diagnostics.dependent_multiplier.MULTIPLIER_KERNELS`.
 
 
 @dataclass(frozen=True)
@@ -217,8 +250,14 @@ class RadialSymmetryResult:
                  diagnostics only (the multiplier bootstrap fits nothing).
     B          : int   — bootstrap replicates requested.
     n_valid    : int   — replicates that produced a finite statistic.
-    bootstrap  : str   — ``'parametric'`` (default) or ``'multiplier'``, the
-                 calibration method actually used — see the module docstring.
+    bootstrap  : str   — ``'parametric'`` (default), ``'multiplier'`` or
+                 ``'dependent-multiplier'``, the calibration method actually
+                 used — see the module docstring.
+    block_length : int — the multiplier dependence length ``ℓ`` actually used
+                 (FR-5). Always 1 for the two other methods, and 1 for
+                 ``'dependent-multiplier'`` means it coincided with the
+                 i.i.d. one; report it, since the whole question FR-5 raises
+                 is how much the answer moves with ``ℓ``.
     """
 
     statistic: float
@@ -230,6 +269,7 @@ class RadialSymmetryResult:
     B: int
     n_valid: int
     bootstrap: str = "parametric"
+    block_length: int = 1
 
 
 def _pseudo_obs(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -326,17 +366,9 @@ def _multiplier_kernel(
     return K
 
 
-def _draw_multipliers(n: int, B: int, rng: np.random.Generator, law: str) -> np.ndarray:
-    """``(n, B)`` i.i.d. mean-0, variance-1 multipliers."""
-    if law == "normal":
-        return rng.standard_normal(size=(n, B))
-    if law == "rademacher":
-        return rng.choice(np.array([-1.0, 1.0]), size=(n, B))
-    raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {law!r}.")
-
-
 def _multiplier_bootstrap_draws(
     u: np.ndarray, v: np.ndarray, *, B: int, seed: int, multiplier: str,
+    block_length: int = 1, block_kernel: str = "bartlett",
 ) -> np.ndarray:
     """``T_n^ξ`` for ``B`` multiplier replicates, vectorised over all of them at once.
 
@@ -345,13 +377,17 @@ def _multiplier_bootstrap_draws(
     product for all ``B`` replicates together — no resampling, no rank
     recomputation, no refit (contrast :func:`radial_symmetry_test`'s
     parametric-bootstrap loop, which pays for all three, B times).
+
+    ``block_length > 1`` makes the ``ξ`` serially dependent (FR-5); everything
+    else, including the kernel ``K``, is untouched.
     """
     n = u.size
     uq = np.concatenate([u, 1.0 - u])
     vq = np.concatenate([v, 1.0 - v])
     K = _multiplier_kernel(u, v, uq, vq)               # (2n, n)
     rng = np.random.default_rng(seed)
-    xi = _draw_multipliers(n, B, rng, multiplier)      # (n, B)
+    xi = draw_multipliers(n, B, rng, multiplier,
+                          block_length=block_length, kernel=block_kernel)  # (n, B)
     alpha = (K @ xi) / math.sqrt(n)                    # (2n, B)
     diff = alpha[:n, :] - alpha[n:, :]                 # (n, B): √n D_n^ξ(û_i, v̂_i)
     return np.mean(diff ** 2, axis=0)                  # (B,): T_n^ξ
@@ -367,6 +403,8 @@ def radial_symmetry_test(
     weights=None,
     bootstrap: str = "parametric",
     multiplier: str = "normal",
+    block_length: int | str = "auto",
+    block_kernel: str = "bartlett",
 ) -> RadialSymmetryResult:
     """Test H0: the copula of ``(x, y)`` is radially symmetric (FR-10).
 
@@ -388,11 +426,21 @@ def radial_symmetry_test(
                  error rather than a silently-wrong answer — see "Weighting"
                  in the module docstring for why this statistic has no
                  defensible weighted form here.
-    bootstrap  : ``'parametric'`` (default, unchanged from FR-10 round 1) or
-                 ``'multiplier'`` (FR-10 round 2, see the module docstring).
+    bootstrap  : ``'parametric'`` (default, unchanged from FR-10 round 1),
+                 ``'multiplier'`` (FR-10 round 2) or
+                 ``'dependent-multiplier'`` (FR-5) — see the module docstring.
     multiplier : ``'normal'`` (default) or ``'rademacher'`` — the i.i.d.
                  mean-0, variance-1 law of the multiplier bootstrap's ``ξ_i``.
                  Ignored when ``bootstrap='parametric'``.
+    block_length : the dependence length ``ℓ`` of the multiplier sequence,
+                 used **only** by ``bootstrap='dependent-multiplier'``. A
+                 positive int, or ``'auto'`` (the default) for the Newey–West
+                 plug-in of
+                 :func:`pmcprg.diagnostics.dependent_multiplier.auto_block_length`.
+                 ``1`` reproduces ``bootstrap='multiplier'`` exactly.
+    block_kernel : ``'bartlett'`` (default) or ``'parzen'``, the smoothing
+                 kernel of that sequence. Also only used by
+                 ``bootstrap='dependent-multiplier'``.
 
     Returns
     -------
@@ -409,8 +457,12 @@ def radial_symmetry_test(
         raise ValueError(f"alpha must be in (0, 1), got {alpha}.")
     if bootstrap not in BOOTSTRAP_METHODS:
         raise ValueError(f"bootstrap must be one of {BOOTSTRAP_METHODS}, got {bootstrap!r}.")
-    if bootstrap == "multiplier" and multiplier not in MULTIPLIER_LAWS:
+    if bootstrap.endswith("multiplier") and multiplier not in MULTIPLIER_LAWS:
         raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {multiplier!r}.")
+    if bootstrap == "dependent-multiplier" and block_kernel not in MULTIPLIER_KERNELS:
+        raise ValueError(
+            f"block_kernel must be one of {MULTIPLIER_KERNELS}, got {block_kernel!r}."
+        )
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -432,8 +484,12 @@ def radial_symmetry_test(
     tau_hat, _ = kendalltau(x, y)
     tau_hat = float(tau_hat) if np.isfinite(tau_hat) else 0.0
 
-    if bootstrap == "multiplier":
-        draws = _multiplier_bootstrap_draws(u, v, B=int(B), seed=seed, multiplier=multiplier)
+    ell = 1
+    if bootstrap == "dependent-multiplier":
+        ell = resolve_block_length(block_length, u, v, block_kernel)
+    if bootstrap.endswith("multiplier"):
+        draws = _multiplier_bootstrap_draws(u, v, B=int(B), seed=seed, multiplier=multiplier,
+                                            block_length=ell, block_kernel=block_kernel)
         draws = draws[np.isfinite(draws)]
     else:
         surrogate = _fit_gaussian_surrogate(tau_hat)
@@ -455,10 +511,11 @@ def radial_symmetry_test(
 
     logger.debug(
         "radial_symmetry_test: n=%d tau_hat=%.4f T_n=%.4f p=%.4f alpha=%.3f reject=%s "
-        "bootstrap=%s",
-        n, tau_hat, stat, p_value, alpha, reject, bootstrap,
+        "bootstrap=%s block_length=%d",
+        n, tau_hat, stat, p_value, alpha, reject, bootstrap, ell,
     )
     return RadialSymmetryResult(
         statistic=float(stat), p_value=p_value, reject=reject, alpha=float(alpha),
         n=int(n), tau_hat=tau_hat, B=int(B), n_valid=int(draws.size), bootstrap=bootstrap,
+        block_length=int(ell),
     )

@@ -63,11 +63,28 @@ margin_of, margin_sample          the pair margins f_ij of a general PMC
     xi_n(i, j); f_ij on F_ij(y_n) weighted by xi_n(i, j) and on F_ij(y_{n+1})
     weighted by xi_n(j, i). These need a model exposing K, margin_structure
     and margin(i, j) — duck-typed, the model class is not imported.
+draw_multipliers, auto_block_length, : serially dependent multipliers for the
+multiplier_weights,                    bootstrap of a copula functional on a
+multiplier_autocorrelation             Markov chain (audit FR-5). Consecutive
+    pairs share an observation, so an i.i.d. multiplier bootstrap is
+    calibrated against too narrow a null; smoothing the multipliers with a
+    kernel of dependence length l restores the long-run variance. Reached
+    through bootstrap="dependent-multiplier" on radial_symmetry_test,
+    exchangeability_test and rosenblatt_gof_test; see
+    pmcprg.diagnostics.dependent_multiplier for the construction.
 """
 
 from pmcprg.diagnostics.bootstrap import (
     BootstrapResult,
     parametric_bootstrap,
+)
+from pmcprg.diagnostics.dependent_multiplier import (
+    MULTIPLIER_KERNELS,
+    MULTIPLIER_LAWS,
+    auto_block_length,
+    draw_multipliers,
+    multiplier_autocorrelation,
+    multiplier_weights,
 )
 from pmcprg.diagnostics.exchangeability import (
     ExchangeabilityResult,
@@ -153,4 +170,10 @@ __all__ = [
     "ExchangeabilityResult",
     "exchangeability_statistic",
     "exchangeability_test",
+    "MULTIPLIER_KERNELS",
+    "MULTIPLIER_LAWS",
+    "auto_block_length",
+    "draw_multipliers",
+    "multiplier_autocorrelation",
+    "multiplier_weights",
 ]

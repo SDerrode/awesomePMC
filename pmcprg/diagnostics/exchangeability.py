@@ -203,6 +203,21 @@ frequency- or soft-label-weighted form. ``weights`` is accepted only to
 raise, so a caller passing ICE posteriors gets an explicit error instead of a
 silently wrong answer.
 
+Serial dependence: dependent multiplier bootstrap (FR-5)
+---------------------------------------------------------
+The ``ξ_i`` above are i.i.d., valid only for an i.i.d. sample of pairs. The
+pseudo-observations of a *state pair* of a Markov chain are not:
+``(y_n, y_{n+1})`` and ``(y_{n+1}, y_{n+2})`` share ``y_{n+1}`` (audit FR-5;
+Darsow, Nguyen & Olsen 1992; Chen & Fan 2006), so the i.i.d. multiplier
+bootstrap reproduces only the short-run variance of ``α_n`` and calibrates
+``T_n`` against a null that is too narrow. ``bootstrap="dependent-multiplier"``
+swaps the i.i.d. ``ξ`` for the kernel-smoothed, serially dependent sequence of
+:mod:`pmcprg.diagnostics.dependent_multiplier` (Bücher & Ruppert 2013; Bücher
+& Kojadinovic 2016) of dependence length ``block_length = ℓ``; nothing else
+changes, and ``ℓ = 1`` gives back ``bootstrap="multiplier"`` bit for bit. See
+that module for the construction and what is verified rather than cited, and
+``pmcprg/tests/test_fr5_dependent_multiplier.py`` for the measured effect.
+
 References (multiplier bootstrap)
 ----------------------------------
 * Kojadinovic, I. & Yan, J. (2011). A goodness-of-fit test for multivariate
@@ -242,6 +257,12 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.stats import kendalltau, rankdata
 
+from pmcprg.diagnostics.dependent_multiplier import (
+    MULTIPLIER_KERNELS,
+    MULTIPLIER_LAWS,
+    draw_multipliers,
+    resolve_block_length,
+)
 from pmcprg.numerics import EPS_MINUS_ONE, ONE_MINUS_EPS
 
 logger = logging.getLogger(__name__)
@@ -255,11 +276,15 @@ __all__ = ["ExchangeabilityResult", "exchangeability_statistic", "exchangeabilit
 MIN_N = 4
 
 #: Bootstrap calibration methods accepted by :func:`exchangeability_test`.
-BOOTSTRAP_METHODS = ("parametric", "multiplier")
-#: Multiplier laws accepted for ``bootstrap="multiplier"`` — both i.i.d.,
-#: mean 0, variance 1, as the multiplier CLT requires. Same choices as
-#: :mod:`pmcprg.diagnostics.radial_symmetry`.
-MULTIPLIER_LAWS = ("normal", "rademacher")
+#: ``"dependent-multiplier"`` is FR-5's serially dependent variant of
+#: ``"multiplier"``; it coincides with it exactly at ``block_length=1``.
+BOOTSTRAP_METHODS = ("parametric", "multiplier", "dependent-multiplier")
+#: Multiplier laws accepted for the multiplier bootstraps — both i.i.d.,
+#: mean 0, variance 1, as the multiplier CLT requires (for
+#: ``"dependent-multiplier"``, of the *underlying* variates, before the kernel
+#: smoothing). :data:`MULTIPLIER_LAWS` and :data:`MULTIPLIER_KERNELS` are
+#: imported above from :mod:`pmcprg.diagnostics.dependent_multiplier` and
+#: re-exported here, so ``exchangeability.MULTIPLIER_LAWS`` keeps working.
 
 
 @dataclass(frozen=True)
@@ -283,8 +308,11 @@ class ExchangeabilityResult:
                  diagnostics only (the multiplier bootstrap fits nothing).
     B          : int   — bootstrap replicates requested.
     n_valid    : int   — replicates that produced a finite statistic.
-    bootstrap  : str   — ``'parametric'`` (default) or ``'multiplier'``, the
-                 calibration method actually used — see the module docstring.
+    bootstrap  : str   — ``'parametric'`` (default), ``'multiplier'`` or
+                 ``'dependent-multiplier'``, the calibration method actually
+                 used — see the module docstring.
+    block_length : int — the multiplier dependence length ``ℓ`` actually used
+                 (FR-5); always 1 for the two other methods.
     """
 
     statistic: float
@@ -296,6 +324,7 @@ class ExchangeabilityResult:
     B: int
     n_valid: int
     bootstrap: str = "parametric"
+    block_length: int = 1
 
 
 def _pseudo_obs(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -391,30 +420,26 @@ def _multiplier_kernel(
     return K
 
 
-def _draw_multipliers(n: int, B: int, rng: np.random.Generator, law: str) -> np.ndarray:
-    """``(n, B)`` i.i.d. mean-0, variance-1 multipliers."""
-    if law == "normal":
-        return rng.standard_normal(size=(n, B))
-    if law == "rademacher":
-        return rng.choice(np.array([-1.0, 1.0]), size=(n, B))
-    raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {law!r}.")
-
-
 def _multiplier_bootstrap_draws(
     u: np.ndarray, v: np.ndarray, *, B: int, seed: int, multiplier: str,
+    block_length: int = 1, block_kernel: str = "bartlett",
 ) -> np.ndarray:
     """``T_n^ξ`` for ``B`` multiplier replicates, vectorised over all of them at once.
 
     Query points are the observed pairs and their **transpose** ``(v_i, u_i)``
     — not the reflection ``(1-u_i, 1-v_i)`` radial symmetry uses — matching
     ``T_n``'s own ``C_n(u,v) - C_n(v,u)`` difference (module docstring).
+
+    ``block_length > 1`` makes the ``ξ`` serially dependent (FR-5); the kernel
+    ``K`` and the query points are untouched.
     """
     n = u.size
     uq = np.concatenate([u, v])
     vq = np.concatenate([v, u])
     K = _multiplier_kernel(u, v, uq, vq)               # (2n, n)
     rng = np.random.default_rng(seed)
-    xi = _draw_multipliers(n, B, rng, multiplier)      # (n, B)
+    xi = draw_multipliers(n, B, rng, multiplier,
+                          block_length=block_length, kernel=block_kernel)  # (n, B)
     alpha = (K @ xi) / math.sqrt(n)                    # (2n, B)
     diff = alpha[:n, :] - alpha[n:, :]                 # (n, B): √n D_n^ξ(û_i, v̂_i)
     return np.mean(diff ** 2, axis=0)                  # (B,): T_n^ξ
@@ -430,6 +455,8 @@ def exchangeability_test(
     weights=None,
     bootstrap: str = "parametric",
     multiplier: str = "normal",
+    block_length: int | str = "auto",
+    block_kernel: str = "bartlett",
 ) -> ExchangeabilityResult:
     """Test H0: the copula of ``(x, y)`` is exchangeable, ``C(u,v) = C(v,u)`` (FR-10).
 
@@ -449,11 +476,20 @@ def exchangeability_test(
     alpha      : significance level for :attr:`ExchangeabilityResult.reject`.
     weights    : must be ``None`` — see "Weighting" in the module docstring.
     bootstrap  : ``'parametric'`` (default, unchanged from FR-10's first
-                 round for this item) or ``'multiplier'`` (FR-10 closing
-                 round, see the module docstring).
+                 round for this item), ``'multiplier'`` (FR-10 closing round)
+                 or ``'dependent-multiplier'`` (FR-5) — see the module
+                 docstring.
     multiplier : ``'normal'`` (default) or ``'rademacher'`` — the i.i.d.
                  mean-0, variance-1 law of the multiplier bootstrap's ``ξ_i``.
                  Ignored when ``bootstrap='parametric'``.
+    block_length : the dependence length ``ℓ`` of the multiplier sequence,
+                 used **only** by ``bootstrap='dependent-multiplier'``. A
+                 positive int, or ``'auto'`` (default) for the Newey–West
+                 plug-in of
+                 :func:`pmcprg.diagnostics.dependent_multiplier.auto_block_length`.
+                 ``1`` reproduces ``bootstrap='multiplier'`` exactly.
+    block_kernel : ``'bartlett'`` (default) or ``'parzen'``; only used by
+                 ``bootstrap='dependent-multiplier'``.
 
     Returns
     -------
@@ -470,8 +506,12 @@ def exchangeability_test(
         raise ValueError(f"alpha must be in (0, 1), got {alpha}.")
     if bootstrap not in BOOTSTRAP_METHODS:
         raise ValueError(f"bootstrap must be one of {BOOTSTRAP_METHODS}, got {bootstrap!r}.")
-    if bootstrap == "multiplier" and multiplier not in MULTIPLIER_LAWS:
+    if bootstrap.endswith("multiplier") and multiplier not in MULTIPLIER_LAWS:
         raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {multiplier!r}.")
+    if bootstrap == "dependent-multiplier" and block_kernel not in MULTIPLIER_KERNELS:
+        raise ValueError(
+            f"block_kernel must be one of {MULTIPLIER_KERNELS}, got {block_kernel!r}."
+        )
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -493,8 +533,12 @@ def exchangeability_test(
     tau_hat, _ = kendalltau(x, y)
     tau_hat = float(tau_hat) if np.isfinite(tau_hat) else 0.0
 
-    if bootstrap == "multiplier":
-        draws = _multiplier_bootstrap_draws(u, v, B=int(B), seed=seed, multiplier=multiplier)
+    ell = 1
+    if bootstrap == "dependent-multiplier":
+        ell = resolve_block_length(block_length, u, v, block_kernel)
+    if bootstrap.endswith("multiplier"):
+        draws = _multiplier_bootstrap_draws(u, v, B=int(B), seed=seed, multiplier=multiplier,
+                                            block_length=ell, block_kernel=block_kernel)
         draws = draws[np.isfinite(draws)]
     else:
         surrogate = _fit_gaussian_surrogate(tau_hat)
@@ -516,10 +560,11 @@ def exchangeability_test(
 
     logger.debug(
         "exchangeability_test: n=%d tau_hat=%.4f T_n=%.4f p=%.4f alpha=%.3f reject=%s "
-        "bootstrap=%s",
-        n, tau_hat, stat, p_value, alpha, reject, bootstrap,
+        "bootstrap=%s block_length=%d",
+        n, tau_hat, stat, p_value, alpha, reject, bootstrap, ell,
     )
     return ExchangeabilityResult(
         statistic=float(stat), p_value=p_value, reject=reject, alpha=float(alpha),
         n=int(n), tau_hat=tau_hat, B=int(B), n_valid=int(draws.size), bootstrap=bootstrap,
+        block_length=int(ell),
     )

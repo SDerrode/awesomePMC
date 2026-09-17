@@ -31,8 +31,11 @@ _COPULA_KLASS_CACHE: dict = {}
 # OF TRUTH: standalone fitting (``CopulaVirt.fit`` below) reads it directly, and
 # ICE-driven fitting (``pmcprg.pmc.ice.EXTRA_PARAM_BOUNDS``) derives its
 # class-keyed view from this dict + the registry — so the two cannot drift
-# (audit A-2). Currently: BB1 ``delta``, Student ``df``, Tawn ``psi`` (FR-9),
-# t-EV ``nu`` (FR-9).
+# (audit A-2). Currently: BB1 ``delta``, Student ``df``, Tawn types 1/2
+# ``psi`` (FR-9), t-EV ``nu`` (FR-9), BB6 ``delta6`` (FR-9),
+# three-parameter Tawn ``psi_u``/``psi_v`` (FR-9 — the first family with
+# *two* extra parameters; every consumer of this dict iterates it, so
+# nothing here caps their number).
 #
 # Every bound is itself admissible (audit RB-4/FR-3): the Student copula
 # requires ν > 2 and refuses ν = 2.0, where the former lower bound sat — the
@@ -53,6 +56,23 @@ EXTRA_PARAM_BOUNDS_BY_PARAM: dict[str, tuple[float, float, float]] = {
     # Every (τ, ν) is a t-EV copula, so no joint constraint; the box is the
     # validated range of the fit (the constructor accepts 0.05 ≤ ν ≤ 1e4).
     "nu":    (0.5,   100.0,  4.0),
+    # BB6 (FR-9): the outer-power exponent δ ≥ 1, under its own name — not
+    # BB1's ``delta``, whose ``_two_parameter_spec`` branch carries BB1's own
+    # ``τ = 1 − 2/(δ(θ+2))`` map (``pmcprg.copulas.archimedean.bb6``,
+    # "Parametrisation"), exactly as t-EV's ``nu`` is not Student's ``df``.
+    # Jointly constrained with τ (δ ≤ 1/(1 − τ)); the init 1.0 is the Joe
+    # member, admissible at every registered τ, as Tawn's ψ = 1 is, and the
+    # upper bound 10 is admissible for τ ≥ 0.9 only, as BB1's δ = 10 is.
+    "delta6": (1.0,   10.0,  1.0),
+    # Three-parameter Tawn (FR-9, round 5): the two weights of the full
+    # asymmetric-logistic model, same box as ``psi`` (each is a weight in
+    # (0, 1] and the init 1.0 is the Gumbel corner, admissible at every
+    # τ < 1). They are *jointly* constrained with τ — τ < 1/(1/ψ_u + 1/ψ_v − 1)
+    # — which no box expresses, hence ``CopulaTawn3.constructible_params``.
+    # Distinct names from ``psi``: ``_two_parameter_spec`` dispatches on the
+    # names, and a family's extras must be distinguishable one from another.
+    "psi_u": (0.01,    1.0,  1.0),
+    "psi_v": (0.01,    1.0,  1.0),
 }
 
 # τ-bound padding for the bounded optimisers (``fit(method='mle')`` here,
@@ -163,6 +183,19 @@ class CopulaEnum(CopulaDataMixin, Enum):
     SURVIVAL_BB1     = 35, "SBB1",    "Survival BB1 (Joe-Clayton)",         "SurvivalBB1",    True, ["tau_k", "delta"], [0.0 + EPS, 1.0],   "pmcprg.copulas.archimedean.survival"
     SURVIVAL_BB190   = 36, "SBB190",  "Survival BB1 (90° rotation)",        "SurvivalBB190",  True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],  "pmcprg.copulas.archimedean.rotated"
     SURVIVAL_BB1270  = 37, "SBB1270", "Survival BB1 (270° rotation)",       "SurvivalBB1270", True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],  "pmcprg.copulas.archimedean.rotated"
+    # FR-9: BB6, the outer power (Gumbel transform) of Joe — Joe at δ = 1,
+    # Gumbel–Hougaard at θ = 1, λ_U = 2 − 2^{1/(θδ)} and λ_L = 0. Its second
+    # parameter is registered as ``delta6``, not ``delta``, so the joint
+    # fitter cannot route it through BB1's branch
+    # (``pmcprg.copulas.archimedean.bb6`` module docstring). The τ-range is
+    # Joe's own: every τ ∈ (0, 1) is reached, at δ = 1.
+    BB6              = 38, "BB6",     "BB6 (Joe-Gumbel)",                   "CopulaBB6",      True, ["tau_k", "delta6"], [0.0 + EPS, 1.0],  "pmcprg.copulas.archimedean.bb6"
+    # FR-9, round 5: the full asymmetric-logistic Tawn model, both weights
+    # free — the FIRST family here with three parameters (τ + two extras).
+    # Its τ-range is Tawn 1/2's own [0+ε, 1]; the pair (ψ_u, ψ_v) narrows the
+    # *reachable* τ jointly (``CopulaTawn3.reachable_tau_cap``), not the
+    # registered range, exactly as BB1's δ does.
+    TAWN3            = 39, "Tawn3",   "Tawn (asymmetric logistic, 3 par.)", "CopulaTawn3",    True, ["tau_k", "psi_u", "psi_v"], [0.0 + EPS, 1.0], "pmcprg.copulas.extreme_value.tawn"
 
     def describe(self):
         return self.name, self.value

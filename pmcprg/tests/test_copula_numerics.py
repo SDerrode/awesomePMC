@@ -41,7 +41,13 @@ def _build(entry: CopulaEnum, tau: float):
         kwargs["delta"] = 1.5          # BB1: effective lower τ-bound ≈ 1/3
     if "df" in entry.value.PARAMETERS_SET_NAME:
         kwargs["df"] = 4.0
-    return entry.klass(**kwargs)
+    # Any other extra keeps its constructor default (Tawn's ψ = 1, t-EV's ν).
+    # A family whose parameters are *jointly* constrained may still refuse the
+    # pair — Tawn 3 does not at ψ_u = ψ_v = 1 (its cap is then 1), but that is
+    # a property of its defaults, not something this sweep should rely on — so
+    # route through the family's own repair hook, which is the identity at
+    # every triple the constructor accepts (FR-9, round 5).
+    return entry.klass(**entry.klass.constructible_params(kwargs))
 
 
 def _taus(entry: CopulaEnum) -> list[float]:

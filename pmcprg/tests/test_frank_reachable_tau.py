@@ -75,13 +75,17 @@ def test_frank_constructible_range_is_the_reachable_range():
 # at 1e6, reaching τ ≈ 1 − 1.13e-6. Tawn types 1/2 likewise since FR-9 round 3
 # (test_tawn.py) — θ capped at 1e6, reaching τ = 1 − 1e-6 at ψ = 1. t-EV
 # too since FR-9's last round (test_t_ev.py) — τ capped at 1 − 1.25e-6 for
-# every ν.
+# every ν. Tawn3 shares the two-parameter types' bound, inheriting it from
+# their common base (FR-9, round 5, test_tawn3.py): the Gumbel corner
+# ψ_u = ψ_v = 1 is the largest τ the weights reach, so the cap is the same
+# 1 − 1e-6.
 @pytest.mark.parametrize("entry", [e for e in CopulaEnum if e.value.AVAILABLE and e is not FRANK
                                    and e is not CopulaEnum.PLACKETT
                                    and e is not CopulaEnum.GALAMBOS
                                    and e is not CopulaEnum.HUSLER_REISS
                                    and e is not CopulaEnum.TAWN1
                                    and e is not CopulaEnum.TAWN2
+                                   and e is not CopulaEnum.TAWN3
                                    and e is not CopulaEnum.TEV],
                          ids=lambda e: e.value.SHORT_NAME)
 def test_other_families_are_unchanged(entry):

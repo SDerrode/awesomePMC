@@ -1,6 +1,7 @@
 from pmcprg.copulas.extreme_value.galambos import CopulaGalambos
 from pmcprg.copulas.extreme_value.husler_reiss import CopulaHuslerReiss
 from pmcprg.copulas.extreme_value.t_ev import CopulaTEV
-from pmcprg.copulas.extreme_value.tawn import CopulaTawn1, CopulaTawn2
+from pmcprg.copulas.extreme_value.tawn import CopulaTawn1, CopulaTawn2, CopulaTawn3
 
-__all__ = ['CopulaGalambos', 'CopulaHuslerReiss', 'CopulaTawn1', 'CopulaTawn2', 'CopulaTEV']
+__all__ = ['CopulaGalambos', 'CopulaHuslerReiss', 'CopulaTawn1', 'CopulaTawn2',
+           'CopulaTawn3', 'CopulaTEV']

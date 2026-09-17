@@ -224,6 +224,21 @@ transcription of a published formula for the Rosenblatt-transform GoF
 statistic specifically, and it explicitly omits a parameter-estimation
 correction rather than guessing one.
 
+Serial dependence: dependent multiplier bootstrap (FR-5)
+---------------------------------------------------------
+``β_n^ξ``'s ``ξ_i`` are i.i.d., which assumes an i.i.d. sample of pairs. A
+state pair of a Markov chain does not give one: ``(y_n, y_{n+1})`` and
+``(y_{n+1}, y_{n+2})`` share ``y_{n+1}`` (audit FR-5; Darsow, Nguyen & Olsen
+1992; Chen & Fan 2006). ``bootstrap="dependent-multiplier"`` replaces them by
+the kernel-smoothed, serially dependent multiplier sequence of
+:mod:`pmcprg.diagnostics.dependent_multiplier` (Bücher & Ruppert 2013; Bücher
+& Kojadinovic 2016) of dependence length ``block_length = ℓ``, leaving ``Ĝ_n``
+and the statistic untouched; ``ℓ = 1`` reproduces ``bootstrap="multiplier"``
+bit for bit. Note that this fixes *only* the i.i.d.-data assumption: the
+omitted parameter-estimation correction documented above is orthogonal to it
+and still applies, so ``bootstrap="dependent-multiplier"`` inherits this
+statistic's conservativeness on top of whatever the serial dependence does.
+
 References (multiplier bootstrap)
 ----------------------------------
 * Kojadinovic, I. & Yan, J. (2011). A goodness-of-fit test for multivariate
@@ -274,6 +289,12 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.stats import rankdata
 
+from pmcprg.diagnostics.dependent_multiplier import (
+    MULTIPLIER_KERNELS,
+    MULTIPLIER_LAWS,
+    draw_multipliers,
+    resolve_block_length,
+)
 from pmcprg.numerics import EPS, ONE_MINUS_EPS
 
 logger = logging.getLogger(__name__)
@@ -291,11 +312,15 @@ __all__ = [
 MIN_N = 4
 
 #: Bootstrap calibration methods accepted by :func:`rosenblatt_gof_test`.
-BOOTSTRAP_METHODS = ("parametric", "multiplier")
-#: Multiplier laws accepted for ``bootstrap="multiplier"`` — both i.i.d.,
-#: mean 0, variance 1, as the multiplier CLT requires. Same choices as
-#: :mod:`pmcprg.diagnostics.radial_symmetry`.
-MULTIPLIER_LAWS = ("normal", "rademacher")
+#: ``"dependent-multiplier"`` is FR-5's serially dependent variant of
+#: ``"multiplier"``; it coincides with it exactly at ``block_length=1``.
+BOOTSTRAP_METHODS = ("parametric", "multiplier", "dependent-multiplier")
+#: Multiplier laws accepted for the multiplier bootstraps — both i.i.d.,
+#: mean 0, variance 1, as the multiplier CLT requires (for
+#: ``"dependent-multiplier"``, of the *underlying* variates, before the kernel
+#: smoothing). :data:`MULTIPLIER_LAWS` and :data:`MULTIPLIER_KERNELS` are
+#: imported above from :mod:`pmcprg.diagnostics.dependent_multiplier` and
+#: re-exported here, so ``rosenblatt.MULTIPLIER_LAWS`` keeps working.
 
 
 @dataclass(frozen=True)
@@ -320,8 +345,11 @@ class RosenblattGoFResult:
                  or a Rosenblatt transform can fail on a degenerate
                  replicate; such replicates are dropped, not counted as 0).
                  For ``bootstrap='multiplier'`` no replicate is dropped.
-    bootstrap  : str   — ``'parametric'`` (default) or ``'multiplier'``, the
-                 calibration method actually used — see the module docstring.
+    bootstrap  : str   — ``'parametric'`` (default), ``'multiplier'`` or
+                 ``'dependent-multiplier'``, the calibration method actually
+                 used — see the module docstring.
+    block_length : int — the multiplier dependence length ``ℓ`` actually used
+                 (FR-5); always 1 for the two other methods.
     """
 
     statistic: float
@@ -334,6 +362,7 @@ class RosenblattGoFResult:
     B: int
     n_valid: int
     bootstrap: str = "parametric"
+    block_length: int = 1
 
 
 def _pseudo_obs(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -410,17 +439,9 @@ def rosenblatt_statistic(U: np.ndarray, V: np.ndarray) -> float:
 # to linearise.
 # ---------------------------------------------------------------------------
 
-def _draw_multipliers(n: int, B: int, rng: np.random.Generator, law: str) -> np.ndarray:
-    """``(n, B)`` i.i.d. mean-0, variance-1 multipliers."""
-    if law == "normal":
-        return rng.standard_normal(size=(n, B))
-    if law == "rademacher":
-        return rng.choice(np.array([-1.0, 1.0]), size=(n, B))
-    raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {law!r}.")
-
-
 def _multiplier_bootstrap_draws(
     U: np.ndarray, V: np.ndarray, *, B: int, seed: int, multiplier: str,
+    block_length: int = 1, block_kernel: str = "bartlett",
 ) -> np.ndarray:
     """``S_n^ξ`` for ``B`` multiplier replicates, vectorised over all of them at once.
 
@@ -428,6 +449,9 @@ def _multiplier_bootstrap_draws(
     (module docstring); one ``(n × n)`` kernel built once from the observed
     transformed sample, then one ``(n × n) @ (n × B)`` matrix product for all
     ``B`` replicates together — no resampling, no refit.
+
+    ``block_length > 1`` makes the ``ξ`` serially dependent (FR-5); ``Ĝ_n``
+    and the kernel are untouched.
     """
     n = U.size
     Gn = _empirical_cdf_at(U, V, U, V)                          # (n,)
@@ -435,7 +459,8 @@ def _multiplier_bootstrap_draws(
     le_v = (V[None, :] <= V[:, None]).astype(float)             # (n, n)
     K = (le_u * le_v) - Gn[:, None]                             # (n, n)
     rng = np.random.default_rng(seed)
-    xi = _draw_multipliers(n, B, rng, multiplier)               # (n, B)
+    xi = draw_multipliers(n, B, rng, multiplier,
+                          block_length=block_length, kernel=block_kernel)   # (n, B)
     beta = (K @ xi) / math.sqrt(n)                              # (n, B)
     return np.mean(beta ** 2, axis=0)                           # (B,): S_n^ξ
 
@@ -452,6 +477,8 @@ def rosenblatt_gof_test(
     weights=None,
     bootstrap: str = "parametric",
     multiplier: str = "normal",
+    block_length: int | str = "auto",
+    block_kernel: str = "bartlett",
 ) -> RosenblattGoFResult:
     """Test H0: ``(x, y)`` is drawn from ``family_cls`` (FR-10, Rosenblatt).
 
@@ -482,11 +509,22 @@ def rosenblatt_gof_test(
     alpha      : significance level for :attr:`RosenblattGoFResult.reject`.
     weights    : must be ``None`` — see "Weighting" in the module docstring.
     bootstrap  : ``'parametric'`` (default, unchanged from FR-10's first
-                 round for this item) or ``'multiplier'`` (FR-10 closing
-                 round, see the module docstring).
+                 round for this item), ``'multiplier'`` (FR-10 closing round)
+                 or ``'dependent-multiplier'`` (FR-5) — see the module
+                 docstring.
     multiplier : ``'normal'`` (default) or ``'rademacher'`` — the i.i.d.
                  mean-0, variance-1 law of the multiplier bootstrap's ``ξ_i``.
                  Ignored when ``bootstrap='parametric'``.
+    block_length : the dependence length ``ℓ`` of the multiplier sequence,
+                 used **only** by ``bootstrap='dependent-multiplier'``. A
+                 positive int, or ``'auto'`` (default) for the Newey–West
+                 plug-in of
+                 :func:`pmcprg.diagnostics.dependent_multiplier.auto_block_length`
+                 (selected on the *Rosenblatt-transformed* sample, which is
+                 what this statistic's empirical process is built from).
+                 ``1`` reproduces ``bootstrap='multiplier'`` exactly.
+    block_kernel : ``'bartlett'`` (default) or ``'parzen'``; only used by
+                 ``bootstrap='dependent-multiplier'``.
 
     Returns
     -------
@@ -505,8 +543,12 @@ def rosenblatt_gof_test(
         raise ValueError(f"method must be 'tau' or 'mle', got {method!r}.")
     if bootstrap not in BOOTSTRAP_METHODS:
         raise ValueError(f"bootstrap must be one of {BOOTSTRAP_METHODS}, got {bootstrap!r}.")
-    if bootstrap == "multiplier" and multiplier not in MULTIPLIER_LAWS:
+    if bootstrap.endswith("multiplier") and multiplier not in MULTIPLIER_LAWS:
         raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {multiplier!r}.")
+    if bootstrap == "dependent-multiplier" and block_kernel not in MULTIPLIER_KERNELS:
+        raise ValueError(
+            f"block_kernel must be one of {MULTIPLIER_KERNELS}, got {block_kernel!r}."
+        )
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -527,8 +569,12 @@ def rosenblatt_gof_test(
     U, V = rosenblatt_transform(u, v, fit.copula)
     stat = rosenblatt_statistic(U, V)
 
-    if bootstrap == "multiplier":
-        draws = _multiplier_bootstrap_draws(U, V, B=int(B), seed=seed, multiplier=multiplier)
+    ell = 1
+    if bootstrap == "dependent-multiplier":
+        ell = resolve_block_length(block_length, U, V, block_kernel)
+    if bootstrap.endswith("multiplier"):
+        draws = _multiplier_bootstrap_draws(U, V, B=int(B), seed=seed, multiplier=multiplier,
+                                            block_length=ell, block_kernel=block_kernel)
         draws = draws[np.isfinite(draws)]
     else:
         rng = np.random.default_rng(seed)
@@ -554,11 +600,11 @@ def rosenblatt_gof_test(
 
     logger.debug(
         "rosenblatt_gof_test: n=%d family=%s tau_hat=%.4f S_n=%.4f p=%.4f "
-        "alpha=%.3f reject=%s bootstrap=%s",
-        n, family_cls.__name__, fit.tau_k, stat, p_value, alpha, reject, bootstrap,
+        "alpha=%.3f reject=%s bootstrap=%s block_length=%d",
+        n, family_cls.__name__, fit.tau_k, stat, p_value, alpha, reject, bootstrap, ell,
     )
     return RosenblattGoFResult(
         statistic=float(stat), p_value=p_value, reject=reject, alpha=float(alpha),
         n=int(n), family=family_cls.__name__, tau_hat=float(fit.tau_k),
-        B=int(B), n_valid=int(draws.size), bootstrap=bootstrap,
+        B=int(B), n_valid=int(draws.size), bootstrap=bootstrap, block_length=int(ell),
     )

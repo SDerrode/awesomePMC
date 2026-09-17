@@ -331,6 +331,43 @@ def test_copula_dialog_one_param_family_no_extras(qapp):
     assert set(out.keys()) == {"name", "tau"}
 
 
+def test_copula_dialog_exposes_both_weights_of_tawn3(qapp):
+    """A family with **two** extra parameters (FR-9, round 5): the dialog
+    builds its widgets from ``EXTRA_PARAM_BOUNDS``, so nothing in the GUI had
+    to change — this pins that down.
+    """
+    from pmcprg.pmc.gui.dialogs import _CopulaDialog
+
+    blk = {"i": 1, "j": 0, "name": "Tawn3", "tau": 0.4, "psi_u": 0.8, "psi_v": 0.6}
+    dlg = _CopulaDialog(blk)
+    out = dlg.get_block()
+    assert out["name"] == "Tawn3"
+    assert abs(out["psi_u"] - 0.8) < 1e-3 and abs(out["psi_v"] - 0.6) < 1e-3
+    assert set(out) == {"name", "tau", "psi_u", "psi_v"}
+    # Both spin boxes carry the registered box, and only they are shown.
+    for key in ("psi_u", "psi_v"):
+        lbl, spin = dlg._extra_widgets[key]
+        assert lbl.isVisibleTo(dlg) and spin.isVisibleTo(dlg)
+        assert (spin.minimum(), spin.maximum()) == (0.01, 1.0)
+    for key in ("delta", "df", "nu", "psi"):
+        lbl, _ = dlg._extra_widgets[key]
+        assert not lbl.isVisibleTo(dlg), f"{key} must be hidden for Tawn3"
+
+
+def test_copula_dialog_switches_between_one_and_two_extra_families(qapp):
+    """Switching family must show exactly the new family's extras — the two
+    Tawn 3 weights appear and disappear together."""
+    from pmcprg.pmc.gui.dialogs import _CopulaDialog
+
+    dlg = _CopulaDialog({"i": 0, "j": 0, "name": "Tawn3", "tau": 0.4})
+    for name, expected in (("Tawn1", {"psi"}), ("Student", {"df"}), ("Clayton", set()),
+                           ("Tawn3", {"psi_u", "psi_v"})):
+        dlg._name.setCurrentText(name)
+        shown = {k for k, (lbl, _) in dlg._extra_widgets.items() if lbl.isVisibleTo(dlg)}
+        assert shown == expected, name
+        assert set(dlg.get_block()) == {"name", "tau"} | expected
+
+
 # ---------------------------------------------------------------------------
 # B3: _MarginDialog tolerates commas and rejects junk
 # ---------------------------------------------------------------------------

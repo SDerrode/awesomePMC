@@ -510,8 +510,8 @@ def _oakes_one_pair_scalar(
 # Two-parameter families (BB1, Student): the matrix generalisation
 # ---------------------------------------------------------------------------
 
-def _hessian_and_phi(spec, uv: np.ndarray, xi: np.ndarray, h: float) -> tuple[np.ndarray, np.ndarray]:
-    """φ_n (n, p) and the ξ-weighted complete-data curvature (p, p) at ``spec.psi``.
+def _logc_derivatives(spec, uv: np.ndarray, h: float) -> tuple[np.ndarray, np.ndarray]:
+    """Per-observation ``∂ log c/∂ψ`` (n, p) and ``∂² log c/∂ψ∂ψᵀ`` (n, p, p).
 
     ``p = spec.psi.size`` — 1 for a one-parameter family, 2 for BB1/Student
     (this function is generic in p; only the two-parameter path calls it in
@@ -520,11 +520,15 @@ def _hessian_and_phi(spec, uv: np.ndarray, xi: np.ndarray, h: float) -> tuple[np
     code reproduces :func:`_oakes_one_pair_scalar`'s numbers). Central
     differences of ``spec.build(psi).logpdf_array(uv)``, same stencil (and,
     for a one-parameter family, same step ``h``) as the scalar path and as
-    :func:`pmcprg.copulas._stderr._derivatives`, which this mirrors — dotted
-    with ``xi`` (a *sum*, "term 1" of Oakes' identity) rather than averaged
-    with weights ``w`` (a *mean*, :mod:`pmcprg.copulas._stderr`'s sandwich
-    curvature ``B``), and without that module's ``ranks`` margin corrections
-    (not needed here: this pilot holds margins fixed).
+    :func:`pmcprg.copulas._stderr._derivatives`, which this mirrors: one
+    second difference per coordinate on the diagonal, the standard 4-point
+    mixed central difference off it.
+
+    Split out of :func:`_hessian_and_phi` (which weights the curvature by ξ
+    and sums it, Oakes' "term 1") so that the *per-observation* curvature is
+    available to :mod:`pmcprg.pmc._lystig_hughes`, whose recursion needs
+    ``∂² log W[n]/∂ψ∂ψᵀ`` at every n rather than one ξ-weighted total. The
+    arithmetic is unchanged, operation for operation.
     """
     psi = spec.psi
     p = psi.size
@@ -546,6 +550,19 @@ def _hessian_and_phi(spec, uv: np.ndarray, xi: np.ndarray, h: float) -> tuple[np
             mixed = (ll(psi + h * (eye[a] + eye[c])) - ll(psi + h * (eye[a] - eye[c]))
                      - ll(psi - h * (eye[a] - eye[c])) + ll(psi - h * (eye[a] + eye[c])))
             curvature[:, a, c] = curvature[:, c, a] = mixed / (4.0 * h * h)
+    return phi, curvature
+
+
+def _hessian_and_phi(spec, uv: np.ndarray, xi: np.ndarray, h: float) -> tuple[np.ndarray, np.ndarray]:
+    """φ_n (n, p) and the ξ-weighted complete-data curvature (p, p) at ``spec.psi``.
+
+    The derivatives themselves come from :func:`_logc_derivatives`; here they
+    are dotted with ``xi`` (a *sum*, "term 1" of Oakes' identity) rather than
+    averaged with weights ``w`` (a *mean*, :mod:`pmcprg.copulas._stderr`'s
+    sandwich curvature ``B``), and without that module's ``ranks`` margin
+    corrections (not needed here: this pilot holds margins fixed).
+    """
+    phi, curvature = _logc_derivatives(spec, uv, h)
     info_complete = -np.einsum("n,nab->ab", xi, curvature)
     info_complete = 0.5 * (info_complete + info_complete.T)
     return phi, info_complete

@@ -26,11 +26,12 @@ def _registered_families() -> list:
     """One instance per registered, available copula family.
 
     Derived from :class:`CopulaEnum` instead of a hand-written list: this
-    suite used to name only 9 of the 17 families, so the 8 it omitted were
-    never checked for normalisation or PDF–CDF consistency. That is how a
-    spurious θ factor in the Joe density — which made ∫∫c integrate to θ
-    rather than 1 — survived here undetected. A family added to the registry
-    is now covered automatically.
+    suite used to name 9 families by hand, out of the 17 registered at the
+    time, so the 8 it omitted were never checked for normalisation or
+    PDF–CDF consistency. That is how a spurious θ factor in the Joe density
+    — which made ∫∫c integrate to θ rather than 1 — survived here
+    undetected. A family added to the registry is now covered automatically,
+    which is what has kept this suite in step as the registry grew to 39.
     """
     params = []
     for entry in CopulaEnum:

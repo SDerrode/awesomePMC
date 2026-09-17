@@ -9,6 +9,585 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — documentation back in step with the 39-family registry
+
+- **`README.md`** advertised "17 copula families" in three places and its
+  table stopped at Plackett, 22 families behind `CopulaEnum`. The list is now
+  grouped by construction (elliptical, Archimedean, survival, extreme-value,
+  explicit, 90°/270° rotations), and A12/A14 are labelled *both* tails, not
+  *upper* — `λ_L = 2^(−1/θ)` and `1/2` respectively are not zero.
+- **`pmcprg/tests/test_docs_copula_registry.py`** (new) fails when a count in
+  `README.md` or `pmcprg/__init__.py` diverges from
+  `len(CopulaEnum.available())`, or when a registered `SHORT_NAME` is absent
+  from the README, naming what to update. Two assertions, ~0.7 s.
+- **`_kendall_reference`** (`pmcprg.pmc.gui.main_window`) claimed a closed-form
+  `K_θ` "for the Archimedean ones" only. Since FR-9 it also holds for the six
+  extreme-value families — `K_θ(t) = t − (1 − τ)·t·log t` whatever the
+  Pickands function (Ghoudi, Khoudraji & Rivest 1998), verified against 10⁵
+  draws (deviation ≤ 0.0023 vs. a Monte-Carlo se of 0.0016, where Clayton,
+  Frank, BB6, survival Joe and Gaussian miss by 0.02–0.07).
+- **`MAX_AR_ITER`** (`pmcprg.copulas.bivariate`) was documented as the cap
+  "comfortable for all 17 copulas". Its number was not stale, its premise was:
+  `sample_conditional` has drawn by Rosenblatt inversion since 0.5.0, nothing
+  reads the constant and `SamplingConvergenceError` is never raised. Documented
+  as retained for backward compatibility instead of renumbered.
+
+### Added — Lystig–Hughes extended to two-parameter copulas and to re-estimated margins (FR-4)
+
+- **`ice_lh_information(model, Y, fit_margins=…)`**
+  (`pmcprg.pmc._lystig_hughes`) now covers the two axes its own report named
+  as next. The scaled derivative recursion is unchanged: θ grows, and every
+  new coordinate enters through the per-step weight derivatives `W_r`,
+  `W_rs` (and, for a margin coordinate, the initial step `a_1 = π ∘ f(y_1)`).
+- **Two-parameter families (BB1, Student).** A pair contributes two θ
+  coordinates, `psi_ij_0`/`psi_ij_1`, taken from
+  `pmcprg.copulas._stderr._spec_of` — the same working coordinate
+  (`(log θ, log(δ − 1))` for BB1, `(atanh τ, log(ν − 2))` for Student) and
+  the same analytic Jacobian to the reported (τ, δ, θ) / (τ, ν, ρ) that
+  `pmcprg.pmc._oakes`'s own two-parameter path uses. The per-observation
+  `∂ log c/∂ψ` and the 2×2 `∂² log c/∂ψ∂ψᵀ` (4-point mixed central
+  difference off the diagonal) come from the new
+  `pmcprg.pmc._oakes._logc_derivatives`, split out of `_hessian_and_phi`
+  operation for operation so Oakes' numbers are unchanged. Cross terms
+  between two *different* pairs' ψ are exactly zero. **Tawn and t-EV are
+  out of scope and refused**: `_spec_of` has no `_Spec` for them, i.e. no
+  registered working coordinate and no analytic Jacobian — registering
+  those is a `_stderr` job.
+- **Re-estimated margins (`fit_margins=True`).** The `2K` coordinates
+  `(μ_k, log σ_k)` of the Gaussian state margins — the case
+  `pmcprg.pmc._godambe` piloted, chosen so the two methods compare on one
+  fixture — join θ between the prior and the copula blocks. A margin
+  coordinate enters `log W[n, i, j] = log A_ij + log f_j(y_{n+1}) +
+  log c_ij(F_i(y_n), F_j(y_{n+1}))` through **two** paths: the emission
+  `∂ log f_k`, analytic (`∂/∂μ = z/σ`, `∂/∂log σ = z² − 1`, and the three
+  second derivatives), and the copula's arguments. The second is
+  differenced *as a composition* — perturb (μ, σ) by ±10⁻⁴, recompute the
+  clipped CDF column, re-evaluate `logpdf_array` — rather than chaining
+  `∂ log c/∂u · ∂F/∂η`, which needs no step in `u` near 0 or 1 and no
+  chain-rule bookkeeping. Mixed margin × margin and margin × ψ terms use
+  the 4-point stencil (divisor `4·h_eta·h_psi` for the latter); mixed
+  prior × margin and prior × ψ terms of `log W` are exactly zero.
+- **New result fields**: `pair_names`, `estimate`, `se`, `se_partial` (per
+  pair, per reported quantity — so BB1's δ and Student's ν get SEs too),
+  `margin_names`, `margin_se` (natural units, σ not log σ), `fit_margins`;
+  `ci(pair, level, name="tau_k")` gains the `name` argument. A pair whose
+  `_spec_of` flags any boundary (τ̂ at a range end, δ̂ = 1, ν̂ at the fitting
+  box) is held fixed exactly as a boundary τ̂ already was — its copula stays
+  in `W`, it simply leaves θ.
+- **The pre-existing path is bit-identical.** The one-parameter ψ stencil
+  and the scalar delta method are kept verbatim;
+  `test_pilot_path_is_bit_identical` freezes `log_lik`, `grad`,
+  `newton_step` and both SE dicts against the constants commit `df4e662`
+  produced, and compares them exactly.
+- **Exactness** (max relative error against finite differences of
+  `forward`'s log-likelihood, N = 600, at parameters away from any fit):
+  gradient 2.0·10⁻⁷ (BB1), 1.6·10⁻⁷ (Student), 2.1·10⁻⁸ (Gauss +
+  `fit_margins`), 8.7·10⁻⁸ (BB1 + `fit_margins`); Hessian 9.5·10⁻⁷ /
+  2.2·10⁻⁵ / 5.1·10⁻⁷ / 2.0·10⁻⁶ against a difference of the exact
+  gradient and 1.8·10⁻⁶ / 6.7·10⁻⁵ / 4.0·10⁻⁵ / 2.2·10⁻⁵ against a 4-point
+  second difference of ℓ.
+- **The exact joint information closes Godambe's residual gap.** Run on
+  `pmcprg.pmc._godambe`'s own two fixtures, seeds and `fit_margins=True`
+  ICE configuration (R = 300, N = 600, τ = 0.6, pair (0, 0); the Godambe,
+  Oakes and naive columns reproduce that module's published numbers to the
+  third decimal, so the replicates are identical). Standard,
+  heavily-overlapping-states fixture (n = 291): 95 % coverage **0.948** (LH)
+  vs 0.735 (Godambe), 0.677 (Oakes), 0.581 (naive) — and 0.687 for LH with
+  the margins *held fixed*, so neither channel alone suffices; 90 %
+  coverage 0.904 vs 0.674 / 0.605 / 0.519; SE ratio 1.128 vs 0.579 / 0.494 /
+  0.403. Well-separated states (n = 300): 95 % coverage 0.937 vs 0.913 /
+  0.627 / 0.637. Godambe's diagnosis was right — the missing channel was
+  the latent-state one, and it dominates where the states overlap.
+- **The 13 % that remains** is the ICE/MLE gap, not a defect of the matrix:
+  `I(θ̂)⁻¹` is the *maximum-likelihood* estimator's variance, and ICE's
+  margin M-step is the γ-weighted Gaussian MLE, blind to the copula's
+  dependence on (μ, σ), so ICE with `fit_margins=True` is a two-stage
+  estimator rather than an EM. Measured: the median one-Newton-step
+  distance at an ICE fit is 0.51 SE in the margin coordinates against 0.21
+  SE in ψ₀₀ (0.40 vs 0.12 on the well-separated fixture), and the median
+  score 4.6 against 1.7. The resulting SE error is *conservative*.
+- **Monte-Carlo coverage, two-parameter families** (R = 150, N = 600,
+  margins fixed, `pmcprg.pmc._oakes`'s own BB1/Student fixtures and seeds;
+  n = 135 / 132 after the same boundary exclusions). BB1 — τ: 95 %/90 %
+  coverage 0.933/0.919 (LH joint), 0.911/0.904 (LH partial ≡ Oakes),
+  0.859/0.815 (naive), SE ratio 1.092 / 0.994 / 0.774; δ: 0.956/0.926,
+  0.956/0.896, 0.822/0.748, ratio 1.063 / 0.957 / 0.669. Student — τ:
+  0.955/0.917, 0.939/0.886, 0.826/0.735, ratio 1.157 / 0.964 / 0.732; ν:
+  0.924/0.902, 0.917/0.902, 0.894/0.864 (the SE ratio is not reported for
+  ν, for the reason Oakes' own study gives). LH's *partial* SE reproduces
+  Oakes' matrix SE to three decimals for every reported quantity — the
+  cross-check that the ψ vector, the stencil and the Jacobian are shared.
+- **Cost** (N = 600, K = 2, ms per call; LH always returns the *whole*
+  joint matrix): Gauss margins fixed (P = 6) 17 vs Oakes 47 (four pairs);
+  Gauss `fit_margins` (P = 10) 31 vs Godambe 51 (four pairs); BB1 margins
+  fixed (P = 10) 20 vs Oakes multi 52; BB1 `fit_margins` (P = 14) 32;
+  Student margins fixed (P = 10) 31 vs Oakes multi 44 (one pair).
+- **Still out of scope**, stated explicitly in the module docstring: **gaps**
+  (`pmcprg.pmc.gaps`) on both axes — the recursion would have to run on the
+  augmented (state, quadrature-node) chain, and a margin coordinate would
+  move the grid itself; **pair margins** (general PMC — the normaliser
+  `Σ_k p_ik f_ik(y_n)` no longer cancels, so `∂ log W/∂η` gains a
+  y-dependent term); other margin families; Tawn/t-EV.
+- **Checks** (`pmcprg.tests.test_fr4_ice_lystig_hughes`, 52 fast tests,
+  6 slow): the seven-model exactness grid above, the bit-identity freeze,
+  the Oakes cross-checks (scalar and 2×2), the Gaussian margins' analytic
+  `∂ log f` and the perturbed-CDF helper against `ice._margin_cdfs`, the
+  two boundary conventions, and the scope guards (Tawn, pair margins,
+  missing rows with and without `fit_margins`, non-Gaussian margins).
+
+### Added — dependent multiplier bootstrap for serially dependent pseudo-observations (FR-5)
+
+- **`pmcprg.diagnostics.dependent_multiplier`** (new module, re-exported from
+  `pmcprg.diagnostics`) supplies the serially dependent multiplier sequence
+  FR-5 asks for (Bücher & Ruppert 2013, doi:10.1016/j.jmva.2012.12.002;
+  Bücher & Kojadinovic 2016, doi:10.3150/14-BEJ682). Two consecutive pairs of
+  a Markov chain share an observation, so a state pair's pseudo-observations
+  are not i.i.d. (Darsow, Nguyen & Olsen 1992; Chen & Fan 2006) and the
+  i.i.d. multiplier bootstrap of FR-10's three Cramér–von Mises tests is
+  calibrated against too narrow a null (Fermanian, Radulović & Wegkamp 2004).
+- **Construction and normalisation, derived here and checked numerically**,
+  not transcribed: `ξ_i = Σ_{k=0}^{m-1} w_k Z_{i+k}` with `Z` i.i.d. mean 0,
+  variance 1 and weights `w_k ∝ φ(k/ℓ)` normalised by `Σ_k w_k² = 1` — the
+  normalisation that gives `Var(ξ_i) = 1`, as opposed to the `Σ_k w_k` a
+  smoother would use. `n + m − 1` variates are drawn per replicate, so the
+  sequence is exactly stationary and `Corr(ξ_i, ξ_{i+h}) = Σ_k w_k w_{k+h}`
+  with no edge correction. Measured over 40 000 replicates of length 120:
+  mean within 0.01 of 0, variance within 0.01 of 1, and the empirical
+  autocorrelation within 0.01 of `Σ_k w_k w_{k+h}` at every lag, for both
+  kernels and both laws (`pmcprg/tests/test_dependent_multiplier.py`).
+- **`kernel="bartlett"`** (the default) is the rectangular window
+  `w_k = ℓ^{-1/2}`, `k = 0 … ℓ-1`, whose self-convolution is *exactly* the
+  Bartlett kernel: `ρ(h) = 1 − |h|/ℓ`, and the sequence is exactly
+  `ℓ`-dependent. That choice makes `ℓ` and the HAC bandwidth `L` of
+  `pmcprg.diagnostics.model_selection` the same quantity — for any series
+  `a`, `Var(Σ_i a_i ξ_i) = hac_variance(a, ℓ − 1)`, asserted to within 3 % of
+  the exact value over 200 000 replicates rather than merely claimed.
+  `kernel="parzen"` is the smoother alternative (`2ℓ-1` weights, reach
+  `2ℓ-2`).
+- **Block-width selection reuses the existing Newey & West (1994) plug-in**
+  (`newey_west_bandwidth`) rather than introducing a second rule, which the
+  identity above legitimises: `ℓ = 1 + L_NW`. The one extension is that
+  `L_NW` selects for a single scalar series whereas `ℓ` must serve a whole
+  empirical process, so `auto_block_length` takes the **median** of `L_NW`
+  over a 3×3 quantile grid of centred indicator series
+  `1{u_i ≤ a, v_i ≤ b} − C_n(a, b)`. Median, not maximum: measured over 60
+  replicates at `n = 200`, the maximum over nine series averages `L = 9.1` on
+  i.i.d. data and 8.6 on a chain — no discrimination, all plug-in noise —
+  while the median averages 4.2 and 7.8 (6.1 and 14.7 at `n = 800`). The
+  plug-in's known upward bias when the true autocovariances vanish is
+  documented rather than papered over: on i.i.d. data the rule returns
+  `ℓ ≈ 5`, not 1, and the resulting error is in the conservative direction.
+- **Exposed as `bootstrap="dependent-multiplier"`** on `radial_symmetry_test`,
+  `exchangeability_test` and `rosenblatt_gof_test`, with new keyword-only
+  `block_length` (positive int or `"auto"`, the default) and `block_kernel`
+  arguments and a new `block_length` field on all three result dataclasses.
+  **Every existing default is bit-identical**: `bootstrap="parametric"`
+  (still the default) ignores the new keywords entirely, and
+  `block_length=1` returns the *same array* the pre-FR-5 i.i.d. path drew, so
+  it reproduces `bootstrap="multiplier"`'s statistic and p-value exactly —
+  asserted, not approximated.
+- **Validated on genuinely serially dependent data**, not i.i.d. samples: each
+  replicate simulates a two-state PMC with `pmcprg.pmc.simulate` (persistence
+  0.98, Gaussian transition copulas at `τ = 0.7`) and extracts the `(0, 0)`
+  state pair's observations by their true hidden labels. Size of
+  `radial_symmetry_test` at a nominal 5 %, R = 500, B = 200, `n ≈ 392`
+  (±3.3 binomial s.d. ≈ ±3.2 points): **i.i.d. multipliers reject a true null
+  19.8 % of the time**, against 3.2 % for the same code on a matched i.i.d.
+  sample — FR-5's claim, quantified. The dependent version repairs it:
+  12.8 % (`ℓ = 2`), 6.6 % (5), 3.4 % (10), 3.0 % (20), 3.2 % (`"auto"`,
+  mean `ℓ = 14.1`), 4.0 % (auto/Parzen), while the i.i.d. control stays at
+  4.0–4.8 % at every `ℓ` — a strict generalisation, not a different test.
+- **Sensitivity to the block width, both directions.** Raw power against a
+  Clayton alternative at `n ≈ 127` falls from 49.6 % (i.i.d.) to 15.2 %
+  (`ℓ = 20`), but that comparison is invalid: the `ℓ = 1` end is the test
+  whose level is 14.5 % at this `n`. Judged against each method's own
+  empirical 5 % null quantile, size-adjusted power is flat — 33.0 %
+  (i.i.d.), 33.6 % (`ℓ = 2`), 33.6 % (5), 30.4 % (10), 24.0 % (20), 26.6 %
+  (`"auto"`) — so the i.i.d. bootstrap's apparent advantage was the level
+  distortion, and over-shooting `ℓ` costs real but modest power. On the
+  i.i.d. control, power is 86 % at every `ℓ`.
+- `exchangeability_test` on the same null is already far below nominal
+  (0.4 % i.i.d., 0.0 % dependent): the over-rejection does not arise for that
+  statistic on this design, so the dependent version only adds
+  conservativeness there. Reported because it was measured.
+- **Left for later, explicitly**: `CopulaVirt.bootstrap_ci` and
+  `CopulaVirt.gof_test` (`pmcprg/copulas/_bivariate_fit.py`,
+  `pmcprg/copulas/_fit.py`), the other i.i.d. bootstrap FR-5 names, resample
+  pairs instead of reweighting an empirical process, so the multiplier
+  sequence does not drop into them — a block bootstrap would be the
+  analogue. Their coverage under serial dependence is not measured.
+- 75 new tests (`pmcprg/tests/test_dependent_multiplier.py`,
+  `pmcprg/tests/test_fr5_dependent_multiplier.py`), 4 of them `slow`.
+
+### Added — BB6 copula, the outer power of Joe (FR-9)
+
+- **`CopulaBB6`** (`pmcprg.copulas.archimedean.bb6`, `CopulaEnum.BB6`,
+  short name `"BB6"`) — the first of the two-parameter BB families the audit
+  still lists, added as the pilot for BB7/BB8 exactly as Galambos piloted the
+  extreme-value families. Generator
+  `phi(t) = (-ln(1 - (1 - t)^theta))^delta`, `theta >= 1`, `delta >= 1`: the
+  **outer power** (Gumbel transform) of Joe's generator, giving
+  `C(u,v) = 1 - [1 - exp(-((-ln(1-ubar^theta))^delta +
+  (-ln(1-vbar^theta))^delta)^(1/delta))]^(1/theta)` with `ubar = 1 - u`.
+  Every formula was re-derived from the generator and checked against an
+  independent `mpmath` ground truth (C from `phi^-1(phi(u) + phi(v))`, the
+  density and h-function as its finite differences at a step `1e-20` of the
+  distance to the edge, the working precision raised from 120 to 3840 digits
+  until two successive ones agree to 12 digits) — the package's own closed
+  forms appear nowhere in it.
+- **Kendall's tau has a closed form**, contrary to the usual claim for the BB
+  families. An outer power leaves the Genest–MacKay integral scaled:
+  `(phi^delta)/(phi^delta)' = phi/(delta phi')`, so
+  **`tau(theta, delta) = 1 - (1 - tau_Joe(theta))/delta`** exactly — the same
+  identity that gives BB1 (the outer power of Clayton) its
+  `1 - 2/(delta(theta+2))`. Checked against a 60-digit `mpmath` quadrature of
+  `1 + 4 int phi/phi'` of BB6's *own* generator (mesh graded towards `t = 1`,
+  where the integrand concentrates once `theta` is large) at `theta` in
+  {1, 1+1e-7, 1.2, 2, 3.7, 8, 50, 200} x `delta` in {1, 1.4, 2.6, 5}. Compared
+  in `mpmath` at 60 digits the identity holds to a relative 0–9e-19, the
+  quadrature's own limit; the package's float evaluation matches the recorded
+  table to 1e-13 over the whole range. (On a plain [0, 1/4, 1/2, 3/4, 1] split
+  the quadrature was itself 8e-5 off at `theta = 50` and the closed form was
+  right — recorded in `test_bb6.py` as a reminder that a reference is a
+  measurement too.) **No Archimedean
+  tau quadrature was added to the package**: the closed form reuses
+  `joe._joe_tau_from_theta` / `_joe_theta_from_tau`, whose three expansions
+  are exact from `theta = 1` (`tau = 0`) to `theta -> infinity` (RB-2), so BB6
+  inherits Joe's accuracy near independence. Against a 40 000-pair Monte-Carlo
+  Kendall's tau over 5 seeds at (0.3, 1.2), (0.7, 2.5) and (0.9, 3.0), every
+  |t| on the mean is below 1.5.
+- **Sub-models, both exact and both boundaries**: `delta = 1` is **Joe** at the
+  same `theta` (the constructor uses `tau_Joe = tau` directly there, so the
+  member builds the very `theta` `CopulaJoe` builds, bit for bit) and
+  `theta = 1` is **Gumbel–Hougaard** at parameter `delta`. Measured over the
+  8x8 edge grid `[1e-12, 1-1e-12]^2`: `max |ln c_BB6 - ln c_Joe| = 2.3e-13`
+  and `max |ln c_BB6 - ln c_GH| = 5.7e-14`, `max |C_BB6 - C| = 1.1e-16`;
+  `theta = delta = 1` gives `ln c = 0` identically. Both sit at the *lower*
+  end of the admissible `theta >= 1`, `delta >= 1`, so
+  **`submodel_lr_test` accepts BB6 -> Joe and BB6 -> Gumbel** with the
+  one-sided null `0.5*chi2(0) + 0.5*chi2(1)` (Self & Liang 1987) and no
+  change to that mechanism — two new entries in `_SUBMODEL_NESTING`, which
+  now holds six pairs. Unlike Student's `df -> infinity`, neither boundary
+  needs a fitting-box end to stand in for it.
+- **Tail dependence** `lambda_U = 2 - 2^(1/(theta*delta))` and
+  `lambda_L = 0`, both re-derived from `phi^-1` and checked numerically: the
+  diagonal ratio `(1 - 2u + C(u,u))/(1-u)` settles on the closed form to 12
+  digits, and `C(u,u)/u` falls monotonically to `<= 1.2e-18` at `u = 1e-250`
+  (probed on the kernel, which is not clipped at `EPS`; the decay is only a
+  small power of `u` — still 0.226 at `u = 1e-9` for `theta = 1`,
+  `delta = 10`). `lambda_U` depends on `(theta, delta)` only through their
+  product, so it alone cannot separate them.
+- **Parametrisation**: `delta` is the extra parameter and `theta` is
+  recovered from `(tau, delta)`, as for BB1. `tau_Joe in [0, 1)` forces
+  `delta in [1, 1/(1-tau)]` — a *joint* constraint like BB1's `(tau, delta)`
+  and Tawn's `(tau, psi)` — but **closed at both ends**: `delta = 1/(1-tau)`
+  is `theta = 1`, a Gumbel copula, not BB1's degenerate `theta = 0`. So
+  `CopulaBB6.delta_max` returns the largest *double* with
+  `delta*(1-tau) <= 1` (walked with `nextafter` in both directions, since
+  `1/(1-tau)` can round either side of it — `tau = 0.9` gives a product of
+  `1 + 2e-16`, `tau = 1/3` leaves `delta = 1.5` admissible one ulp above),
+  and `constructible_params` repairs a refused draw **onto** that end without
+  BB1's `TAU_PAD_REL` pull-in. A block without `delta6` is the **Joe member
+  `delta = 1`**, admissible at every registered `tau` (Tawn's `psi = 1`
+  precedent), not BB1's 1.5, which is inadmissible below `tau = 1/3`; every
+  generic per-family sweep in the test suite therefore builds BB6 unchanged.
+- **The extra parameter is registered as `delta6`, not `delta`.**
+  `_fit._two_parameter_spec` dispatches on the parameter *name*, and the
+  `"delta"` branch carries BB1's own `tau = 1 - 2/(delta(theta+2))` map: a BB6
+  registered under `delta` would have been fitted with the wrong
+  parametrisation, silently, since every `(theta, delta)` pair is numerically
+  plausible. This is the reason t-EV's `nu` is not Student's `df`.
+  `test_bb6.py` proves BB6 takes its own branch and that BB1's is untouched.
+- **Fitting**: `fit` is always the joint two-parameter MLE; `method='tau'`
+  logs a warning and falls back to it (BB1's and Tawn's precedent), so the
+  two methods return identical estimates. The `delta6` branch optimises in
+  `(ln(theta - 1), ln delta)`, whose box **is** the admissible set, with
+  `tau` mapped back by the closed form; two stages, the second linear in
+  `theta - 1` to reach the Gumbel boundary. Recovery over 25 replicates at
+  `n = 3000`: RMSE on `tau` 0.0020–0.0126 (bias `<= 0.0033`), RMSE on `delta`
+  0.031–0.375. `delta` is the weakly identified one and its RMSE grows with
+  `tau`: 0.031 at (0.2, 1.0), 0.084 at (0.5, 1.5), 0.125 at (0.7, 2.5), 0.235
+  at (0.9, 3.0) and 0.375 at (0.9, 10.0). The bias is one-sided by
+  construction wherever the true `delta` is on a boundary — `+0.017` and
+  `+0.039` at the two `delta = 1` (Joe) points, `-0.25` at
+  `(0.9, delta_max = 10)` (Gumbel, and the top of the box) — and `delta` is
+  simply weakly identified at high `tau`, `+0.14` at the interior
+  `(0.9, 3.0)`.
+- **Numerics**: everything is evaluated from `ka = ln(1-u)`, `kb = ln(1-v)`
+  and no power is ever formed. Two cancellations were found *by* the ground
+  truth and fixed: `ln p` needs the asymptotic branch `ln p = -z` beyond
+  `z = -theta*ka = 700`, where `(1-u)^theta` underflows and
+  `ln(1 - e^-z)` returns exactly 0 — without it `logpdf_array` is NaN on the
+  whole `u = 1 - 1e-12` edge once `theta >= 2000`; and `ln G = ln(1 - e^-S)`
+  needs `ln S - S/2` below `ln S = -20`, since `S` underflows in linear scale
+  (`ln S = -1068` at `(1-1e-12, 1-1e-12)` for `tau = 0.95`, `delta = 1`,
+  where the density is an ordinary `e^29.9`). `p + q - S` and `p - S`, which
+  cancel to zero at `delta = 1`, are formed as
+  `-exp(ln S + ln1mexp(ln S - ln p))` and bracketed on the smaller of `p, q`
+  (Tawn's rule); `ln B` is a two-fold `logaddexp` of three non-negative
+  terms, so `ln(theta-1) = -inf` and `ln(delta-1) = -inf` are absorbed rather
+  than cancelled. `ln1mexp` is imported from `joe.py` rather than copied.
+  Max errors against the `mpmath` ground truth on the 6x6 grid
+  `[1e-12, 1-1e-12]^2` at fourteen `(tau, delta)` from `(1e-6, 1)` to
+  `(0.99, 1)`: **`ln c <= 1.4e-14`, `C <= 2.9e-14` relative, `h <= 4.6e-13`
+  relative**.
+- **A `delta` one ulp below `delta_max` used to raise `ValueError`.**
+  `tau_Joe = 1 - delta*(1 - tau)` lands on exactly `eps/2 = 1.11e-16` there,
+  and `joe._joe_theta_from_tau`'s Brent bracket `[tau/(1-tau),
+  (1+tau)/(1-tau)]` has no sign change at that value — `1 + tau/(1-tau)`
+  rounds *up* to `1 + eps`, whose `tau` already exceeds the target. It hit 37
+  of the 376 `(tau, delta)` pairs the hook test draws and 5 of 9 jittered
+  multistart configurations. Joe is left untouched: BB6 snaps any `tau_Joe`
+  below `tau_Joe(1 + eps) = 1.288e-16` — below which *no* `theta > 1` is
+  representable as a double — to the Gumbel member `theta = 1`, moving `tau`
+  by at most `1.288e-16/delta`, under one ulp of `tau`.
+- `inv_h` has no closed form: `ln h(v|u) = ln w` is solved by 68 steps of
+  vectorised bisection on `logit v` (final bracket `< 1e-19`), never forming
+  `1 - v` in linear scale. Round trip `|h(inv_h(w,u)|u) - w| <= 2.5e-13` over
+  2000 points at each of eight `(tau, delta)`; the sampler reproduces
+  `CopulaJoe`'s and `CopulaGH`'s draws exactly at the two sub-models, with
+  uniform margins (KS `p > 0.01`) and no `tau` bias over 20 seeds.
+- **Tests and references**: new `pmcprg/tests/test_bb6.py` (216 tests), and
+  four new entries in the `decimal` reference grid of
+  `pmcprg/tests/test_copula_limits.py` at `tau` = 0.4, 0.5, 0.7, 0.9 with
+  `delta` = 1.6, 2.0, 1.0, 3.0 — `(0.5, 2.0)` being the Gumbel sub-model
+  (`delta*(1-tau) = 1` exactly in binary, so `theta = 1` to the last bit) and
+  `(0.7, 1.0)` the Joe one, so the reference file itself pins both limits.
+  Regenerated incrementally: **+144 rows / +152 lines, 0 lines removed** —
+  every pre-existing entry byte-identical (161 -> 165 entries, 5796 -> 5940
+  rows). The hardcoded family count of `test_copulas.py` goes 37 -> 38.
+
+### Added — robust options outside ICE: MLE-vs-τ diagnostic and density power divergence (FR-7 b, c)
+
+- **`mle_tau_discrepancy_test`** (`pmcprg.copulas._stderr`, re-exported from
+  `pmcprg.copulas`, result `MleTauDiscrepancyTest`) is the systematic
+  `|θ̂_MLE − θ̂_τ|` diagnostic FR-7 (b) asks for: a Hausman-style
+  specification test of "both estimators are consistent for the same τ".
+  Kendall's τ̂ has a bounded influence function and the log-density score
+  does not (Croux & Dehon 2010, doi:10.1007/s10260-010-0142-z), so under
+  contamination or misspecification the pseudo-MLE moves and τ̂ does not.
+- The **variance of the difference is not** the Hausman
+  `Var(slow) − Var(fast)` shortcut, which needs an efficient estimator under
+  H0 — the rank-based pseudo-MLE is not semiparametrically efficient in
+  general (Genest & Werker 2002) and the shortcut returns a *negative*
+  variance on real samples (pinned: `CopulaFrank(tau_k=0.4)`, n = 600,
+  seed 0, −1.36e-06 against the joint construction's +4.10e-06). Instead
+  both estimators are written as sums of their influence functions on the
+  same sample — `B⁻¹(φ + Ŵ₁ + Ŵ₂)` carried to τ for the pseudo-MLE, and
+  `4(ẑ − z̄)` with `ẑ = 2C_n − û − v̂` for Kendall's τ̂ — and `Var(τ̂_MLE −
+  τ̂_τ)` is the weighted empirical variance of their difference, O(n log n)
+  and deterministic. The two marginal variances it reproduces are *exactly*
+  what `standard_errors` reports for `method='mle'` and `method='tau'`, so
+  the diagnostic cannot describe a different estimator than the module's own
+  standard errors; the measured correlation between the two estimators is
+  0.79 (Clayton) to 0.996 (Frank) at τ = 0.4, n = 2000, which is why the
+  cross term may not be dropped.
+- **Level** (R = 500, six families × τ ∈ {0.2, 0.4, 0.6} × n ∈ {500, 2000}):
+  at n = 2000, rejection at nominal 5 % is 3.4-9.0 % and `sd(Z)` 0.94-1.08.
+  At n = 500 the statistic carries an O(n^{-1/2}) mean offset (E[Z] ≈ 0.45
+  for the Gaussian, 0.15-0.25 elsewhere, halving by n = 2000) that makes it
+  mildly liberal for the Gaussian (7.2-8.0 %) and conservative for Frank
+  (2.2-3.4 %, `sd(Z)` 0.87-0.93). Reported as measured, not tuned.
+- **Power** (n = 1000, R = 500, τ = 0.4, rejection at 5 % for ε = 0/1/2/5/
+  10 % of discordant corner pairs): Gaussian 6.2/98.2/100/100/100 %, Frank
+  5.6/83.0/100/100/**0.2** %, Clayton 6.0/5.4/5.4/18.2/92.8 %. Two honest
+  weak spots: Clayton's pseudo-likelihood is dominated by the lower tail and
+  barely notices upper-corner pairs, and Frank's power is **not monotone** —
+  at ε = 10 % the contaminated sample really is close to a Frank copula at a
+  smaller τ, both estimators agree on it, and the contrast (rightly) stops
+  firing. Contamination by draws from an opposite Gaussian copula
+  (τ = −0.8) leaves the Gaussian family at nominal throughout (5.4-10.0 %),
+  since a mixture of two Gaussian copulas is still nearly one.
+- **`pmcprg/copulas/_robust.py`** (new module, re-exported: `dpd_fit`,
+  `dpd_objective`, `integral_c_power`, `select_alpha`, `DPDFit`,
+  `DPDAlphaSelection`, `DPD_ALPHAS`) implements FR-7 (c), the weighted
+  density-power-divergence estimator of Basu, Harris, Hjort & Jones (1998,
+  doi:10.1093/biomet/85.3.549), derived here for the copula case:
+  `H_n(θ; α) = ∫∫ c_θ^{1+α} − (1 + 1/α) Σ w̄_i c_θ(û_i, v̂_i)^α`, with
+  `H_n(θ; 0) = −Σ w̄_i log c_θ` the pseudo-MLE objective. It is **purely
+  additive**: `CopulaVirt.fit`, `pmcprg.copulas._fit` and the ICE M-step are
+  untouched (pinned by a test that greps their sources).
+- The `∫∫ c^{1+α}` integral is the crux and is documented as such. A
+  **closed form is derived** for the Gaussian copula —
+  `I(ρ, α) = (1 − ρ²)^{−α/2}(1 − α²ρ²)^{−1/2}`, from
+  `A = (1 + α)Σ⁻¹ − αI` and `|A| = (1 − α²ρ²)/(1 − ρ²)` — and used both as
+  the fast path and as the exact reference the general quadrature is
+  measured against. Every other family uses a **composite Gauss-Legendre
+  rule in `s = logit u`** with geometrically widening panels (edges 0, ¼, ½,
+  1, 2, 4, 8, 16, 32, 36.04 — the representable limit — 12 nodes per panel,
+  216 nodes per axis), summed in log space with a maximum subtraction.
+  Measured relative error over α = 0.1-0.75: ≤ 4.6e-14 (Gaussian τ = 0.2),
+  ≤ 7.9e-9 (τ = 0.5), ≤ 4.6e-4 (τ = 0.9), machine precision for
+  Frank/Plackett/AMH/FGM, ≤ 7.3e-4 (Clayton τ = 0.4), ≤ 4.8e-2 (Clayton
+  τ = 0.7) and ≤ 2.0e-1 (Clayton τ = 0.85, where the density concentrates in
+  a band of width ≈ 1/θ = 0.09 that 216 nodes do not resolve). Rather than
+  hide that ceiling, every `DPDFit` carries `integral_rel_error`, the
+  discrepancy with a refined design at the fitted parameter. Two further
+  exact references are pinned: `I = 1` for the independence copula (which
+  also checks that the weights integrate to 1, to 4e-16) and FGM's
+  `1 + θ²/9` at α = 1, matched to 1e-12.
+- **α selection** (`select_alpha`) minimises the empirical-MSE criterion
+  `(τ̂_α − τ̂_P)² + V̂_α/n_eff` of Warwick & Jones (2005,
+  doi:10.1080/00949650412331299120) with an explicit pilot (`pilot_alpha`,
+  default 0.5). Ghosh & Basu (2015, doi:10.1080/02664763.2015.1016901) is
+  unreachable offline, so their pilot-free refinement is **not** claimed to
+  be reproduced — the same posture the FR-9 and FR-10 rounds took. `V̂_α =
+  K_α/J_α²` is the Basu et al. sandwich on the same grid; it is the
+  **known-margin** variance, without the rank-margin correction
+  `standard_errors(ranks=True)` applies, so it ranks α values but is not
+  reported as a standard error (the field is named `se_hint`).
+- A structural limit found and measured while validating, not assumed:
+  `K_α` integrates `c^{1+2α}`, so it exists over **half** the α range the
+  objective does — for a family with tail dependence (`c ~ C/r` on a corner
+  diagonal) it already diverges at α = 0.5. `_dpd_variance` detects this by
+  recomputing `V̂_α` with `|logit u|` capped at 24 instead of 36.04 and
+  returns NaN when the two differ by more than 1 %: measured at τ = 0.4,
+  Clayton/Gumbel/Joe/A12 give a variance to α = 0.25 (change ≤ 1.2e-4) and
+  NaN from α = 0.5 (0.39-0.50), Frank and Plackett agree to 4e-10 over the
+  whole grid, the Gaussian copula is finite to α = 0.5 and NaN at 0.75. The
+  **estimate** is returned in every case; only its variance is withheld, so
+  for a tail-dependent family α̂ is in practice chosen from {0, 0.05, 0.1,
+  0.25}.
+- **Validation of the estimator** (n = 1000). *Clean data* (R = 200,
+  τ = 0.4, Gaussian/Clayton/Frank): RMS `|τ̂_α − τ̂_MLE|` and the SD ratio
+  `sd(τ̂_α)/sd(τ̂_MLE)` are 5.9e-4 to 8.9e-4 and 1.000-1.003 at α = 0.05,
+  1.2e-3 to 1.8e-3 and 1.003-1.006 at α = 0.1, 2.8e-3 to 5.2e-3 and
+  1.018-1.051 at α = 0.25, 5.3e-3 to 1.5e-2 and 1.066-1.365 at α = 0.5 —
+  against an estimator SD of 0.0147-0.0165, so α ≤ 0.1 costs under 1 % of
+  efficiency and moves τ̂ by under a tenth of its own standard error, and
+  α = 0 reproduces `fit(method='mle')` to the optimiser's tolerance.
+  *Contaminated data* (R = 200, τ = 0.5, bias of τ̂ at ε = 0/1/5/10 % of
+  discordant corner pairs): Gaussian MLE +0.002/−0.075/−0.288/−0.457 against
+  DPD α = 0.5 −0.003/+0.001/−0.002/−0.047; Clayton MLE
+  −0.001/−0.033/−0.160/−0.349 against −0.001/+0.001/+0.003/−0.022; Frank MLE
+  +0.001/−0.020/−0.120/−0.270 against +0.001/−0.003/−0.033/−0.112. α = 0.25
+  holds to ε = 5 % and breaks at 10 %; α = 0.5 still holds at 10 %.
+  Kendall's τ̂ is **not** immune either (−0.27 at ε = 10 %): contamination
+  changes the population τ, so downweighting, not ranking, is what protects
+  the estimate. *α selection* (R = 100): mean α̂ 0.12-0.15 on clean data and
+  0.25-0.50 at ε = 5 %, with the selected τ̂ biased by at most 0.034 where
+  the MLE is biased by 0.12-0.29.
+- **FR-7 (a) is not in this round.** State-weighted empirical margins
+  `F̂_i(y) = Σ_n γ_n(i)·1{y_n ≤ y} / (Σ_n γ_n(i) + 1)` turn ICE into a
+  rank-based pseudo-likelihood (Kim, Silvapulle & Silvapulle 2007; Chen &
+  Fan 2006) and require changing the M-step in `pmcprg/pmc/ice.py`, which a
+  concurrent round owns; parametric margins stay the efficient option when
+  validated (Genest & Werker 2002). Both deliverables here are outside ICE
+  and leave `ice.py` untouched, so (a) remains open for a later round.
+- Tests: `pmcprg/tests/test_fr7_robust_options.py` (42 fast, 13 slow), run
+  twice under different `PYTHONHASHSEED`; seeds are integer literals or
+  `zlib.crc32`.
+
+### Added — the full three-parameter Tawn copula, and an n-parameter joint fit (FR-9)
+
+- **`CopulaTawn3`** (`pmcprg.copulas.extreme_value.tawn`, `CopulaEnum.TAWN3`,
+  short name `Tawn3`) — Tawn's (1988) asymmetric logistic extreme-value model
+  with **both** weights free: `tau_k` plus the extras `psi_u`, `psi_v`, each
+  in `(0, 1]`. It is the 38th registered family and the **first with three
+  parameters**; `n_params = 3`, so every information criterion penalises it
+  accordingly. Nesting: `Gumbel ⊂ {Tawn 1, Tawn 2} ⊂ Tawn 3`, with
+  `psi_u = 1` giving type 1 and `psi_v = 1` giving type 2.
+- The evaluation kernel needed **no change at all**: `_tawn_parts`,
+  `_tawn_logpdf`, `_tawn_log_cdf`, `_tawn_logh`, `_tawn_A_terms` and
+  `_tawn_tau_quad` already took both weights (round 3 fixed one weight in the
+  parameter layer only). Round 5 split the round-3 body of `_CopulaTawn` into
+  a shared `_TawnBase`, so the restrictions are reproduced **bit for bit**,
+  not to a tolerance: at `psi_u = 1.0` the three-parameter member runs the
+  same floating-point operations as `CopulaTawn1`, and `ln c`, `ln C`, `ln h`,
+  `theta` and `tail_dependence()` compare equal exactly on the corner grid
+  `(1e-12 … 1 − 1e-12)²`.
+- **The general reachable-τ cap, re-derived rather than transcribed.** As
+  `θ → ∞` the Pickands function tends to Marshall–Olkin's, whose only
+  curvature is a slope jump of `ψ_u + ψ_v` at `t* = ψ_v/(ψ_u + ψ_v)`; with
+  `A(t*) = 1 − ψ_uψ_v/(ψ_u + ψ_v)` the Genest–MacKay identity gives
+  `τ_∞ = ψ_uψ_v/(ψ_u + ψ_v − ψ_uψ_v) = 1/(1/ψ_u + 1/ψ_v − 1)`. The
+  round-3 statement `τ < ψ` is its `ψ_other = 1` case — **confirmed**, not
+  contradicted. Checked against the quadrature on eleven weight pairs: the
+  relative gap `(τ_∞ − τ(θ))/τ_∞` is `1e-7 … 1.1e-6` at `θ = 1e6` and shrinks
+  by a factor 10 from `θ = 1e5`, and τ is increasing in θ on 300-point
+  log-grids from `1 + 1e-6` to `1 + 1e6` (so τ_∞ is a supremum, not just a
+  limit point). Examples: `(0.6, 0.8) → 0.521739130435` vs
+  `τ(1e6) = 0.521738858188`; `(0.3, 0.3) → 0.176470588235` vs `0.176470557088`.
+- `reachable_tau_cap` uses **both** algebraic forms, each where it is the
+  exact one: the reciprocal in general (the product `ψ_uψ_v` underflows to 0
+  below ≈ 1e-154, which the constructor accepts), and the restriction faces
+  returned directly — `1/(1 + 1/0.9 − 1)` is `0.8999999999999999`, one ulp
+  below 0.9, and a τ in that gap would be refused by `CopulaTawn3` while
+  `CopulaTawn1` accepted it at the same parameters.
+- **`CopulaTawn3.constructible_params` / `repaired_psis`** repair a refused
+  triple so that no multistart draw, family draw or ICE placeholder ever
+  builds one. Both weights travel together towards the Gumbel corner along
+  `ψ_i(s) = 1 − s(1 − ψ_i)`, which keeps the direction of the asymmetry the
+  draw expressed; the cap equation becomes the quadratic
+  `(1 + τ)·P·s² − S·s + (1 − τ) = 0` (`S = Σ(1 − ψ_i)`, `P = Π(1 − ψ_i)`),
+  whose smaller root is taken in the cancellation-free form
+  `s* = 2(1 − τ)/(S + √(S² − 4P(1 − τ²)))`, and the repair goes to `s*/2` —
+  the middle, since the boundary itself is the singular Marshall–Olkin limit
+  `θ → ∞`. On the face `P = 0` this collapses to `(1 + τ)/2`, i.e. round 3's
+  own `repaired_psi`, and is *evaluated* as that expression so the two rules
+  agree bit for bit. An accepted triple is returned untouched (same object),
+  as `CopulaVirt.constructible_params`'s contract requires.
+- **The joint MLE is now n-parameter.** `_fit_two_parameter_mle`
+  (`pmcprg.copulas._fit`) never knew the dimension — it only calls the stage
+  maps and hands the box to L-BFGS-B — so the driver was reused unchanged;
+  `_two_parameter_spec` became a dispatcher that hands a family with two or
+  more extras to the new **`_multi_extra_spec`**. Tawn 3 fits in
+  `(ln(θ − 1), ψ_u, ψ_v)`, a box that *is* the admissible set (every
+  `θ > 1`, `ψ ∈ (0, 1]` is a Tawn copula), run twice as types 1/2 and t-EV
+  are; a generic `(τ, x₁, …, xₙ)` fallback covers any future family.
+- **No existing family's numbers moved.** The dispatch is an early return
+  taken only when a family declares more than one extra, so for BB1,
+  SurvivalBB1, BB190, Student, Tawn 1/2 and t-EV the executed code is
+  unchanged — verified empirically, not merely argued: the fitted parameters
+  and log-likelihoods of 15 cases through 4 entry points (`fit(method='mle')`,
+  the unweighted and weighted driver, and the ICE M-step
+  `_fit_copula_params`) are **byte-identical** to the same run against commit
+  `df4e662`, iteration and evaluation counts included. The 15 `fit` results
+  are pinned as exact `float.hex` literals in
+  `test_tawn3.py::test_existing_families_fit_to_the_same_bits`.
+- **ICE, multistart and the GUI needed no code change**, which this round
+  verified rather than assumed: `EXTRA_PARAM_BOUNDS` is derived from
+  `EXTRA_PARAM_BOUNDS_BY_PARAM` + the registry and is iterated everywhere
+  (M-step, jitter, `_set_copula_family`, `_copula_placeholder`), and
+  `_CopulaDialog` pre-builds one spin box per distinct extra name across all
+  families — so `psi_u`/`psi_v` get correct widgets, ranges and defaults
+  automatically. New tests pin all of it, including the counterfactual that
+  with `constructible_params` neutralised the same multistart draws do raise.
+- **Validation.** Independent `mpmath` ground truth (written from
+  `C = exp(−ℓ)`, itself cross-checked against `mpmath.diff` of `C` to
+  ≤ 3.4e-12) over 12 `(τ, ψ_u, ψ_v)` triples × the 36-point corner grid, both
+  `ψ = 1` edges and the box's lower bound 0.01 included: max relative error
+  **2.1e-14** on `C`, **1.5e-13** on `h`, **2.2e-14** on `c`, and
+  **2.2e-14 nat** on `ln c`. τ by quadrature vs Monte-Carlo Kendall's τ at
+  n = 200 000: `|Δ| ≤ 0.0021` (2·se ≈ 0.003). Recovery at n = 3000 over 40
+  replicates a point, 320/320 fits converged: RMSE on `(τ̂, ψ̂_u, ψ̂_v)` is
+  `0.008/0.007/0.010` at τ = 0.7 and `0.009/0.019/0.013` at τ = 0.4, but
+  `0.016/0.077/0.096` at τ = 0.2 and `0.011/0.246/0.343` at τ = 0.05 — **the
+  weights are not identified below τ ≈ 0.1**, where the copula is close to Π
+  whatever the weights; τ̂ stays accurate throughout (RMSE ≤ 0.016). This is
+  documented in the module docstring, not hidden.
+- Exchangeability (`pmcprg.diagnostics.exchangeability`, FR-10) behaves as the
+  model predicts — `ℓ` is symmetric in `(w, z)` exactly when `ψ_u = ψ_v`. At
+  n = 500, B = 200 multiplier replicates, 40 samples per point, α = 0.05:
+  rejection 5 % at `(0.9, 0.9)`, 15 % at `(0.7, 0.7)` and 10 % at the Gumbel
+  corner (at or somewhat above nominal — the CvM statistic's own
+  finite-sample behaviour at this n), against **100 %** at `(1.0, 0.6)`,
+  `(0.95, 0.55)` and `(0.9, 0.4)` for τ ≥ 0.3. At τ = 0.15 the same
+  `(0.9, 0.4)` asymmetry is seen only 15 % of the time — the same flatness
+  near independence that limits estimation. This is the first family here
+  whose asymmetry is a *free parameter* rather than a rotation artefact.
+- Standard errors are deliberately **not** implemented:
+  `pmcprg.copulas._stderr` raises `NotImplementedError` for `n_params = 3`,
+  since a Wald interval on a weight that the likelihood barely constrains
+  would be misleading.
+- `CopulaTawn3` is deliberately **kept out of**
+  `pmcprg/tests/data/copula_limits_references.json`: that file's key is
+  `(family, θ, δ)` with a single slot for a second parameter, and widening it
+  would rewrite all ~5 900 pre-existing rows. The `mpmath` ground truth above
+  covers the same corner grid with the same independence-from-the-code
+  discipline, and every stored Tawn 1/2 row is also a Tawn 3 row at a `ψ = 1`
+  edge by the bit-identity above.
+
 ### Added — ICE/SEM missing-observations widgets in the GUI
 
 - `_IceTab` (`pmcprg.pmc.gui.tabs`) gains a "Missing observations" section

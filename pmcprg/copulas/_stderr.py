@@ -96,9 +96,9 @@ Two-parameter sub-model tests
 :func:`submodel_lr_test` is the analogous likelihood-ratio test of a
 **two**-parameter family's one-parameter sub-model — H0: the extra
 parameter sits at the sub-model's value, H1: the full two-parameter family
-— for the three nestings this package registers: BB1 ⊃ {Clayton, Gumbel},
-Student ⊃ Gauss, and Tawn (types 1 and 2) ⊃ Gumbel. Each was verified
-against the family's own module docstring, not assumed:
+— for the four nestings this package registers: BB1 ⊃ {Clayton, Gumbel},
+Student ⊃ Gauss, Tawn (types 1 and 2) ⊃ Gumbel, and BB6 ⊃ {Joe, Gumbel}.
+Each was verified against the family's own module docstring, not assumed:
 
 * **BB1 → Clayton** (δ = 1) and **BB1 → Gumbel** (θ → 0, i.e. the floor
   ``CopulaBB1._THETA_FLOOR``): ``pmcprg.copulas.archimedean.bb1``'s module
@@ -125,8 +125,16 @@ against the family's own module docstring, not assumed:
   the FR-9 commit message that introduced Tawn: ``CopulaTawn1(psi=1.0)``
   reproduces ``CopulaGH``'s log-density to machine precision at matched τ —
   see ``pmcprg/tests/test_fr4_submodel_lr.py``.)
+* **BB6 → Joe** (δ = 1) and **BB6 → Gumbel** (θ = 1), FR-9's BB6 round:
+  ``pmcprg.copulas.archimedean.bb6``'s module docstring derives both by
+  hand from the generator ``φ = (−ln(1 − (1 − t)^θ))^δ`` — δ = 1 leaves
+  Joe's generator, θ = 1 leaves ``(−ln t)^δ`` — and checks each numerically
+  to 60 digits. Both are the *lower ends* of BB6's admissible θ ≥ 1, δ ≥ 1:
+  **boundary** sub-models, and unlike Student's ν → ∞ both are attained, so
+  no fitting-box end has to stand in for them (the joint fit's θ floor
+  1 + 10⁻¹⁰ is only the resolution at which it reaches θ = 1).
 
-All three sub-models are therefore boundary cases of the *same* kind
+All these sub-models are therefore boundary cases of the *same* kind
 :func:`independence_lr_test` already handles for one parameter: the
 constrained (2-D) MLE, under H0, sits on the boundary of the admissible
 extra-parameter box about half the time, so ``LR → ½χ²₀ + ½χ²₁`` (Self &
@@ -136,6 +144,54 @@ therefore always reports the mixture for these three pairs (the boundary
 is a fact of the parametrisation, not of the data, so it is not
 recomputed per call — unlike the one-parameter ``independence_lr_test``,
 whose H0 can be either interior or boundary depending on family).
+
+MLE-vs-τ discrepancy diagnostic (FR-7 b)
+----------------------------------------
+:func:`mle_tau_discrepancy_test` is a **Hausman-style specification test**
+(Hausman 1978) built on the two estimators above. Kendall's τ̂ has a bounded
+influence function — one observation can move it by O(1/n) at most — while
+the log-density score φ that defines the pseudo-MLE does not (Croux & Dehon
+2010). Under correct specification both estimators are consistent for the
+same τ, so their difference is O_p(n^{-1/2}) and centred at 0; under
+contamination or misspecification the unbounded-influence estimator moves
+and the rank-based one does not, so the difference grows.
+
+The difference is taken on the **τ scale**, the one coordinate every
+one-parameter family shares (and the one the τ-inversion estimator is
+defined in). A statistic formed on the native θ scale is the same to first
+order: both numerator and denominator carry the same dθ/dτ factor, which
+cancels in the ratio, so ``θ̂`` values are reported for information only.
+
+``Cov(τ̂_MLE, τ̂_τ)`` is **not** the Hausman "difference of variances".
+That shortcut needs the first estimator to be efficient under H0, and the
+rank-based pseudo-MLE is not semiparametrically efficient in general
+(Genest & Werker 2002) — the shortcut can and does return negative
+variances here. Instead both estimators are written as sums of their own
+**influence functions on the same sample**, and the variance of the
+difference is the (weighted) empirical variance of the difference of those
+influence functions::
+
+    a_i = (dτ/dψ) · B⁻¹ [φ_i + Ŵ₁(û_i) + Ŵ₂(v̂_i)]     (pseudo-MLE, above)
+    b_i = 4 (ẑ_i − z̄),   ẑ_i = 2 C_n(û_i, v̂_i) − û_i − v̂_i   (Kendall's τ̂)
+    Var(τ̂_MLE − τ̂_τ) = Var_w(a − b) / Σw
+
+``b`` is the influence function behind the ``'tau'`` variance of this
+module: ``Var(τ̂) = 16 Var{2C(U, V) − U − V}/n``. It is the influence
+function of the V-statistic ``4 · mean(C_n) − 1``: for
+``V_n = n⁻² ΣΣ 1{û_j ≤ û_i, v̂_j ≤ v̂_i}`` the delta method gives
+``IF(x) = C(u, v) + P(U ≥ u, V ≥ v) − 2 E C = z(x) − E z``, and τ̂ = 4V_n − 1
+multiplies it by 4 — hence 16 in the variance, not the 4 a naive plug-in
+would give. Both marginal variances this construction reproduces are
+exactly the ones :func:`standard_errors` reports for the two methods, so
+the diagnostic cannot silently disagree with them; what it adds is the
+cross term, which is large (measured correlation 0.97-0.99 at τ = 0.4, see
+``pmcprg/tests/test_fr7_robust_options.py``). A bootstrap would also be
+defensible; the influence-function route was taken because it is O(n log n),
+deterministic, and reuses the estimators' own asymptotics rather than
+resampling pseudo-observations whose ranks are not independent.
+
+Weighted density-power-divergence estimation (FR-7 c) lives in
+:mod:`pmcprg.copulas._robust`, which does not touch this module.
 
 The observations are assumed **i.i.d.** Serially dependent pairs
 (consecutive states of a Markov chain share y_n) need FR-5.
@@ -161,6 +217,19 @@ References
   bivariate normal copula model: normal margins are least favourable.
   *Bernoulli* 3(1), 55–77. doi:10.2307/3318652 — n·Var(ρ̂) → (1 − ρ²)² for the rank-based
   estimator, the closed form the tests check.
+* Hausman, J. A. (1978). Specification tests in econometrics.
+  *Econometrica* 46(6), 1251–1271. doi:10.2307/1913827 — the
+  consistent-vs-consistent-and-efficient contrast :func:`mle_tau_discrepancy_test`
+  follows in form (but not in its variance estimate: see above).
+* Croux, C. & Dehon, C. (2010). Influence functions of the Spearman and
+  Kendall correlation measures. *Stat. Methods Appl.* 19(4), 497–515.
+  doi:10.1007/s10260-010-0142-z — Kendall's τ has a bounded influence
+  function; the log-density score does not.
+* Genest, C. & Werker, B. J. M. (2002). Conditions for the asymptotic
+  semiparametric efficiency of an omnibus estimator of dependence parameters
+  in copula models. In *Distributions with Given Marginals and Statistical
+  Modelling*, 103–112. doi:10.1007/978-94-017-0061-0_12 — why the
+  Hausman difference-of-variances shortcut is not available here.
 """
 
 from __future__ import annotations
@@ -176,9 +245,11 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "IndependenceLRTest",
+    "MleTauDiscrepancyTest",
     "StandardErrors",
     "SubmodelLRTest",
     "independence_lr_test",
+    "mle_tau_discrepancy_test",
     "standard_errors",
     "submodel_lr_test",
 ]
@@ -300,6 +371,65 @@ class IndependenceLRTest:
     log_likelihood: float
     n_obs: int
     n_eff: float
+
+
+@dataclass(frozen=True)
+class MleTauDiscrepancyTest:
+    """Hausman-style contrast of the pseudo-MLE and the τ-inversion estimate.
+
+    H0: both estimators are consistent for the same τ — what correct
+    specification of the family and uncontaminated data imply. See the module
+    docstring ("MLE-vs-τ discrepancy diagnostic") for the construction of
+    ``se_difference``, which is *not* a difference of the two variances.
+
+    Fields
+    ------
+    family         : class name of the one-parameter family.
+    statistic      : ``(τ̂_MLE − τ̂_τ) / SE(τ̂_MLE − τ̂_τ)``; N(0, 1) under H0.
+    p_value        : two-sided, ``2 Φ(−|statistic|)``.
+    difference     : ``τ̂_MLE − τ̂_τ``.
+    se_difference  : its standard error, from the joint influence functions.
+    tau_mle, tau_tau       : the two estimates of τ.
+    theta_mle, theta_tau   : the family's native parameter at each — reported
+                             for information; the test is on the τ scale, which
+                             is equivalent to first order (module docstring).
+    se_tau_mle, se_tau_tau : the two marginal standard errors of τ̂, identical
+                             to what :func:`standard_errors` returns for
+                             ``method='mle'`` and ``method='tau'``.
+    correlation    : estimated ``Corr(τ̂_MLE, τ̂_τ)`` from the same influence
+                     functions — typically 0.95-0.99, which is exactly why the
+                     cross term may not be dropped.
+    at_boundary    : the pseudo-MLE sits on a boundary of the parameter space.
+                     ``statistic``, ``p_value``, ``se_difference`` and
+                     ``correlation`` are then NaN: neither the sandwich nor the
+                     normal limit applies there (Self & Liang 1987), the same
+                     convention :func:`standard_errors` follows.
+    boundary       : one sentence per boundary condition met (empty if interior).
+    n_obs, n_eff   : positive-weight observations and Σ w.
+    """
+
+    family: str
+    statistic: float
+    p_value: float
+    difference: float
+    se_difference: float
+    tau_mle: float
+    tau_tau: float
+    theta_mle: float
+    theta_tau: float
+    se_tau_mle: float
+    se_tau_tau: float
+    correlation: float
+    at_boundary: bool
+    boundary: tuple
+    n_obs: int
+    n_eff: float
+
+    def __repr__(self) -> str:
+        flag = ", at_boundary" if self.at_boundary else ""
+        return (f"MleTauDiscrepancyTest({self.family}, tau_mle={self.tau_mle:.4g}, "
+                f"tau_tau={self.tau_tau:.4g}, z={self.statistic:.3g}, "
+                f"p={self.p_value:.3g}, n_eff={self.n_eff:g}{flag})")
 
 
 @dataclass(frozen=True)
@@ -695,19 +825,30 @@ def _derivatives(spec: _Spec, uv: np.ndarray, ranks: bool):
     return score, hess, margin_derivs[0], margin_derivs[1]
 
 
-def _sandwich_cov_psi(spec: _Spec, uv: np.ndarray, w: np.ndarray, ranks: bool) -> np.ndarray:
-    p = spec.psi.size
-    nan = np.full((p, p), np.nan)
+def _score_and_information(spec: _Spec, uv: np.ndarray, w: np.ndarray,
+                           ranks: bool, what: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """``(M, B)`` of the pseudo-likelihood sandwich in ψ, or ``None``.
+
+    ``M`` is the (n, p) per-observation estimating function ``φ + Ŵ₁ + Ŵ₂``
+    (``φ`` alone when ``ranks`` is False) and ``B`` the (p, p) observed
+    information with its chain-rule gradient term removed. ``B⁻¹ M_i`` is
+    then the influence function of ψ̂ — used both by
+    :func:`_sandwich_cov_psi` and by :func:`mle_tau_discrepancy_test`, so the
+    two can never describe different estimators. ``None`` (with a WARNING
+    naming ``what``) when the estimate is on an exact boundary, when a
+    derivative is not finite, or when the information is not positive
+    definite.
+    """
     if not np.all(np.isfinite(spec.psi)):
-        logger.warning("%s standard errors: the estimate is on an exact boundary (ψ = ±∞); "
-                       "no pseudo-likelihood variance is computed.", spec.cls.__name__)
-        return nan
+        logger.warning("%s %s: the estimate is on an exact boundary (ψ = ±∞); "
+                       "no pseudo-likelihood variance is computed.", spec.cls.__name__, what)
+        return None
     score, hess, dphi_u, dphi_v = _derivatives(spec, uv, ranks)
     arrays = [score, hess] + ([dphi_u, dphi_v] if ranks else [])
     if not all(np.all(np.isfinite(arr)) for arr in arrays):
-        logger.warning("%s standard errors: non-finite log-density derivatives at some "
-                       "observations; returning NaN.", spec.cls.__name__)
-        return nan
+        logger.warning("%s %s: non-finite log-density derivatives at some "
+                       "observations; returning NaN.", spec.cls.__name__, what)
+        return None
 
     sw = float(w.sum())
     B = -np.einsum("i,iab->ab", w, hess) / sw
@@ -722,27 +863,70 @@ def _sandwich_cov_psi(spec: _Spec, uv: np.ndarray, w: np.ndarray, ranks: bool) -
     if ranks:
         M += _upper_weighted_sums(uv[:, 0], dphi_u, w) / sw
         M += _upper_weighted_sums(uv[:, 1], dphi_v, w) / sw
-    Mc = M - (w @ M) / sw
-    Omega = (Mc * w[:, None]).T @ Mc / sw
     eig = np.linalg.eigvalsh(B)
     if not np.all(eig > 0.0):
-        logger.warning("%s standard errors: the pseudo-likelihood is not locally concave at "
+        logger.warning("%s %s: the pseudo-likelihood is not locally concave at "
                        "the estimate (information eigenvalues %s); returning NaN.",
-                       spec.cls.__name__, eig)
-        return nan
+                       spec.cls.__name__, what, eig)
+        return None
+    return M, B
+
+
+def _sandwich_cov_psi(spec: _Spec, uv: np.ndarray, w: np.ndarray, ranks: bool) -> np.ndarray:
+    p = spec.psi.size
+    got = _score_and_information(spec, uv, w, ranks, "standard errors")
+    if got is None:
+        return np.full((p, p), np.nan)
+    M, B = got
+    sw = float(w.sum())
+    Mc = M - (w @ M) / sw
+    Omega = (Mc * w[:, None]).T @ Mc / sw
     Binv = np.linalg.inv(B)
     return Binv @ Omega @ Binv.T / sw
 
 
-def _tau_variance(uv: np.ndarray, w: np.ndarray, weighted: bool) -> float:
-    """Var(τ̂) ≈ 16 · Var_w{2 C_n(û, v̂) − û − v̂} / Σw."""
+def _tau_influence(uv: np.ndarray, w: np.ndarray, weighted: bool) -> tuple[np.ndarray, float]:
+    """``(4 (ẑ − z̄), τ̂)`` — Kendall's τ̂ and its influence function, from C_n.
+
+    ``ẑ_i = 2 C_n(û_i, v̂_i) − û_i − v̂_i``, with the weighted empirical copula
+    when weights are given. The influence function ``4(ẑ − z̄)`` is the one
+    behind this module's ``'tau'`` variance ``16 Var{2C − U − V}/n`` (module
+    docstring, "MLE-vs-τ discrepancy diagnostic").
+
+    τ̂ itself is the **U-statistic** form written through the same C_n. With
+    ``S = Σw`` and ``Q = Σw²``, ``S² mean_w(C_n) = Σ_{i,j} w_i w_j
+    1{û_j ≤ û_i, v̂_j ≤ v̂_i}`` counts every ordered pair including ``i = j``,
+    so removing the Q diagonal terms and normalising by ``S² − Q`` gives
+
+        τ̂ = 4 (S² mean_w(C_n) − Q) / (S² − Q) − 1 ,
+
+    which for unit weights and distinct pseudo-observations is **exactly**
+    ``scipy.stats.kendalltau`` (pinned in ``test_fr7_robust_options.py``), and
+    not the V-statistic ``4 mean(C_n) − 1``, which differs by O(1/n) — an
+    offset of the same order as the discrepancy being tested at moderate n.
+    With frequency weights the within-row pairs a repeated row would
+    contribute are excluded along with the diagonal, an O(Q/S²) difference
+    from literally expanding the rows.
+    """
     from pmcprg.copulas._fit import _empirical_copula
 
     cn = _empirical_copula(uv, uv, w if weighted else None)
     z = 2.0 * cn - uv[:, 0] - uv[:, 1]
     sw = float(w.sum())
-    zc = z - float(w @ z) / sw
-    return 16.0 * float(w @ (zc * zc)) / sw / sw
+    sq = float(w @ w)
+    zbar = float(w @ z) / sw
+    denom = sw * sw - sq
+    if denom <= 0.0:
+        return 4.0 * (z - zbar), float("nan")
+    tau_hat = 4.0 * (sw * float(w @ cn) - sq) / denom - 1.0
+    return 4.0 * (z - zbar), float(tau_hat)
+
+
+def _tau_variance(uv: np.ndarray, w: np.ndarray, weighted: bool) -> float:
+    """Var(τ̂) ≈ 16 · Var_w{2 C_n(û, v̂) − û − v̂} / Σw."""
+    b, _ = _tau_influence(uv, w, weighted)
+    sw = float(w.sum())
+    return float(w @ (b * b)) / sw / sw
 
 
 # ---------------------------------------------------------------------------
@@ -951,6 +1135,19 @@ _SUBMODEL_NESTING: dict[tuple[str, str], str] = {
         "(the Gumbel-Hougaard limit; pmcprg.copulas.extreme_value.tawn module "
         "docstring)."
     ),
+    # FR-9, BB6 round. Both of BB6's sub-models are boundaries of its
+    # admissible set {theta >= 1, delta >= 1} — the set the joint fit's own
+    # (ln(theta - 1), ln delta) box is — so both keep the one-sided null.
+    ("CopulaBB6", "CopulaJoe"): (
+        "delta6 = 1 is the lower end of BB6's registered delta6 >= 1 range "
+        "(the Joe limit; pmcprg.copulas.archimedean.bb6 module docstring)."
+    ),
+    ("CopulaBB6", "CopulaGH"): (
+        "theta = 1 is the lower end of BB6's registered theta >= 1 range "
+        "(the floor theta = 1 + 1e-10 of the joint fit's ln(theta - 1) box "
+        "stands in for it; the Gumbel-Hougaard limit; "
+        "pmcprg.copulas.archimedean.bb6 module docstring)."
+    ),
 }
 
 
@@ -1005,7 +1202,8 @@ def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTes
     Implemented nestings (module docstring, "Two-parameter sub-model tests",
     verifies each against the family's own module docstring): BB1 → Clayton,
     BB1 → Gumbel (``CopulaGH``), Student → Gauss (``CopulaGaussian``), Tawn
-    type 1 or 2 → Gumbel (``CopulaGH``). Every one is a **boundary** of the
+    type 1 or 2 → Gumbel (``CopulaGH``), BB6 → Joe, BB6 → Gumbel
+    (``CopulaGH``). Every one is a **boundary** of the
     full family's admissible extra-parameter range, so ``LR → ½χ²₀ + ½χ²₁``
     (Self & Liang 1987), unlike the plain ``χ²₁`` an interior sub-model would
     give.
@@ -1068,3 +1266,132 @@ def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTes
         log_likelihood_full=ll_full, log_likelihood_sub=float(ll_sub),
         n_obs=int(uv.shape[0]), n_eff=float(w.sum()),
     )
+
+
+# ---------------------------------------------------------------------------
+# MLE-vs-τ discrepancy diagnostic (module docstring, "MLE-vs-τ discrepancy
+# diagnostic"; audit AUDIT_COPULES FR-7 b)
+# ---------------------------------------------------------------------------
+
+def _theta_at(cls, entry, tau: float) -> float:
+    """The family's native parameter at ``tau``, or NaN when τ is outside its range."""
+    lo, hi = entry.constructible_tau_range()
+    try:
+        return float(cls(tau_k=float(min(max(tau, lo), hi))).theta)
+    except Exception:
+        return float("nan")
+
+
+def mle_tau_discrepancy_test(family, uv, weights=None) -> MleTauDiscrepancyTest:
+    """Hausman-style test that the pseudo-MLE and Kendall's τ̂ agree (FR-7 b).
+
+    ``H0``: the family is correctly specified and the sample uncontaminated,
+    so both estimators are consistent for the same τ and
+    ``τ̂_MLE − τ̂_τ = O_p(n^{-1/2})`` is centred at 0. Kendall's τ̂ has a
+    bounded influence function; the pseudo-likelihood score does not (Croux &
+    Dehon 2010), so a few contaminating pairs move ``τ̂_MLE`` and leave
+    ``τ̂_τ`` alone, and the standardised difference grows.
+
+    Both estimates are recomputed here from ``uv`` — the pseudo-MLE by the
+    same bounded Brent search over the padded τ-range as
+    :meth:`CopulaVirt.fit(method='mle')`, Kendall's τ̂ through the (weighted)
+    empirical copula in the U-statistic form of :func:`_tau_influence`, which
+    with unit weights and distinct pseudo-observations equals
+    :func:`scipy.stats.kendalltau` exactly. The standard error of their
+    **difference** comes from the two
+    influence functions evaluated on the same sample, *not* from a difference
+    of variances: see the module docstring, "MLE-vs-τ discrepancy
+    diagnostic", for why the Hausman shortcut is not available here and what
+    is computed instead.
+
+    Parameters
+    ----------
+    family  : a one-parameter ``CopulaVirt`` subclass (or an instance of one).
+    uv      : (n, 2) pseudo-observations in (0, 1)² — ``FitResult.uv``.
+    weights : optional (n,) non-negative frequency weights (module docstring,
+              "Weights").
+
+    Returns
+    -------
+    MleTauDiscrepancyTest — ``statistic`` is N(0, 1) under H0, ``p_value`` is
+    two-sided. At a boundary of the parameter space the statistic, its
+    standard error, the correlation and the p-value are NaN (``at_boundary``
+    set, ``boundary`` saying why): the pseudo-MLE is not asymptotically
+    normal there, so the contrast has no reference distribution.
+
+    Raises
+    ------
+    ValueError          for a family with no free parameter, an unusable
+                        ``uv``/``weights``, or a pseudo-likelihood that is not
+                        finite anywhere the search looked.
+    NotImplementedError for a two-parameter family: Kendall's τ does not
+                        identify its second parameter, exactly as for
+                        :func:`standard_errors` with ``method='tau'``.
+    """
+    from scipy.stats import norm
+
+    cls = family if isinstance(family, type) else type(family)
+    entry = _registry_entry(cls)
+    if len(entry.value.PARAMETERS_SET_NAME) != 1:
+        raise NotImplementedError(
+            f"{cls.__name__} has more than one parameter: Kendall's τ does not identify "
+            f"its second parameter, so there is no τ-inversion estimate to contrast the "
+            f"pseudo-MLE with.")
+    a, b = (float(t) for t in entry.value.TAU_MIN_MAX)
+    if b - a < 1e-8:
+        raise ValueError(f"{cls.__name__} has no free parameter.")
+
+    uv, w, weighted = _prepare(uv, weights)
+    sw = float(w.sum())
+    w_arg = w if weighted else None
+
+    tau_mle, _ = _fit_one_parameter_profile(cls, uv, w_arg)
+    b_inf, tau_hat = _tau_influence(uv, w, weighted)
+    if not np.isfinite(tau_hat):
+        raise ValueError(f"{cls.__name__}: Kendall's τ is undefined on these "
+                         "pseudo-observations.")
+
+    spec = _spec_of(cls(tau_k=float(tau_mle)))
+    theta_mle = float(spec.estimate["theta"])
+    theta_tau = _theta_at(cls, entry, tau_hat)
+    diff = float(tau_mle) - float(tau_hat)
+    nan = float("nan")
+    common = dict(
+        family=cls.__name__, difference=diff, tau_mle=float(tau_mle), tau_tau=float(tau_hat),
+        theta_mle=theta_mle, theta_tau=theta_tau,
+        se_tau_tau=float(math.sqrt(float(w @ (b_inf * b_inf)) / sw / sw)),
+        boundary=spec.boundary, n_obs=int(uv.shape[0]), n_eff=sw,
+    )
+    if spec.boundary:
+        return MleTauDiscrepancyTest(statistic=nan, p_value=nan, se_difference=nan,
+                                     se_tau_mle=nan, correlation=nan, at_boundary=True,
+                                     **common)
+
+    got = _score_and_information(spec, uv, w, True, "MLE-vs-tau discrepancy")
+    if got is None:
+        return MleTauDiscrepancyTest(statistic=nan, p_value=nan, se_difference=nan,
+                                     se_tau_mle=nan, correlation=nan, at_boundary=False,
+                                     **common)
+    M, B = got
+    # Influence function of τ̂_MLE: B⁻¹ φ in ψ, carried to τ by dτ/dψ.
+    a_inf = float(spec.jac_psi[0, 0]) * M[:, 0] / float(B[0, 0])
+    a_inf = a_inf - float(w @ a_inf) / sw
+    d = a_inf - b_inf
+    var_d = float(w @ (d * d)) / sw / sw
+    var_a = float(w @ (a_inf * a_inf)) / sw / sw
+    var_b = float(w @ (b_inf * b_inf)) / sw / sw
+    cov_ab = float(w @ (a_inf * b_inf)) / sw / sw
+    denom = math.sqrt(var_a * var_b)
+    corr = cov_ab / denom if denom > 0.0 else nan
+    if not (var_d > 0.0) or not np.isfinite(var_d):
+        logger.warning("%s MLE-vs-tau discrepancy: the variance of the difference is not "
+                       "positive (%r); returning NaN.", cls.__name__, var_d)
+        return MleTauDiscrepancyTest(statistic=nan, p_value=nan, se_difference=nan,
+                                     se_tau_mle=float(math.sqrt(var_a)), correlation=corr,
+                                     at_boundary=False, **common)
+    se_d = math.sqrt(var_d)
+    z = diff / se_d
+    return MleTauDiscrepancyTest(
+        statistic=float(z), p_value=float(2.0 * norm.sf(abs(z))), se_difference=float(se_d),
+        se_tau_mle=float(math.sqrt(var_a)), correlation=float(corr), at_boundary=False,
+        **common)

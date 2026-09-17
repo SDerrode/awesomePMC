@@ -26,12 +26,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module-level configuration
 # ---------------------------------------------------------------------------
-#: Maximum number of acceptance-rejection iterations when sampling a
-#: conditional law via the majorant method. Reaching this cap raises
-#: :class:`pmcprg.exceptions.SamplingConvergenceError`. The default of 80 000 is
-#: comfortable for all 17 copulas in their valid τ range; tweak it (e.g.
-#: ``pmcprg.copulas.bivariate.MAX_AR_ITER = 200_000``) if a custom copula has
-#: a poor analytical majorant on some τ regime.
+#: Historical cap on the number of acceptance-rejection iterations when
+#: sampling a conditional law via the majorant method. **No longer used**:
+#: :meth:`BivariateLaw.sample_conditional` draws by Rosenblatt inversion
+#: (``inv_h_array``), so nothing in the package reads this constant and
+#: :class:`pmcprg.exceptions.SamplingConvergenceError` is never raised. Both
+#: are kept exported for backward compatibility — do not bump the number to
+#: match the registry, there is no acceptance-rejection loop left to cap.
 MAX_AR_ITER = 80_000
 
 

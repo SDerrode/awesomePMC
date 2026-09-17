@@ -56,7 +56,10 @@ def test_majorant_is_upper_bound(entry):
     if "df" in entry.value.PARAMETERS_SET_NAME:
         kwargs["df"] = 4.0
 
-    cop = entry.klass(**kwargs)
+    # Other extras keep their constructor defaults; a jointly constrained
+    # family gets them repaired rather than refused (FR-9, round 5 — the hook
+    # is the identity wherever the constructor already accepts).
+    cop = entry.klass(**entry.klass.constructible_params(kwargs))
 
     # Find the worst-case deficit across the random u-grid.
     max_deficit = 0.0

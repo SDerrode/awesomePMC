@@ -10,8 +10,12 @@ _eval_log_likelihood, _empirical_copula, _cvm_statistic, _empirical_tail_dep
     Pseudo-observation utilities (used by both `CopulaVirt.fit` and
     `FitResult.gof_test`).
 _fit_two_parameter_mle, ParameterFit
-    Joint (weighted) MLE of a two-parameter family — the single optimiser
+    Joint (weighted) MLE of a multi-parameter family — the single optimiser
     behind ``CopulaVirt.fit(method='mle')`` and the ICE M-step (RB-3, RB-8).
+    The name is historical: the driver was always written for a parameter
+    vector of arbitrary length, and FR-9 round 5 (the three-parameter Tawn)
+    used it unchanged, adding only a coordinate branch in
+    ``_multi_extra_spec``.
 GoFResult
     Cramér-von Mises GoF test result.
 FitResult
@@ -108,7 +112,7 @@ def _eval_log_likelihood(copula: "CopulaVirt", uv: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Joint MLE of the two-parameter families (Student, BB1)
+# Joint MLE of the multi-parameter families (Student, BB1, Tawn, t-EV)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -146,16 +150,94 @@ _MLE2_GTOL:    float = 1e-6
 _MLE2_STALL_REL: float = 1e-10
 
 
+def _multi_extra_spec(cls, entry, extras: list[str], lo: float, hi: float,
+                      t0: float, tau_min: float):
+    """:func:`_two_parameter_spec` for a family with **two or more** extras.
+
+    Same contract — ``(p0, stages, params_of)`` with ``p`` of length
+    ``1 + len(extras)``. Nothing else had to change: the driver
+    :func:`_fit_two_parameter_mle` never knew the dimension (it only calls
+    ``to_x``/``from_x`` and hands ``box`` to L-BFGS-B), so growing the
+    parameter vector is a change to this file alone, and only to the branch
+    that builds the coordinates.
+
+    * **Tawn 3** (``psi_u``, ``psi_v``; FR-9, round 5): ``p = (ln(θ − 1),
+      ψ_u, ψ_v)``. τ is *jointly* constrained with the weights
+      (``τ < 1/(1/ψ_u + 1/ψ_v − 1)``), but every (θ, ψ_u, ψ_v) with θ > 1 and
+      the weights in (0, 1] **is** a Tawn copula — so, exactly as for types
+      1/2, optimise in θ rather than τ and the box *is* the admissible set.
+      τ comes back through the family's own quadrature, whose memo hands the
+      constructor this very θ without a Brent re-inversion. The upper bound
+      ln(θ − 1) ≤ ln(1/(1 − τ_hi) − 1) keeps τ(θ, ψ_u, ψ_v) ≤ τ(θ, 1, 1) =
+      1 − 1/θ ≤ τ_hi (τ increases with each weight); the lower bound keeps
+      τ ≳ 5·10⁻⁸ ≫ ε. The box is run twice for the same reason as types 1/2
+      (a restart with a fresh curvature memory on a narrow curved ridge).
+    * **any other set of extras**: ``p = (τ, x₁, …, xₙ)`` in the registered
+      boxes, projected by ``cls.constrain_params`` — the n-dimensional form of
+      the one-extra fallback at the end of :func:`_two_parameter_spec`.
+    """
+    from pmcprg.copulas._base import EXTRA_PARAM_BOUNDS_BY_PARAM
+
+    boxes = [EXTRA_PARAM_BOUNDS_BY_PARAM[name] for name in extras]
+
+    def clip(val, bounds):
+        return float(min(max(float(val), bounds[0]), bounds[1]))
+
+    if tuple(extras) == ("psi_u", "psi_v"):
+        from pmcprg.copulas.extreme_value.tawn import _tau_of
+        s_b = (math.log(1e-6), math.log(max(1.0 / (1.0 - hi) - 1.0, 1e-5)))
+        psi_b = [(xlo, xhi) for xlo, xhi, _ in boxes]
+        # Start: θ₀ from Gumbel's closed form θ = 1/(1 − τ_start), and both
+        # weights at (1 + τ_start)/2 — interior to the box and to the
+        # admissible set, the same rule types 1/2 use for their single ψ.
+        psi0 = [clip(0.5 * (1.0 + t0), b) for b in psi_b]
+        p0 = (clip(math.log(max(1.0 / (1.0 - t0) - 1.0, 1e-6)), s_b), *psi0)
+
+        def params_of(p) -> dict:
+            s = clip(p[0], s_b)
+            psis = [clip(v, b) for v, b in zip(p[1:], psi_b)]
+            tau = _tau_of(1.0 + math.exp(s), *psis)
+            return {"tau_k": max(tau, float(tau_min)),
+                    **dict(zip(extras, psis))}
+
+        box = [s_b, *psi_b]
+        stage = (lambda p: [clip(p[0], s_b)] + [clip(v, b) for v, b in zip(p[1:], psi_b)],
+                 lambda x: (clip(x[0], s_b),
+                            *(clip(v, b) for v, b in zip(x[1:], psi_b))),
+                 box)
+        return p0, [stage, stage], params_of
+
+    tau_b = (lo, hi)
+    extra_b = [(xlo, xhi) for xlo, xhi, _ in boxes]
+    p0 = (t0, *(clip(xinit, b) for (_, _, xinit), b in zip(boxes, extra_b)))
+
+    def params_of(p) -> dict:
+        vals = [clip(v, b) for v, b in zip(p[1:], extra_b)]
+        return cls.constrain_params({"tau_k": clip(p[0], tau_b), **dict(zip(extras, vals))})
+
+    stages = [(lambda p: [clip(p[0], tau_b)] + [clip(v, b) for v, b in zip(p[1:], extra_b)],
+               lambda x: (clip(x[0], tau_b),
+                          *(clip(v, b) for v, b in zip(x[1:], extra_b))),
+               [tau_b, *extra_b])]
+    return p0, stages, params_of
+
+
 def _two_parameter_spec(cls, entry, tau_start: float):
     """Natural parameters and optimiser coordinates for the joint MLE.
 
     Returns ``(p0, stages, params_of)``: a start value of the family's natural
-    two-vector ``p``, a list of optimisation stages ``(to_x, from_x, box)``,
-    and the map ``p → constructor kwargs``. Every stage's box is **the
-    admissible set itself** — a bounded optimiser only handles boxes, and a
-    box that must be projected onto the admissible set creates flat
-    directions on which the optimiser stalls (audit RB-8). Stages run in
-    order, each starting from the best point of the previous one.
+    parameter vector ``p``, a list of optimisation stages
+    ``(to_x, from_x, box)``, and the map ``p → constructor kwargs``. Every
+    stage's box is **the admissible set itself** — a bounded optimiser only
+    handles boxes, and a box that must be projected onto the admissible set
+    creates flat directions on which the optimiser stalls (audit RB-8).
+    Stages run in order, each starting from the best point of the previous
+    one.
+
+    The name is historical: ``p`` has ``1 + (number of extras)`` components,
+    two for every family until FR-9 round 5 added the three-parameter Tawn.
+    This function dispatches on the *names* of the extras; a family with more
+    than one is handed to :func:`_multi_extra_spec`.
 
     * Student (``df``): ``p = (τ, η = 1/ν)``, one stage in ``(atanh τ, η)``
       with ``η ∈ [1/ν_max, 1/ν_min]``. The likelihood is nearly flat in ν for
@@ -188,6 +270,14 @@ def _two_parameter_spec(cls, entry, tau_start: float):
       identity instead of this routine directly; this sign-awareness is
       still needed here because ICE's M-step
       (``pmcprg.pmc.ice._fit_copula_params``) calls this function directly.
+    * BB6 (``delta6``, FR-9): ``p = (ln(θ − 1), ln δ)``, a box that is the
+      admissible set (every θ ≥ 1, δ ≥ 1 is a BB6 copula), mapped back by the
+      family's **closed form** ``τ = 1 − (1 − τ_Joe(θ))/δ``; two stages, the
+      second linear in θ − 1 to reach the Gumbel boundary θ = 1 (branch
+      comment below). ``delta6`` is deliberately not BB1's ``delta``: this
+      function dispatches on the parameter name, and the ``delta`` branch is
+      BB1's, with BB1's own τ map
+      (``pmcprg.copulas.archimedean.bb6``, "Parametrisation").
     * Tawn types 1/2 (``psi``, FR-9): ``p = (ln(θ − 1), ψ)``, a box that is
       the admissible set, mapped back by the family's τ(θ, ψ); two passes
       (branch comment below).
@@ -208,9 +298,15 @@ def _two_parameter_spec(cls, entry, tau_start: float):
     lo, hi = padded_tau_range(tau_min, tau_max)
     t0 = float(np.clip(tau_start if np.isfinite(tau_start) else 0.5 * (lo + hi), lo, hi))
     extras = [p for p in entry.value.PARAMETERS_SET_NAME if p != "tau_k"]
+    if len(extras) > 1:
+        # Two or more extras (FR-9, round 5: the three-parameter Tawn). Handled
+        # in its own builder so that every branch below — the coordinates,
+        # start values and stage lists of BB1, Student, Tawn 1/2 and t-EV —
+        # stays exactly the code it was, down to the line.
+        return _multi_extra_spec(cls, entry, extras, lo, hi, t0, tau_min)
     if len(extras) != 1:
         raise ValueError(
-            f"{entry.value.CLASS_NAME}: expected exactly one extra parameter, got {extras}."
+            f"{entry.value.CLASS_NAME}: expected at least one extra parameter, got {extras}."
         )
     name = extras[0]
     xlo, xhi, xinit = EXTRA_PARAM_BOUNDS_BY_PARAM[name]
@@ -274,6 +370,53 @@ def _two_parameter_spec(cls, entry, tau_start: float):
              lambda x: (clip(x[0], theta_b),
                         clip(math.exp(clip(x[1], log_delta_b)), delta_b)),
              [theta_b, log_delta_b]),
+        ]
+        return p0, stages, params_of
+
+    if name == "delta6":
+        # BB6 (FR-9): (τ, δ) is jointly constrained (δ ≤ 1/(1 − τ)), but every
+        # θ ≥ 1, δ ≥ 1 *is* a BB6 copula — so optimise in (ln(θ − 1), ln δ),
+        # whose box is the admissible set, and map back by the family's own
+        # closed form τ = 1 − (1 − τ_Joe(θ))/δ (bb6 module docstring, (★)).
+        # ``delta6`` is deliberately not BB1's ``delta``: that branch carries
+        # BB1's τ = 1 − 2/(δ(θ + 2)) map, which is a different family.
+        # θ − 1 ≤ 2/(1 − τ_hi) bounds τ_Joe(θ) ≈ 1 − 2/θ, so τ stays below 1
+        # on the whole box (BB1's own ceiling 2/(1 − τ_hi) − 2, same
+        # reasoning: the padded τ ceiling, not the registered τ = 1);
+        # ln(θ − 1) ≥ ln 1e-10 keeps τ(θ, 1) ≈ 6·10⁻¹¹ ≫ ε, and θ = 1 + 1e-10
+        # is the stand-in for the Gumbel boundary θ = 1 (as BB1's θ floor
+        # stands in for its own Gumbel limit θ → 0).
+        from pmcprg.copulas.archimedean.joe import _joe_tau_from_theta
+        s_b = (math.log(1e-10), math.log(max(2.0 / (1.0 - hi), 10.0)))
+        delta_b = (xlo, xhi)
+        log_delta_b = (math.log(delta_b[0]), math.log(delta_b[1]))
+        # Start: δ₀ = √δ_max(τ_start), interior to the admissible [1, δ_max]
+        # and splitting the "Joe versus Gumbel" share of τ evenly in log; θ₀
+        # is then the θ that realises τ_start at δ₀.
+        delta_max = 1.0 / (1.0 - t0) if t0 < 1.0 else xhi
+        delta0 = clip(math.sqrt(max(delta_max, 1.0)), delta_b)
+        tau_joe0 = min(max(1.0 - delta0 * (1.0 - t0), 0.0), 1.0 - 1e-12)
+        theta0 = 1.0 / (1.0 - tau_joe0)      # Gumbel's map: within a factor 2 of Joe's
+        p0 = (clip(math.log(max(theta0 - 1.0, 1e-10)), s_b), delta0)
+
+        def params_of(p) -> dict:
+            s, delta = clip(p[0], s_b), clip(p[1], delta_b)
+            tau = 1.0 - (1.0 - _joe_tau_from_theta(1.0 + math.exp(s))) / delta
+            return {"tau_k": min(max(tau, float(tau_min)), 1.0 - 1e-12), "delta6": delta}
+
+        # Two stages, as BB1: (ln(θ − 1), ln δ) finds interior optima whatever
+        # the scale of θ − 1; (θ − 1, ln δ) then reaches the Gumbel boundary
+        # θ → 1, which the logarithm puts at the end of a long flat valley.
+        exc_b = (math.exp(s_b[0]), math.exp(s_b[1]))
+        stages = [
+            (lambda p: [clip(p[0], s_b), math.log(clip(p[1], delta_b))],
+             lambda x: (clip(x[0], s_b),
+                        clip(math.exp(clip(x[1], log_delta_b)), delta_b)),
+             [s_b, log_delta_b]),
+            (lambda p: [clip(math.exp(clip(p[0], s_b)), exc_b), math.log(clip(p[1], delta_b))],
+             lambda x: (clip(math.log(clip(x[0], exc_b)), s_b),
+                        clip(math.exp(clip(x[1], log_delta_b)), delta_b)),
+             [exc_b, log_delta_b]),
         ]
         return p0, stages, params_of
 
@@ -359,7 +502,7 @@ def _fit_two_parameter_mle(
     weights: np.ndarray | None,
     tau_start: float,
 ) -> ParameterFit:
-    """Maximise ``Σ w log c(u, v; τ, extra)`` over a two-parameter family.
+    """Maximise ``Σ w log c(u, v; τ, extras…)`` over a multi-parameter family.
 
     L-BFGS-B with a finite-difference gradient, run over the stages of
     :func:`_two_parameter_spec` on the **total** weighted negative

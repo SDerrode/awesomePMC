@@ -39,12 +39,15 @@ Reference implementation of:
   fᵢⱼ — the law of yₙ given (xₙ, xₙ₊₁) = (i, j), under which X is not a Markov
   chain — or *state margins* fᵢ. Margins are any `scipy.stats` family, or
   multivariate Gaussian (d > 1) for the copula-free variants.
-- **17 copula families** — Gaussian, Student-t, Archimedean (Clayton,
-  Gumbel–Hougaard, Frank, Joe, A12, A14, AMH), survival, BB1, Plackett, FGM,
-  cubic section, independence — all parameterised by Kendall's τ, with
-  numerically robust vectorised log-densities: log-space Archimedean kernels
-  (Hofert, Mächler & McNeil 2012) and native elliptical log-densities, never
-  floored, so strong dependence and the tails keep their likelihood.
+- **39 copula families** — elliptical (Gaussian, Student-t), Archimedean
+  (Clayton, Gumbel–Hougaard, Frank, Joe, A12, A14, AMH, BB1, BB6) and their
+  survival forms, extreme-value (Galambos, Hüsler–Reiss, Tawn types 1 and 2,
+  the three-parameter Tawn, t-EV), explicit (Plackett, FGM, cubic section,
+  independence), and the 90°/270° rotations that carry the one-sided families
+  to τ < 0 — all parameterised by Kendall's τ, with numerically robust
+  vectorised log-densities: log-space Archimedean kernels (Hofert, Mächler &
+  McNeil 2012) and native elliptical log-densities, never floored, so strong
+  dependence and the tails keep their likelihood.
 - **Supervised classification**: normalised forward–backward, MPM decision,
   posterior marginals and forward-filtering backward-sampling draws.
 - **Unsupervised estimation**: ICE and SEM (stochastic EM) with, for every pair
@@ -78,7 +81,7 @@ Reference implementation of:
 
 | Sub-package | What it does |
 |---|---|
-| `pmcprg.copulas` | 17 copula families, fitting, model selection, standard errors, bivariate joint laws |
+| `pmcprg.copulas` | 39 copula families, fitting, model selection, standard errors, bivariate joint laws |
 | `pmcprg.pmc` | the 5 HMC/PMC variants: TOML models, simulation, classification, ICE/SEM, missing data, images, CLI, GUI |
 | `pmcprg.diagnostics` | multivariate KS test, parametric bootstrap, smooth tests, Vuong/Clarke tests |
 | `pmcprg.missing` | missingness patterns and metrics on masked positions |
@@ -200,29 +203,110 @@ Both notebooks are re-run by the test suite (tests marked `slow`).
 
 ### Available families
 
-All copulas are **τ-parameterised** (Kendall's τ is the single free dependence
-parameter). The Student-t copula additionally has a free `df` parameter, fitted
-jointly by 2-D MLE.
+All copulas are **τ-parameterised**: Kendall's τ is the first parameter of every
+family, so two families are always comparable at matched dependence. Twelve of
+them carry one or two extra shape parameters (`df`, `delta`, `delta6`, `psi`,
+`nu`, `psi_u`/`psi_v`), fitted jointly with τ by bounded MLE.
+
+The registry `CopulaEnum` is the single source of truth — the tables below are
+a reading of it, not a second list:
+
+```python
+from pmcprg.copulas import CopulaEnum
+
+len(CopulaEnum.available())                           # 39
+[e.value.SHORT_NAME for e in CopulaEnum.available()]  # 'Prod', 'Gauss', 'Student', …
+```
+
+**39 families**: 2 elliptical, 9 Archimedean, 4 survival (180° rotations),
+14 rotations at 90°/270°, 6 extreme-value and 4 explicit. `ID` and
+`SHORT_NAME` are the registry's own; `SHORT_NAME` is what the `name =` key of
+a TOML model expects.
+
+#### Elliptical
+
+| ID | SHORT_NAME | Family | τ range | Tail dep. |
+|----|-----------|--------|---------|-----------|
+| 2 | `Gauss` | Gaussian | (−1, 1) | none |
+| 3 | `Student` | Student-t (free `df` = ν > 2) | (−1, 1) | symmetric |
+
+#### Archimedean
+
+| ID | SHORT_NAME | Family | τ range | Tail dep. |
+|----|-----------|--------|---------|-----------|
+| 4 | `GH` | Gumbel-Hougaard | (0, 1) | upper |
+| 7 | `Clayton` | Clayton | (0, 1) | lower |
+| 8 | `A12` | Archimedean 12 | (1/3, 1) | both |
+| 9 | `A14` | Archimedean 14 | (1/3, 1) | both |
+| 10 | `Frank` | Frank | (−1, 1) | none |
+| 11 | `Joe` | Joe | (0, 1) | upper |
+| 15 | `BB1` | BB1 (Joe-Clayton), free `delta` | (0, 1) | both |
+| 16 | `AMH` | Ali-Mikhail-Haq | (≈−0.18, 1/3) | none |
+| 38 | `BB6` | BB6 (Joe-Gumbel), free `delta6` | (0, 1) | upper |
+
+#### Survival (180° rotations)
+
+A 180° rotation reflects *both* arguments: it leaves τ unchanged and swaps the
+two tails.
+
+| ID | SHORT_NAME | Family | τ range | Tail dep. |
+|----|-----------|--------|---------|-----------|
+| 12 | `SClayton` | Survival Clayton | (0, 1) | upper |
+| 13 | `SGH` | Survival Gumbel-Hougaard | (0, 1) | lower |
+| 14 | `SJoe` | Survival Joe | (0, 1) | lower |
+| 35 | `SBB1` | Survival BB1 (Joe-Clayton), free `delta` | (0, 1) | both |
+
+#### Extreme-value
+
+Max-stable families, each given by a Pickands dependence function `A`. All are
+upper-tail dependent, and the three Tawn models are the only *unrotated*
+families here that model asymmetric dependence: `C(u, v) ≠ C(v, u)`. Every
+elliptical, Archimedean, survival and explicit family is exchangeable.
+
+| ID | SHORT_NAME | Family | τ range | Tail dep. |
+|----|-----------|--------|---------|-----------|
+| 18 | `Galambos` | Galambos | (0, 1) | upper |
+| 19 | `HuslerReiss` | Hüsler-Reiss | (0, 1) | upper |
+| 28 | `Tawn1` | Tawn type 1, asymmetric, free `psi` ¹ | (0, 1) | upper |
+| 29 | `Tawn2` | Tawn type 2, asymmetric, free `psi` ¹ | (0, 1) | upper |
+| 30 | `tEV` | t extreme-value, free `nu` | (0, 1) | upper |
+| 39 | `Tawn3` | Tawn asymmetric logistic, free `psi_u`, `psi_v` ¹ | (0, 1) | upper |
+
+¹ τ is jointly constrained with the weights — τ < ψ for types 1 and 2,
+τ < 1/(1/ψ\_u + 1/ψ\_v − 1) for the three-parameter model. `Tawn3` is the
+package's first three-parameter family.
+
+#### Explicit
+
+Closed-form CDF, no generator or Pickands function.
 
 | ID | SHORT_NAME | Family | τ range | Tail dep. |
 |----|-----------|--------|---------|-----------|
 | 1 | `Prod` | Independence (Product) | {0} | none |
-| 2 | `Gauss` | Gaussian | (−1, 1) | none |
-| 3 | `Student` | Student-t (free ν > 2) | (−1, 1) | symmetric |
-| 4 | `GH` | Gumbel-Hougaard | (0, 1) | upper |
 | 5 | `FGM` | Farlie-Gumbel-Morgenstern | (−2/9, 2/9) | none |
 | 6 | `CubSec` | Cubic Section | (0, 0.165) | none |
-| 7 | `Clayton` | Clayton | (0, 1) | lower |
-| 8 | `A12` | Archimedean 12 | (1/3, 1) | upper |
-| 9 | `A14` | Archimedean 14 | (1/3, 1) | upper |
-| 10 | `Frank` | Frank | (−1, 1) | none |
-| 11 | `Joe` | Joe | (0, 1) | upper |
-| 12 | `SClayton` | Survival Clayton | (0, 1) | upper |
-| 13 | `SGH` | Survival Gumbel-Hougaard | (0, 1) | lower |
-| 14 | `SJoe` | Survival Joe | (0, 1) | lower |
-| 15 | `BB1` | BB1 (Joe-Clayton) | (0, 1) | both |
-| 16 | `AMH` | Ali-Mikhail-Haq | (≈−0.18, 1/3) | none |
 | 17 | `Plackett` | Plackett | (−1, 1) | none |
+
+#### Rotations at 90° and 270°
+
+A 90° or 270° rotation reflects a *single* argument, turning a
+positively-dependent family into a negatively-dependent one. This gives
+**negative dependence to families that cannot otherwise represent τ < 0** —
+Clayton, Gumbel-Hougaard, Joe, A12, A14 and BB1 are all one-sided. Both
+tail-dependence coefficients vanish for every rotation (the mass sits in the
+(0, 1) and (1, 0) corners), so the column is dropped here.
+
+| IDs | SHORT_NAMEs | Base family | τ range |
+|-----|-------------|-------------|---------|
+| 20, 21 | `Clayton90`, `Clayton270` | Clayton | (−1, 0) |
+| 22, 23 | `GH90`, `GH270` | Gumbel-Hougaard | (−1, 0) |
+| 24, 25 | `Joe90`, `Joe270` | Joe | (−1, 0) |
+| 26, 27 | `BB190`, `BB1270` | BB1, free `delta` | (−1, 0) |
+| 31, 32 | `A1290`, `A12270` | Archimedean 12 | (−1, −1/3) |
+| 33, 34 | `A1490`, `A14270` | Archimedean 14 | (−1, −1/3) |
+| 36, 37 | `SBB190`, `SBB1270` | Survival BB1, free `delta` | (−1, 0) |
+
+With the rotations, 20 of the 39 families reach τ < 0.
 
 ### Quick start
 
@@ -377,9 +461,10 @@ params = {loc = 1.0, scale = 1.0}
 [[copulas]]              # only for HMC-DN and PMC — K² blocks (i, j)
 i    = 0
 j    = 0
-name = "Gauss"           # SHORT_NAME from the copula table above
+name = "Gauss"           # SHORT_NAME — see "Available families" above
 tau  = 0.6
-# df = 4.0               # optional extra param for Student copula
+# df = 4.0               # extra shape param of the 12 families that take one
+                         # (df, delta, delta6, psi, nu, psi_u/psi_v)
 # … blocks (0, 1), (1, 0) and (1, 1)
 
 [ice]                    # optional — ICE estimator defaults (also consumed
@@ -767,8 +852,9 @@ A23 (GICE, §5.1 setting) is exercised by the test suite on the bundled
 ```text
 awesomePMC/
 ├── pmcprg/                 import package
-│   ├── copulas/            17 copula families (archimedean/, elliptical/, explicit/),
-│   │                       fitting, standard errors, bivariate joint laws
+│   ├── copulas/            39 copula families (archimedean/, elliptical/,
+│   │                       explicit/, extreme_value/), fitting, standard
+│   │                       errors, bivariate joint laws
 │   ├── diagnostics/        multivariate KS, parametric bootstrap, smooth tests,
 │   │                       Vuong/Clarke tests, pseudo-observations
 │   ├── missing/            missingness patterns, metrics, CSV missing cells

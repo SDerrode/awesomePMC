@@ -1,6 +1,7 @@
 """
-Tawn copulas, types 1 and 2 — the two two-parameter restrictions of Tawn's
-(1988) asymmetric logistic extreme-value model (FR-9, round 3).
+Tawn copulas — Tawn's (1988) asymmetric logistic extreme-value model: the two
+two-parameter restrictions, types 1 and 2 (FR-9, round 3), and the full
+three-parameter model :class:`CopulaTawn3` (FR-9, round 5).
 
 The full model
 --------------
@@ -39,11 +40,8 @@ comonotone copula unless ψ_u = ψ_v = 1.
 
 The two two-parameter types
 ---------------------------
-The package's parameter machinery takes τ plus at most one extra parameter
-(``_fit._two_parameter_spec``, ``EXTRA_PARAM_BOUNDS``,
-``CopulaVirt.constructible_params``), so, as VineCopula does (families 104
-and 204), one weight is fixed at 1 and the other is the free asymmetry
-parameter ``psi`` ∈ (0, 1]:
+As VineCopula does (families 104 and 204), one weight is fixed at 1 and the
+other is the free asymmetry parameter ``psi`` ∈ (0, 1]:
 
 * **Tawn type 1** (``CopulaTawn1``): ψ_u = 1, ψ_v = ψ —
   ``ℓ = (1 − ψ) z + [w^θ + (ψ z)^θ]^{1/θ}``.
@@ -70,6 +68,43 @@ else changes. The symmetric part of the claim (types 1 and 2 are the
 numerically: τ agrees to 40 digits at (θ, ψ) = (3, 0.4), and the module
 tests check C₂(u, v) = C₁(v, u) to rounding.
 
+The full three-parameter model (FR-9, round 5)
+----------------------------------------------
+:class:`CopulaTawn3` frees **both** weights: ``tau_k`` plus the two extras
+``psi_u`` (= ψ_u) and ``psi_v`` (= ψ_v), each in (0, 1], with θ recovered
+from (τ, ψ_u, ψ_v) by the same quadrature inversion. The kernel above was
+already written for a general (ψ_u, ψ_v) — round 3 fixed one weight in the
+*parameter* layer only — so nothing in ``_tawn_parts``, ``_tawn_logpdf``,
+``_tawn_log_cdf``, ``_tawn_logh``, ``_tawn_A_terms`` or ``_tawn_tau_quad``
+changed for this round; what round 5 added is the machinery for a second
+extra parameter (registry, fitter, ICE, GUI).
+
+Consequently **the restrictions are exact, not approximate**: with
+``psi_u = 1.0`` the three-parameter member evaluates the very same floating
+point operations as ``CopulaTawn1`` at the same (τ, ψ_v) — the module tests
+assert bit-for-bit equality of ln c, ln C and ln h, not a tolerance. The
+nesting is ``Gumbel ⊂ {Tawn 1, Tawn 2} ⊂ Tawn 3``:
+
+* ψ_u = ψ_v = 1 → Gumbel–Hougaard;
+* ψ_u = 1 → type 1 at ψ = ψ_v;  ψ_v = 1 → type 2 at ψ = ψ_u.
+
+The two weights are *not* jointly identified from τ alone, nor even strongly
+from a moderate sample near independence: see "Fitting" below and the
+recovery study in ``pmcprg/tests/test_tawn3.py``.
+
+**Exchangeability.** ℓ is symmetric in (w, z) exactly when ψ_u = ψ_v, so
+this is the first family here whose asymmetry is a *free parameter* rather
+than a rotation artefact — a natural test bed for
+:mod:`pmcprg.diagnostics.exchangeability` (FR-10). Measured, n = 500,
+B = 200 multiplier replicates, 40 samples per point, α = 0.05: rejection
+5 % at (ψ_u, ψ_v) = (0.9, 0.9), 15 % at (0.7, 0.7) and 10 % at the Gumbel
+corner — i.e. at or somewhat above nominal, the CvM statistic's own
+finite-sample behaviour at this n, not a property of the family — against
+**100 %** at (1.0, 0.6), (0.95, 0.55) and (0.9, 0.4) with τ ≥ 0.3. At
+τ = 0.15 the same (0.9, 0.4) asymmetry is detected only 15 % of the time:
+near independence the copula is close to Π whatever the weights, the same
+flatness that makes the weights hard to estimate there.
+
 Kendall's τ and the reachable-τ cap
 -----------------------------------
 No closed form (as for Galambos and Hüsler–Reiss): τ(θ, ψ) is the Genest &
@@ -95,18 +130,44 @@ tried (θ ∈ [1 + 10⁻⁶, 10⁶], ψ ∈ [0.01, 1]; no proof attempted). At
 forms τ = 1 − 1/θ, θ = 1/(1 − τ) there, so the ψ = 1 member builds the very
 θ ``CopulaGH`` builds (a 10⁻¹³ quadrature error would move θ's last digits).
 
-**The reachable τ is capped at ψ.** As θ → ∞, A tends to the Marshall–Olkin
-Pickands function ``(1 − ψ_u)t + (1 − ψ_v)(1 − t) + max(ψ_u t, ψ_v(1 − t))``,
-whose only curvature is a slope jump of ψ_u + ψ_v at t*. The Stieltjes form
-of the Genest–MacKay identity then gives, by hand,
+**The reachable τ is capped at the Marshall–Olkin value.** As θ → ∞, A tends
+to the Marshall–Olkin Pickands function ``(1 − ψ_u)t + (1 − ψ_v)(1 − t) +
+max(ψ_u t, ψ_v(1 − t))``. Re-derived here in full (round 5), not transcribed:
+below t* it reads 1 − ψ_u t (slope −ψ_u), above t* it reads 1 − ψ_v(1 − t)
+(slope +ψ_v), so the only curvature is a slope jump of ψ_u + ψ_v at t*, and
+A(t*) = 1 − ψ_u ψ_v/(ψ_u + ψ_v). The Stieltjes form of the Genest–MacKay
+identity then gives, with t*(1 − t*) = ψ_u ψ_v/(ψ_u + ψ_v)²,
 
-    τ_∞ = t*(1 − t*)·(ψ_u + ψ_v)/A(t*) = ψ_u ψ_v / (ψ_u + ψ_v − ψ_u ψ_v),
+    τ_∞ = t*(1 − t*)·(ψ_u + ψ_v)/A(t*) = ψ_u ψ_v / (ψ_u + ψ_v − ψ_u ψ_v)
+        = 1 / (1/ψ_u + 1/ψ_v − 1),
 
-the known Marshall–Olkin value (Nelsen 2006, §5.1.1), which is **ψ** when
-the other weight is 1: both types reach only τ < ψ. (``mpmath`` at
-θ = 10⁵: τ = 0.3999984 for ψ = 0.4.) (τ, ψ) is therefore *jointly*
-constrained, like BB1's (τ, δ): the constructor refuses τ ≥ ψ, and
-:meth:`_CopulaTawn.constructible_params` repairs a refused pair (below).
+the known Marshall–Olkin value (Nelsen 2006, §5.1.1). It is **ψ** when the
+other weight is 1, so both two-parameter types reach only τ < ψ — the
+round-3 statement is the ψ_v = 1 (or ψ_u = 1) case of this one, confirmed.
+The general formula was checked against the quadrature at θ = 10⁵ and 10⁶
+on eleven weight pairs (symmetric, one-sided and extreme): the relative gap
+``(τ_∞ − τ(θ))/τ_∞`` is 10⁻⁷…10⁻⁶ at θ = 10⁶ and shrinks like 1/θ — e.g.
+(ψ_u, ψ_v) = (0.6, 0.8) → τ_∞ = 0.521739130435, τ(10⁶) = 0.521738858188;
+(0.3, 0.3) → 0.176470588235 / 0.176470557088; (0.9, 0.2) → 0.195652173913 /
+0.195652135629. τ is increasing in θ on 300-point log-grids from 1 + 10⁻⁶ to
+1 + 10⁶ at five weight pairs (no decrease, no proof attempted), so τ_∞ is
+the supremum and not merely a limit point.
+
+(τ, ψ_u, ψ_v) is therefore *jointly* constrained, like BB1's (τ, δ): the
+constructor refuses τ ≥ τ_∞(ψ_u, ψ_v), and ``constructible_params`` repairs
+a refused triple (:meth:`_CopulaTawn.repaired_psi` for the two-parameter
+types, :meth:`CopulaTawn3.repaired_psis` for the full model — the latter
+reduces *exactly* to the former when one weight is 1).
+
+Both algebraic forms appear in the code, each where it is the exact one:
+the reciprocal ``1/(1/ψ_u + 1/ψ_v − 1)`` in general, because the product
+ψ_u ψ_v underflows to 0 for weights below ≈ 10⁻¹⁵⁴ (which the constructor
+accepts, even though the registered fitting box stops at 0.01); and the
+restriction faces ψ_u = 1 or ψ_v = 1 returned *directly* as the other
+weight, since the reciprocal form is a ulp off there
+(``1/(1 + 1/0.9 − 1) = 0.8999999999999999``) and a τ in that gap would be
+refused by the three-parameter member but accepted by the two-parameter one
+at the same parameters — see :meth:`CopulaTawn3.reachable_tau_cap`.
 
 θ is capped at ``_THETA_HI`` = 10⁶ (quadrature checked there, above); for
 τ between τ(10⁶, ψ) ≈ ψ − O(10⁻⁶) and ψ the copula is built at the cap and
@@ -125,7 +186,14 @@ Tail dependence
     λ_U = ψ_u + ψ_v − (ψ_u^θ + ψ_v^θ)^{1/θ} = ψ − ((1 + ψ^θ)^{1/θ} − 1)
 
 for both types (2 − 2^{1/θ} at ψ = 1, Gumbel's value; → ψ as θ → ∞; → 0 as
-θ → 1).
+θ → 1). Written cancellation-free with ψ_> = max(ψ_u, ψ_v) and ψ_< the other,
+
+    λ_U = ψ_< − ψ_>·expm1( log1p((ψ_</ψ_>)^θ) / θ ),
+
+which is the round-3 expression **evaluated bit for bit** when ψ_> = 1
+(``x*1.0 == x`` and ``x/1.0 == x`` are exact), so the one implementation in
+:meth:`_TawnBase.tail_dependence` serves all three classes — asserted in the
+module tests rather than assumed.
 
 Densities (derivation)
 ----------------------
@@ -173,7 +241,7 @@ pairs through the base class's per-point Brent search takes minutes here.
 
 Fitting
 -------
-``fit(method='mle')`` (the default) is the joint two-parameter MLE of
+``fit(method='mle')`` (the default) is the joint MLE of
 :func:`pmcprg.copulas._fit._fit_two_parameter_mle`, run for ``psi`` in its
 own coordinates ``(ln(θ − 1), ψ)`` whose box *is* the admissible set (any
 θ > 1, ψ ∈ (0, 1] is a Tawn copula) — see ``_two_parameter_spec``, which
@@ -183,6 +251,38 @@ from a poor start a single L-BFGS-B pass stopped short on 3 of 50 contrived
 starts, once by 131 nat; with the restart, 0 of 50). τ alone
 cannot identify ψ, so ``fit(method='tau')`` logs a warning and falls back to
 MLE (BB1's precedent).
+
+:class:`CopulaTawn3` uses the same optimiser in the natural extension
+``(ln(θ − 1), ψ_u, ψ_v)``, again a box that *is* the admissible set and
+again run twice. The driver ``_fit_two_parameter_mle`` was already written
+for a parameter vector of arbitrary length — only the *spec* builder knew
+the dimension — so round 5 added one branch there and changed no existing
+family's coordinates, start value or stage list (bit-identity asserted for
+BB1, Student, Tawn 1/2 and t-EV in ``pmcprg/tests/test_tawn3.py``).
+
+**Identification.** ψ_u and ψ_v are weakly identified at small τ: the model
+tends to independence as θ → 1 *whatever* the weights, so the likelihood
+flattens in (ψ_u, ψ_v). Measured at n = 3000 over 40 replicates a point
+(the study behind ``test_tawn3.py``), RMSE of (τ̂, ψ̂_u, ψ̂_v):
+
+    τ = 0.7 (0.95, 0.90): 0.008 / 0.007 / 0.010
+    τ = 0.5 (1.00, 0.70): 0.009 / 0.004 / 0.020
+    τ = 0.4 (0.80, 0.50): 0.009 / 0.019 / 0.013
+    τ = 0.3 (0.60, 0.90): 0.010 / 0.048 / 0.041
+    τ = 0.2 (0.50, 0.80): 0.016 / 0.077 / 0.096
+    τ = 0.1 (0.40, 0.90): 0.011 / 0.155 / 0.190
+    τ = 0.05 (0.30, 0.60): 0.011 / 0.246 / 0.343
+
+So: **both weights are usable for τ ≳ 0.4** (RMSE ≤ 0.02), degrade through
+τ ≈ 0.3–0.2, and are **not identified below τ ≈ 0.1**, where only the
+combination that sets τ_∞ is pinned down — the bias there is also one-sided
+(−0.07 on ψ_v at τ = 0.1 and 0.05). τ̂ itself stays accurate throughout
+(RMSE ≤ 0.016 everywhere), and every one of the 320 fits converged.
+
+The same flatness is why a weight estimated at 1.0 should be read as "no
+detectable asymmetry on that margin", not as a point estimate with a Wald
+interval — standard errors are deliberately not implemented for this family
+(:mod:`pmcprg.copulas._stderr` raises for ``n_params = 3``).
 
 References
 ----------
@@ -409,119 +509,28 @@ def _theta_of(tau, pu, pv, family_name):
 # Copula classes
 # ---------------------------------------------------------------------------
 
-class _CopulaTawn(CopulaVirt):
-    """Shared implementation of the Tawn types; see the module docstring.
+class _TawnBase(CopulaVirt):
+    """Evaluation machinery shared by every member of the asymmetric-logistic
+    family: the two-parameter types (:class:`_CopulaTawn`) and the full
+    three-parameter model (:class:`CopulaTawn3`).
 
-    Parameters
-    ----------
-    tau_k : float
-        Kendall's τ, 0 < τ < ψ (the reachable-τ cap, module docstring).
-    psi : float, optional
-        Asymmetry ψ ∈ (0, 1]; default 1.0 (the Gumbel–Hougaard member).
+    A subclass's ``_update_params`` sets ``self.theta`` and the two weights
+    ``self._pu``, ``self._pv``; every method below reads only those three, so
+    the kernel is written once for a general (ψ_u, ψ_v) and each restriction
+    is *numerically* the general model at a weight of exactly 1.0 — see the
+    module docstring, "The full three-parameter model" (FR-9, round 5: this
+    class is the round-3 body of ``_CopulaTawn``, split off unchanged so the
+    three-parameter member shares it rather than re-deriving it).
     """
-
-    n_params: int = 2
-    _FIXED_U: bool = True     # type 1: ψ_u = 1, ψ_v = ψ; type 2: the reverse
 
     def __init__(self, **kwargs):
         super().__init__(class_name=self.__class__.__name__, params=kwargs)
 
-    # -- parameters ------------------------------------------------------
-
-    @classmethod
-    def _weights(cls, psi):
-        return (1.0, psi) if cls._FIXED_U else (psi, 1.0)
-
-    @classmethod
-    def _psi_error(cls, tau, psi):
-        """Why the constructor refuses (τ, ψ), or ``None`` when it accepts."""
-        if not np.isfinite(psi) or not 0.0 < psi <= 1.0:
-            return f'{cls.__name__}: psi must be in (0, 1], got {psi!r}.'
-        if not tau < psi:
-            return (f'{cls.__name__}: tau_k={tau!r} is not reachable with psi={psi!r} — '
-                    f'the Tawn model needs tau < psi (its theta → ∞ limit, the '
-                    f'Marshall–Olkin copula, has tau = psi).')
-        return None
-
     @classmethod
     def reachable_tau_bounds(cls) -> tuple[float, float]:
-        """``(EPS, τ(θ = 10⁶, ψ = 1))`` — the ψ = 1 (Gumbel) cap, the largest over ψ."""
+        """``(EPS, τ(θ = 10⁶, ψ_u = ψ_v = 1))`` — the Gumbel cap, the largest
+        over the weights (τ increases with each weight)."""
         return float(EPS), _tau_of(_THETA_HI, 1.0, 1.0)
-
-    @classmethod
-    def repaired_psi(cls, tau: float) -> float:
-        """The ψ :meth:`constructible_params` moves a refused pair to.
-
-        The admissible ψ-interval at τ is (τ, 1]. Unlike BB1, whose refused
-        end is the benign Gumbel limit, Tawn's refused end ψ → τ⁺ is the
-        *singular* Marshall–Olkin limit θ → ∞: a start "just inside" it would
-        have θ of order 10⁴ or beyond the cap. ψ goes instead to the middle
-        of the interval, ``(1 + τ)/2``; if even that needs θ beyond
-        ``_THETA_HI`` (τ within ≈ 10⁻⁶ of 1), to 1 — Gumbel, which builds at
-        every τ the registry lets through.
-        """
-        tau = float(tau)
-        psi = 0.5 * (1.0 + tau)
-        pad = max(TAU_PAD_REL * (1.0 - tau), TAU_PAD_ABS)
-        if psi - tau < pad or tau >= _tau_of(_THETA_HI, *cls._weights(psi)):
-            return 1.0
-        return psi
-
-    @classmethod
-    def constructible_params(cls, params: dict) -> dict:
-        """``params`` itself when the constructor accepts it; else ψ moved (see
-        :meth:`repaired_psi`), τ kept.
-
-        The test is the constructor's own: ψ ∈ (0, 1] and τ < ψ. A pair the
-        constructor accepts is returned untouched (same object), including
-        one it builds at the θ cap. A missing ψ is the default 1.0, accepted
-        at every τ < 1. A pair no ψ repairs (τ ≥ 1, τ ≤ 0, non-finite τ) is
-        returned unchanged for the constructor to refuse.
-        """
-        tau = params["tau_k"]
-        psi = params.get("psi", _PSI_DEFAULT)
-        try:
-            tau_f, psi_f = float(tau), float(psi)
-        except (TypeError, ValueError):
-            return params
-        is_bool = isinstance(psi, (bool, np.bool_))     # the constructor refuses it
-        if not is_bool and cls._psi_error(tau_f, psi_f) is None:
-            return params
-        if not (np.isfinite(tau_f) and 0.0 < tau_f < 1.0):
-            return params
-        return {**params, "psi": cls.repaired_psi(tau_f)}
-
-    @classmethod
-    def constrain_params(cls, params: dict) -> dict:
-        """ψ clipped into ``EXTRA_PARAM_BOUNDS_BY_PARAM['psi']``, then made
-        admissible with τ by :meth:`constructible_params`."""
-        from pmcprg.copulas._base import EXTRA_PARAM_BOUNDS_BY_PARAM
-        lo, hi, init = EXTRA_PARAM_BOUNDS_BY_PARAM["psi"]
-        out = dict(params)
-        out["psi"] = float(np.clip(float(out.get("psi", init)), lo, hi))
-        return dict(cls.constructible_params(out))
-
-    def _update_params(self):
-        tau = float(self.params['tau_k'])
-        psi = self.params.get('psi', _PSI_DEFAULT)
-        if isinstance(psi, (bool, np.bool_)):
-            raise CopulaParameterError(f'{self.class_name}: psi={psi!r} is not a number.')
-        try:
-            psi = float(psi)
-        except (TypeError, ValueError):
-            raise CopulaParameterError(f'{self.class_name}: psi={psi!r} is not a number.') from None
-        err = self._psi_error(tau, psi)
-        if err is not None:
-            raise CopulaParameterError(err)
-        pu, pv = self._weights(psi)
-        theta = _theta_of(tau, pu, pv, self.class_name)
-        self.theta = theta
-        self.psi = psi
-        self._pu, self._pv = pu, pv
-        self.params['psi'] = psi
-        if theta >= _THETA_HI:
-            # θ clamped: store the τ it realises (RB-10, as Galambos).
-            self.params['tau_k'] = _tau_of(theta, pu, pv)
 
     # -- evaluation ------------------------------------------------------
 
@@ -610,21 +619,140 @@ class _CopulaTawn(CopulaVirt):
         return float(self.inv_h_array(np.array([float(w)]), np.array([float(u)]))[0])
 
     def tail_dependence(self) -> tuple[float, float]:
-        """λ_L = 0, λ_U = ψ − ((1 + ψ^θ)^{1/θ} − 1) (module docstring)."""
-        th, psi = self.theta, self.psi
-        return 0.0, float(psi - math.expm1(math.log1p(psi ** th) / th))
+        """λ_L = 0, λ_U = ψ_< − ψ_>·expm1(log1p((ψ_</ψ_>)^θ)/θ) (module docstring).
+
+        At ψ_> = 1 — the two-parameter types — the divisions and the product
+        by 1.0 are exact, so this evaluates round 3's own expression
+        ``psi - expm1(log1p(psi**th)/th)`` bit for bit.
+        """
+        th = self.theta
+        lo, hi = sorted((self._pu, self._pv))
+        return 0.0, float(lo - hi * math.expm1(math.log1p((lo / hi) ** th) / th))
 
     # -- fitting ---------------------------------------------------------
 
     @classmethod
     def fit(cls, data: np.ndarray, method: str = 'mle'):
-        """Joint MLE of (τ, ψ); ``method='tau'`` falls back to it (module docstring)."""
+        """Joint MLE of τ and the weights; ``method='tau'`` falls back to it.
+
+        Kendall's τ alone cannot identify an asymmetry parameter (module
+        docstring, "Fitting"), so ``'tau'`` warns and uses MLE — BB1's
+        precedent.
+        """
         if method == 'tau':
             logger.warning(
                 "%s.fit: method='tau' cannot identify psi from Kendall's tau "
                 "alone; falling back to MLE.", cls.__name__)
             method = 'mle'
         return super().fit(data, method=method)
+
+
+class _CopulaTawn(_TawnBase):
+    """Shared implementation of the two-parameter Tawn types; see the module
+    docstring.
+
+    Parameters
+    ----------
+    tau_k : float
+        Kendall's τ, 0 < τ < ψ (the reachable-τ cap, module docstring).
+    psi : float, optional
+        Asymmetry ψ ∈ (0, 1]; default 1.0 (the Gumbel–Hougaard member).
+    """
+
+    n_params: int = 2
+    _FIXED_U: bool = True     # type 1: ψ_u = 1, ψ_v = ψ; type 2: the reverse
+
+    # -- parameters ------------------------------------------------------
+
+    @classmethod
+    def _weights(cls, psi):
+        return (1.0, psi) if cls._FIXED_U else (psi, 1.0)
+
+    @classmethod
+    def _psi_error(cls, tau, psi):
+        """Why the constructor refuses (τ, ψ), or ``None`` when it accepts."""
+        if not np.isfinite(psi) or not 0.0 < psi <= 1.0:
+            return f'{cls.__name__}: psi must be in (0, 1], got {psi!r}.'
+        if not tau < psi:
+            return (f'{cls.__name__}: tau_k={tau!r} is not reachable with psi={psi!r} — '
+                    f'the Tawn model needs tau < psi (its theta → ∞ limit, the '
+                    f'Marshall–Olkin copula, has tau = psi).')
+        return None
+
+    @classmethod
+    def repaired_psi(cls, tau: float) -> float:
+        """The ψ :meth:`constructible_params` moves a refused pair to.
+
+        The admissible ψ-interval at τ is (τ, 1]. Unlike BB1, whose refused
+        end is the benign Gumbel limit, Tawn's refused end ψ → τ⁺ is the
+        *singular* Marshall–Olkin limit θ → ∞: a start "just inside" it would
+        have θ of order 10⁴ or beyond the cap. ψ goes instead to the middle
+        of the interval, ``(1 + τ)/2``; if even that needs θ beyond
+        ``_THETA_HI`` (τ within ≈ 10⁻⁶ of 1), to 1 — Gumbel, which builds at
+        every τ the registry lets through.
+        """
+        tau = float(tau)
+        psi = 0.5 * (1.0 + tau)
+        pad = max(TAU_PAD_REL * (1.0 - tau), TAU_PAD_ABS)
+        if psi - tau < pad or tau >= _tau_of(_THETA_HI, *cls._weights(psi)):
+            return 1.0
+        return psi
+
+    @classmethod
+    def constructible_params(cls, params: dict) -> dict:
+        """``params`` itself when the constructor accepts it; else ψ moved (see
+        :meth:`repaired_psi`), τ kept.
+
+        The test is the constructor's own: ψ ∈ (0, 1] and τ < ψ. A pair the
+        constructor accepts is returned untouched (same object), including
+        one it builds at the θ cap. A missing ψ is the default 1.0, accepted
+        at every τ < 1. A pair no ψ repairs (τ ≥ 1, τ ≤ 0, non-finite τ) is
+        returned unchanged for the constructor to refuse.
+        """
+        tau = params["tau_k"]
+        psi = params.get("psi", _PSI_DEFAULT)
+        try:
+            tau_f, psi_f = float(tau), float(psi)
+        except (TypeError, ValueError):
+            return params
+        is_bool = isinstance(psi, (bool, np.bool_))     # the constructor refuses it
+        if not is_bool and cls._psi_error(tau_f, psi_f) is None:
+            return params
+        if not (np.isfinite(tau_f) and 0.0 < tau_f < 1.0):
+            return params
+        return {**params, "psi": cls.repaired_psi(tau_f)}
+
+    @classmethod
+    def constrain_params(cls, params: dict) -> dict:
+        """ψ clipped into ``EXTRA_PARAM_BOUNDS_BY_PARAM['psi']``, then made
+        admissible with τ by :meth:`constructible_params`."""
+        from pmcprg.copulas._base import EXTRA_PARAM_BOUNDS_BY_PARAM
+        lo, hi, init = EXTRA_PARAM_BOUNDS_BY_PARAM["psi"]
+        out = dict(params)
+        out["psi"] = float(np.clip(float(out.get("psi", init)), lo, hi))
+        return dict(cls.constructible_params(out))
+
+    def _update_params(self):
+        tau = float(self.params['tau_k'])
+        psi = self.params.get('psi', _PSI_DEFAULT)
+        if isinstance(psi, (bool, np.bool_)):
+            raise CopulaParameterError(f'{self.class_name}: psi={psi!r} is not a number.')
+        try:
+            psi = float(psi)
+        except (TypeError, ValueError):
+            raise CopulaParameterError(f'{self.class_name}: psi={psi!r} is not a number.') from None
+        err = self._psi_error(tau, psi)
+        if err is not None:
+            raise CopulaParameterError(err)
+        pu, pv = self._weights(psi)
+        theta = _theta_of(tau, pu, pv, self.class_name)
+        self.theta = theta
+        self.psi = psi
+        self._pu, self._pv = pu, pv
+        self.params['psi'] = psi
+        if theta >= _THETA_HI:
+            # θ clamped: store the τ it realises (RB-10, as Galambos).
+            self.params['tau_k'] = _tau_of(theta, pu, pv)
 
 
 class CopulaTawn1(_CopulaTawn):
@@ -643,6 +771,190 @@ class CopulaTawn2(_CopulaTawn):
     the model, the τ < ψ constraint and the convention.
     """
     _FIXED_U = False
+
+
+class CopulaTawn3(_TawnBase):
+    """The full asymmetric-logistic Tawn model — both weights free (FR-9, round 5).
+
+    ``ℓ = (1 − ψ_u)·w + (1 − ψ_v)·z + [(ψ_u w)^θ + (ψ_v z)^θ]^{1/θ}``, with
+    ψ_u and ψ_v each in (0, 1]. See the module docstring for the model, the
+    general reachable-τ cap and the identification caveat.
+
+    Parameters
+    ----------
+    tau_k : float
+        Kendall's τ, ``0 < τ < τ_∞(ψ_u, ψ_v)`` (the Marshall–Olkin cap).
+    psi_u : float, optional
+        Weight of ``−ln u``; default 1.0.
+    psi_v : float, optional
+        Weight of ``−ln v``; default 1.0. Both at 1.0 is Gumbel–Hougaard;
+        exactly one at 1.0 reproduces :class:`CopulaTawn1` (ψ_u = 1) or
+        :class:`CopulaTawn2` (ψ_v = 1) bit for bit.
+    """
+
+    n_params: int = 3
+
+    #: The extra (non-τ) parameter names, in the order the fitter uses.
+    PSI_KEYS: tuple[str, str] = ("psi_u", "psi_v")
+
+    # -- parameters ------------------------------------------------------
+
+    @staticmethod
+    def reachable_tau_cap(pu: float, pv: float) -> float:
+        """``τ_∞ = ψ_u ψ_v/(ψ_u + ψ_v − ψ_u ψ_v) = 1/(1/ψ_u + 1/ψ_v − 1)`` —
+        the Marshall–Olkin θ → ∞ limit (module docstring).
+
+        Two algebraically identical forms, each used where it is the exact one:
+
+        * on a **restriction face** (one weight exactly 1) the cap *is* the
+          other weight, and it must be that ``float`` to the last bit, or a τ
+          in between would be refused here and accepted by
+          :class:`CopulaTawn1`/:class:`CopulaTawn2` at the same parameters.
+          The reciprocal form does not deliver that — ``1/(1 + 1/0.9 − 1)``
+          is ``0.8999999999999999``, one ulp below 0.9 — so the face is
+          returned directly;
+        * elsewhere the **reciprocal** form, which (unlike the product form)
+          does not underflow to 0 for weights below ≈ 10⁻¹⁵⁴.
+        """
+        if pu == 1.0:
+            return pv
+        if pv == 1.0:
+            return pu
+        return 1.0 / (1.0 / pu + 1.0 / pv - 1.0)
+
+    @classmethod
+    def _psi_values(cls, params: dict) -> tuple:
+        """``(ψ_u, ψ_v)`` as given, each defaulting to 1.0 — no coercion."""
+        return tuple(params.get(k, _PSI_DEFAULT) for k in cls.PSI_KEYS)
+
+    @classmethod
+    def _psi_error(cls, tau, pu, pv):
+        """Why the constructor refuses (τ, ψ_u, ψ_v), or ``None`` when it accepts."""
+        for name, psi in zip(cls.PSI_KEYS, (pu, pv)):
+            if not np.isfinite(psi) or not 0.0 < psi <= 1.0:
+                return f'{cls.__name__}: {name} must be in (0, 1], got {psi!r}.'
+        cap = cls.reachable_tau_cap(pu, pv)
+        if not tau < cap:
+            return (f'{cls.__name__}: tau_k={tau!r} is not reachable with '
+                    f'psi_u={pu!r}, psi_v={pv!r} — the Tawn model needs '
+                    f'tau < psi_u*psi_v/(psi_u + psi_v - psi_u*psi_v) = {cap!r} '
+                    f'(its theta → ∞ limit, the Marshall–Olkin copula).')
+        return None
+
+    @classmethod
+    def repaired_psis(cls, tau: float, pu: float, pv: float) -> tuple[float, float]:
+        """The weights :meth:`constructible_params` moves a refused triple to.
+
+        Both weights travel together towards the Gumbel corner (1, 1) along
+        ``ψ_i(s) = 1 − s·(1 − ψ_i)``, which keeps the *direction* of the
+        asymmetry the draw expressed; ``s = 1`` is the refused triple itself
+        and ``s = 0`` is Gumbel, admissible at every registered τ. Writing
+        ``a_i = 1 − ψ_i``, ``S = a_u + a_v``, ``P = a_u a_v``, the cap
+        equation ``τ_∞(ψ(s)) = τ`` is, after clearing the denominators,
+
+            (1 + τ)·P·s² − S·s + (1 − τ) = 0,
+
+        whose smaller root — taken in the cancellation-free form
+        ``s* = 2(1 − τ)/(S + √(S² − 4P(1 − τ²)))`` — is where the constraint
+        binds. As for the two-parameter types, a start *just inside* the
+        boundary would sit at the singular Marshall–Olkin limit θ → ∞, so the
+        repair goes to the middle, ``s*/2``.
+
+        When one weight is exactly 1 the face P = 0 collapses to
+        ``s* = (1 − τ)/S``, so the moved weight is ``(1 + τ)/2`` — independent
+        of the draw, i.e. :meth:`_CopulaTawn.repaired_psi` itself. That
+        expression is evaluated *directly* in this case rather than through
+        the general root, which would be a rounding away from it: the two
+        rules then agree bit for bit, not merely to a tolerance (asserted in
+        ``pmcprg/tests/test_tawn3.py``).
+
+        Falls back to Gumbel (1, 1) when a weight is not in (0, 1], when the
+        repaired pair still leaves less than the usual padding below the cap,
+        or when it would need θ beyond ``_THETA_HI``.
+        """
+        tau = float(tau)
+        au = 1.0 - pu if np.isfinite(pu) and 0.0 < pu <= 1.0 else 0.0
+        av = 1.0 - pv if np.isfinite(pv) and 0.0 < pv <= 1.0 else 0.0
+        S, P = au + av, au * av
+        if S <= 0.0:
+            return 1.0, 1.0
+        if P == 0.0:
+            # One weight is 1: the two-parameter rule, in its own arithmetic.
+            mid = 0.5 * (1.0 + tau)
+            out = (mid if au > 0.0 else 1.0, mid if av > 0.0 else 1.0)
+        else:
+            disc = S * S - 4.0 * P * (1.0 - tau * tau)
+            if disc < 0.0:                  # no crossing: the whole path is admissible
+                return 1.0 - au, 1.0 - av
+            s_half = (1.0 - tau) / (S + math.sqrt(disc))    # = s*/2
+            out = (1.0 - s_half * au, 1.0 - s_half * av)
+        pad = max(TAU_PAD_REL * (1.0 - tau), TAU_PAD_ABS)
+        if (cls.reachable_tau_cap(*out) - tau < pad
+                or tau >= _tau_of(_THETA_HI, *out)):
+            return 1.0, 1.0
+        return out
+
+    @classmethod
+    def constructible_params(cls, params: dict) -> dict:
+        """``params`` itself when the constructor accepts it; else the weights
+        moved (see :meth:`repaired_psis`), τ kept.
+
+        The test is the constructor's own. A triple the constructor accepts is
+        returned untouched (same object), including one it builds at the θ
+        cap. Missing weights are the default 1.0, accepted at every τ < 1. A
+        triple no weight pair repairs (τ ≥ 1, τ ≤ 0, non-finite τ) is
+        returned unchanged for the constructor to refuse.
+        """
+        tau = params["tau_k"]
+        psis = cls._psi_values(params)
+        try:
+            tau_f = float(tau)
+            psi_f = tuple(float(p) for p in psis)
+        except (TypeError, ValueError):
+            return params
+        is_bool = any(isinstance(p, (bool, np.bool_)) for p in psis)
+        if not is_bool and cls._psi_error(tau_f, *psi_f) is None:
+            return params
+        if not (np.isfinite(tau_f) and 0.0 < tau_f < 1.0):
+            return params
+        repaired = cls.repaired_psis(tau_f, *psi_f)
+        return {**params, **dict(zip(cls.PSI_KEYS, repaired))}
+
+    @classmethod
+    def constrain_params(cls, params: dict) -> dict:
+        """Each weight clipped into its ``EXTRA_PARAM_BOUNDS_BY_PARAM`` box,
+        then made admissible with τ by :meth:`constructible_params`."""
+        from pmcprg.copulas._base import EXTRA_PARAM_BOUNDS_BY_PARAM
+        out = dict(params)
+        for key in cls.PSI_KEYS:
+            lo, hi, init = EXTRA_PARAM_BOUNDS_BY_PARAM[key]
+            out[key] = float(np.clip(float(out.get(key, init)), lo, hi))
+        return dict(cls.constructible_params(out))
+
+    def _update_params(self):
+        tau = float(self.params['tau_k'])
+        psis = []
+        for key, psi in zip(self.PSI_KEYS, self._psi_values(self.params)):
+            if isinstance(psi, (bool, np.bool_)):
+                raise CopulaParameterError(
+                    f'{self.class_name}: {key}={psi!r} is not a number.')
+            try:
+                psis.append(float(psi))
+            except (TypeError, ValueError):
+                raise CopulaParameterError(
+                    f'{self.class_name}: {key}={psi!r} is not a number.') from None
+        pu, pv = psis
+        err = self._psi_error(tau, pu, pv)
+        if err is not None:
+            raise CopulaParameterError(err)
+        theta = _theta_of(tau, pu, pv, self.class_name)
+        self.theta = theta
+        self.psi_u, self.psi_v = pu, pv
+        self._pu, self._pv = pu, pv
+        self.params['psi_u'], self.params['psi_v'] = pu, pv
+        if theta >= _THETA_HI:
+            # θ clamped: store the τ it realises (RB-10, as Galambos).
+            self.params['tau_k'] = _tau_of(theta, pu, pv)
 
 
 if __name__ == '__main__':

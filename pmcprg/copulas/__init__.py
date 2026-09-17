@@ -12,8 +12,11 @@ import pmcprg.plot_style  # noqa: F401
 
 from pmcprg.copulas._base     import CopulaEnum, CopulaVirt, FitResult, GoFResult
 from pmcprg.copulas.bivariate import BivariateLaw, ConditionalLaw, BivariateFitResult, BivariateBootstrapCI
-from pmcprg.copulas._stderr   import (IndependenceLRTest, StandardErrors, SubmodelLRTest,
-                                   independence_lr_test, standard_errors, submodel_lr_test)
+from pmcprg.copulas._stderr   import (IndependenceLRTest, MleTauDiscrepancyTest,
+                                   StandardErrors, SubmodelLRTest, independence_lr_test,
+                                   mle_tau_discrepancy_test, standard_errors, submodel_lr_test)
+from pmcprg.copulas._robust   import (DPD_ALPHAS, DPDAlphaSelection, DPDFit, dpd_fit,
+                                   dpd_objective, integral_c_power, select_alpha)
 
 # --- CopulaEnum-driven auto-import ---------------------------------------
 # Every member with a MODULE set is imported and exposed in this namespace
@@ -43,6 +46,17 @@ __all__ = [
     'independence_lr_test',
     'standard_errors',
     'submodel_lr_test',
+    # Robust options (audit FR-7): MLE-vs-tau diagnostic (b), density power
+    # divergence (c)
+    'MleTauDiscrepancyTest',
+    'mle_tau_discrepancy_test',
+    'DPD_ALPHAS',
+    'DPDAlphaSelection',
+    'DPDFit',
+    'dpd_fit',
+    'dpd_objective',
+    'integral_c_power',
+    'select_alpha',
     # Copula families (source: CopulaEnum)
     *(m.CLASS_NAME for m in CopulaEnum if m.MODULE),
 ]

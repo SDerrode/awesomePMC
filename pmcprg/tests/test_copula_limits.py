@@ -108,6 +108,18 @@ def _c_bb1(u, v, th, de):
     return _pw(_ONE + _pw(a + b, _ONE / de), -_ONE / th)
 
 
+def _c_bb6(u, v, th, de):
+    """BB6 CDF (FR-9, ``pmcprg.copulas.archimedean.bb6``), written from the
+    generator φ(t) = (−ln(1 − (1 − t)^θ))^δ and its inverse, not from the
+    module's log-space kernel: with p = −ln(1 − ū^θ), q = −ln(1 − v̄^θ) and
+    S = (p^δ + q^δ)^{1/δ}, C = 1 − (1 − e^{−S})^{1/θ}. The file's ``δ`` slot
+    carries BB6's own δ (its ``delta6``)."""
+    p = -(_ONE - _pw(_ONE - u, th)).ln()
+    q = -(_ONE - _pw(_ONE - v, th)).ln()
+    s = _pw(_pw(p, de) + _pw(q, de), _ONE / de)
+    return _ONE - _pw(_ONE - (-s).exp(), _ONE / th)
+
+
 def _survival(base):
     return lambda u, v, th, de: u + v - _ONE + base(_ONE - u, _ONE - v, th, de)
 
@@ -224,6 +236,8 @@ _REF_C = {
     # rotations — the audit's own "BB1 de survie".
     "SBB1": _survival(_c_bb1),
     "SBB190": _rotated_90(_survival(_c_bb1)), "SBB1270": _rotated_270(_survival(_c_bb1)),
+    # FR-9, BB6 round: the outer power of Joe (Joe at δ = 1, Gumbel at θ = 1).
+    "BB6": _c_bb6,
 }
 
 
@@ -320,6 +334,11 @@ _TAIL_TAUS = {
     "tEV": (0.3, 0.7, 0.95),
     "SBB1": (0.4, 0.7, 0.9),
     "SBB190": (-0.4, -0.7, -0.9), "SBB1270": (-0.4, -0.7, -0.9),
+    # BB6 (FR-9): τ = 0.5 with δ = 2 is the **Gumbel** sub-model (δ(1 − τ) = 1
+    # exactly in binary, so θ = 1 to the last bit) and τ = 0.7 with δ = 1 the
+    # **Joe** one, both entered as ordinary cases so the reference file itself
+    # checks the two limits; 0.4 and 0.9 are interior (θ and δ both active).
+    "BB6": (0.4, 0.5, 0.7, 0.9),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -348,6 +367,12 @@ _TAWN_PSI = {0.3: 0.35, 0.7: 0.9, 0.95: 0.97, 1e-12: 1e-3, 1e-8: 0.05, 1e-4: 0.5
 # keeps its relative bits across platforms.
 _TEV_NU = {0.3: 1.0, 0.7: 50.0, 0.95: 4.0, 1e-12: 10.0, 1e-8: 100.0, 1e-4: 2.0}
 
+# δ of the BB6 cases (FR-9), per τ: it must satisfy δ ≤ 1/(1 − τ). 1.6 is just
+# below δ_max = 5/3 at τ = 0.4 (θ = 1.07, close to Gumbel); 2.0 *is* δ_max at
+# τ = 0.5 (θ = 1, Gumbel); 1.0 is the Joe end at τ = 0.7; 3.0 is interior at
+# τ = 0.9 (δ_max = 10). The file's ``delta`` slot carries it.
+_BB6_DELTA = {0.4: 1.6, 0.5: 2.0, 0.7: 1.0, 0.9: 3.0}
+
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)
 _UV = np.array([(u, v) for u in _G for v in _G])
 
@@ -363,12 +388,18 @@ def _build(short, tau, df=4.0, delta=1.5):
         kw["psi"] = _TAWN_PSI.get(tau, 1.0)
     if "nu" in names:
         kw["nu"] = _TEV_NU.get(tau, 4.0)
+    if "delta6" in names:
+        kw["delta6"] = _BB6_DELTA.get(tau, 1.0)
     return _ENTRY[short].klass(**kw)
 
 
 def _second_param(cop):
-    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, t-EV's ν, else ``None``."""
-    return getattr(cop, "delta", getattr(cop, "psi", getattr(cop, "nu", None)))
+    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, t-EV's ν, BB6's δ (stored
+    as ``delta6``, deliberately not ``delta`` — see the BB6 module docstring),
+    else ``None``."""
+    return getattr(cop, "delta",
+                   getattr(cop, "psi",
+                           getattr(cop, "nu", getattr(cop, "delta6", None))))
 
 
 _CASES = [pytest.param(s, t, id=f"{s}-tau{t:+.2g}")
