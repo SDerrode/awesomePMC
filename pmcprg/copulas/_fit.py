@@ -191,6 +191,11 @@ def _two_parameter_spec(cls, entry, tau_start: float):
     * Tawn types 1/2 (``psi``, FR-9): ``p = (ln(θ − 1), ψ)``, a box that is
       the admissible set, mapped back by the family's τ(θ, ψ); two passes
       (branch comment below).
+    * t-EV (``nu``, FR-9): ``p = (logit λ_U, 1/ν)``, a box every point of
+      which is a t-EV copula, mapped back by the closed form s(λ_U, ν) and
+      the family's τ(s, ν) (branch comment below). ``nu`` is deliberately
+      not Student's ``df``: this function dispatches on the parameter name,
+      and the ``df`` branch is Student's, with Student's bounds (ν > 2).
     * any other extra parameter: ``p = (τ, extra)`` in the registered boxes,
       projected by ``cls.constrain_params``.
 
@@ -304,6 +309,35 @@ def _two_parameter_spec(cls, entry, tau_start: float):
         stage = (lambda p: [clip(p[0], s_b), clip(p[1], psi_b)],
                  lambda x: (clip(x[0], s_b), clip(x[1], psi_b)),
                  [s_b, psi_b])
+        return p0, [stage, stage], params_of
+
+    if name == "nu":
+        # t-EV (FR-9): every (τ, ν) is admissible, but the constructor inverts
+        # τ(s, ν) by Brent's method — so optimise in (logit λ_U, 1/ν) instead:
+        # s follows from λ_U = 2·T_{ν+1}(−√((ν+1)η)) in closed form, and the
+        # memo of the τ(s, ν) quadrature hands the constructor this very s
+        # back. λ_U/2 ≤ τ ≤ λ_U on the whole box (t_ev module docstring), so
+        # λ_U ∈ [1e-6, τ_hi] keeps τ ∈ [5e-7, τ_hi]; 1/ν as for Student (the
+        # Hüsler–Reiss limit ν → ∞ lies beyond the 1/ν_max side).
+        from pmcprg.copulas.extreme_value.t_ev import _s_from_lambda, _tau_of
+
+        def logit(p):
+            return math.log(p) - math.log1p(-p)
+
+        lam_b = (logit(1e-6), logit(hi))
+        inv_b = (1.0 / xhi, 1.0 / xlo)
+        # Start: λ₀ = τ_start (τ ≤ λ_U ≤ 2τ), ν₀ from the registry.
+        p0 = (clip(logit(min(max(t0, 1e-6), hi)), lam_b), clip(1.0 / xinit, inv_b))
+
+        def params_of(p) -> dict:
+            y, e = clip(p[0], lam_b), clip(p[1], inv_b)
+            nu = 1.0 / e
+            tau = _tau_of(_s_from_lambda(1.0 / (1.0 + math.exp(-y)), nu), nu)
+            return {"tau_k": max(tau, float(tau_min)), "nu": nu}
+
+        stage = (lambda p: [clip(p[0], lam_b), clip(p[1], inv_b)],
+                 lambda x: (clip(x[0], lam_b), clip(x[1], inv_b)),
+                 [lam_b, inv_b])
         return p0, [stage, stage], params_of
 
     tau_b, extra_b = (lo, hi), (xlo, xhi)

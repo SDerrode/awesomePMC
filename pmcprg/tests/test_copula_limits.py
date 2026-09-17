@@ -178,6 +178,35 @@ def _tawn(u_fixed):
     return c
 
 
+def _tcdf_decimal(n: D, x: D) -> D:
+    """Student-t CDF T_n(x) as a ``Decimal`` at the current context's
+    precision, from ``mpmath``'s regularised incomplete Beta function,
+    T_n(x) = ½·I_{n/(n+x²)}(n/2, ½) for x < 0 (as ``_ndtr_decimal`` above,
+    with guard digits; imported lazily)."""
+    import mpmath
+    prec = getcontext().prec
+    with mpmath.workdps(prec + 15):
+        n_mp, x_mp = mpmath.mpf(str(n)), mpmath.mpf(str(x))
+        tail = mpmath.betainc(n_mp / 2, mpmath.mpf(1) / 2, 0, n_mp / (n_mp + x_mp * x_mp),
+                              regularized=True) / 2
+        val = tail if x_mp < 0 else 1 - tail
+        return D(mpmath.nstr(val, prec + 10, strip_zeros=False))
+
+
+def _c_t_ev(u, v, rho, nu):
+    """t-EV CDF (FR-9, ``pmcprg.copulas.extreme_value.t_ev``), C = exp(−ℓ),
+    ℓ = w·T_{ν+1}(a) + z·T_{ν+1}(b), a = k((w/z)^{1/ν} − ρ),
+    b = k((z/w)^{1/ν} − ρ), k = √((ν+1)/(1−ρ²)) — the Demarta–McNeil form,
+    written from ρ (the file's θ) and ν (its ``delta`` slot), not from the
+    module's (ln η, ν) kernel."""
+    w, z = -u.ln(), -v.ln()
+    n = nu + _ONE
+    k = (n / ((_ONE - rho) * (_ONE + rho))).sqrt()
+    a = k * (_pw(w / z, _ONE / nu) - rho)
+    b = k * (_pw(z / w, _ONE / nu) - rho)
+    return (-(w * _tcdf_decimal(n, a) + z * _tcdf_decimal(n, b))).exp()
+
+
 _REF_C = {
     "Clayton": _c_clayton, "GH": _c_gh, "Joe": _c_joe, "Frank": _c_frank,
     "AMH": _c_amh, "Plackett": _c_plackett, "FGM": _c_fgm, "A12": _c_a12,
@@ -188,7 +217,7 @@ _REF_C = {
     "GH90": _rotated_90(_c_gh), "GH270": _rotated_270(_c_gh),
     "Joe90": _rotated_90(_c_joe), "Joe270": _rotated_270(_c_joe),
     "BB190": _rotated_90(_c_bb1), "BB1270": _rotated_270(_c_bb1),
-    "Tawn1": _tawn(True), "Tawn2": _tawn(False),
+    "Tawn1": _tawn(True), "Tawn2": _tawn(False), "tEV": _c_t_ev,
 }
 
 
@@ -280,6 +309,7 @@ _TAIL_TAUS = {
     "Joe90": (-0.3, -0.7, -0.95), "Joe270": (-0.3, -0.7, -0.95),
     "BB190": (-0.4, -0.7, -0.9), "BB1270": (-0.4, -0.7, -0.9),
     "Tawn1": (0.3, 0.7, 0.95), "Tawn2": (0.3, 0.7, 0.95),
+    "tEV": (0.3, 0.7, 0.95),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -293,12 +323,20 @@ _INDEP_TAUS = {
     "GH90": (-1e-4, -1e-8, -1e-12), "GH270": (-1e-4, -1e-8, -1e-12),
     "Joe90": (-1e-4, -1e-8, -1e-12), "Joe270": (-1e-4, -1e-8, -1e-12),
     "Tawn1": (1e-12, 1e-8, 1e-4), "Tawn2": (1e-12, 1e-8, 1e-4),
+    "tEV": (1e-12, 1e-8, 1e-4),
 }
 
 # ψ of the Tawn cases (FR-9), per τ: it must exceed τ (the reachable-τ cap).
 # Strong asymmetry close to the cap (τ/ψ = 0.86 and 0.98, large θ), a weak
 # one (0.7, 0.9), and small ψ at the independence end.
 _TAWN_PSI = {0.3: 0.35, 0.7: 0.9, 0.95: 0.97, 1e-12: 1e-3, 1e-8: 0.05, 1e-4: 0.5}
+
+# ν of the t-EV cases (FR-9), per τ: Cauchy, large and default ν in the tails;
+# at the independence end ρ < 0 (ν = 10, 2) and ρ > 0 (ν = 100). The file's θ
+# is ρ, while the module solves ln η, η = (1 − ρ)/(1 + ρ): every case keeps
+# 0.26 ≤ |ρ| ≤ 1 − 8·10⁻⁴, so the double ρ pins η to ≈ 10⁻¹³ relative and
+# keeps its relative bits across platforms.
+_TEV_NU = {0.3: 1.0, 0.7: 50.0, 0.95: 4.0, 1e-12: 10.0, 1e-8: 100.0, 1e-4: 2.0}
 
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)
 _UV = np.array([(u, v) for u in _G for v in _G])
@@ -313,12 +351,14 @@ def _build(short, tau, df=4.0, delta=1.5):
         kw["delta"] = delta
     if "psi" in names:
         kw["psi"] = _TAWN_PSI.get(tau, 1.0)
+    if "nu" in names:
+        kw["nu"] = _TEV_NU.get(tau, 4.0)
     return _ENTRY[short].klass(**kw)
 
 
 def _second_param(cop):
-    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, else ``None``."""
-    return getattr(cop, "delta", getattr(cop, "psi", None))
+    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, t-EV's ν, else ``None``."""
+    return getattr(cop, "delta", getattr(cop, "psi", getattr(cop, "nu", None)))
 
 
 _CASES = [pytest.param(s, t, id=f"{s}-tau{t:+.2g}")

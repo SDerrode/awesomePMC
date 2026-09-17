@@ -98,7 +98,8 @@ def test_available_count():
     # + GH90 + GH270 + Joe90 + Joe270 (FR-8, second round) = 25
     # + BB190 + BB1270 (FR-8, third round) = 27
     # + Tawn1 + Tawn2 (FR-9, round 3) = 29
-    assert len(CopulaEnum.available()) == 29
+    # + tEV (FR-9, last round) = 30
+    assert len(CopulaEnum.available()) == 30
 
 
 def test_cubsec_long_name_english():

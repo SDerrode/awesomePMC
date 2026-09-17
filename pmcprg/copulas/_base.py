@@ -31,7 +31,8 @@ _COPULA_KLASS_CACHE: dict = {}
 # OF TRUTH: standalone fitting (``CopulaVirt.fit`` below) reads it directly, and
 # ICE-driven fitting (``pmcprg.pmc.ice.EXTRA_PARAM_BOUNDS``) derives its
 # class-keyed view from this dict + the registry — so the two cannot drift
-# (audit A-2). Currently: BB1 ``delta``, Student ``df``, Tawn ``psi`` (FR-9).
+# (audit A-2). Currently: BB1 ``delta``, Student ``df``, Tawn ``psi`` (FR-9),
+# t-EV ``nu`` (FR-9).
 #
 # Every bound is itself admissible (audit RB-4/FR-3): the Student copula
 # requires ν > 2 and refuses ν = 2.0, where the former lower bound sat — the
@@ -46,6 +47,12 @@ EXTRA_PARAM_BOUNDS_BY_PARAM: dict[str, tuple[float, float, float]] = {
     # Gumbel member, admissible at every τ < 1; the lower bound is admissible
     # for τ < 0.01 only, as BB1's δ = 10 is for τ > 0.9 only.
     "psi":   (0.01,    1.0,  1.0),
+    # t-EV (FR-9): the parent Student-t's ν, under its own name — not "df",
+    # whose bounds are Student's (ν > 2) and whose name ``_two_parameter_spec``
+    # dispatches on (``pmcprg.copulas.extreme_value.t_ev``, "Parametrisation").
+    # Every (τ, ν) is a t-EV copula, so no joint constraint; the box is the
+    # validated range of the fit (the constructor accepts 0.05 ≤ ν ≤ 1e4).
+    "nu":    (0.5,   100.0,  4.0),
 }
 
 # τ-bound padding for the bounded optimisers (``fit(method='mle')`` here,
@@ -140,6 +147,7 @@ class CopulaEnum(CopulaDataMixin, Enum):
     BB1270           = 27, "BB1270", "BB1 (270° rotation)",            "CopulaBB1270",  True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],          "pmcprg.copulas.archimedean.rotated"
     TAWN1            = 28, "Tawn1",  "Tawn type 1",                    "CopulaTawn1",   True, ["tau_k", "psi"],   [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.tawn"
     TAWN2            = 29, "Tawn2",  "Tawn type 2",                    "CopulaTawn2",   True, ["tau_k", "psi"],   [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.tawn"
+    TEV              = 30, "tEV",    "t extreme-value (t-EV)",         "CopulaTEV",     True, ["tau_k", "nu"],    [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.t_ev"
 
     def describe(self):
         return self.name, self.value

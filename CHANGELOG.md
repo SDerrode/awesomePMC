@@ -9,6 +9,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Lystig & Hughes' exact observed information of an ICE fit, the third FR-4 option (FR-4)
+
+- **`ice_lh_information(model, Y)`** (new module `pmcprg.pmc._lystig_hughes`)
+  returns an `LHInformation`: the full observed information matrix
+  `−∂²ℓ/∂θ∂θᵀ` of the observed-data log-likelihood over the prior and every
+  copula pair, its inverse, the score, a one-Newton-step `I⁻¹g`, and per-pair
+  τ standard errors, both joint (`se_tau`) and partial (`se_tau_partial`,
+  the diagonal alone). Lystig & Hughes (2002) differentiate the forward
+  recursion; here the package's **scaled** (Devijver) recursion is
+  differentiated directly — `α̂_r = (a_r − C_r α̂)/C`,
+  `α̂_rs = (a_rs − C_s α̂_r − C_r α̂_s − C_rs α̂)/C`,
+  `∂²log C = C_rs/C − C_r C_s/C²` — so no step underflows and no log space is
+  needed. The recursion is exact; only the per-observation `∂ log c/∂ψ` and
+  `∂² log c/∂ψ²` are central differences (step 10⁻⁴, as `_stderr`/`_oakes`).
+  `lh_loglik_derivatives` and `model_from_theta` are exposed for checks.
+- **Parametrisation.** The ICE M-step estimates a *symmetric* joint prior
+  (SR-PMC), so the free prior coordinates are the K(K+1)/2 − 1 softmax
+  logits `η_ij = log(q_ij / q_00)` of its distinct entries (2 at K = 2, not
+  K² − 1 = 3), with `A_ij = p_ij / π_i`. Copula pairs use Oakes' ψ
+  (2·atanh τ for Gauss, logit τ for Clayton). A pair whose τ̂ lies at a
+  boundary of its range is held fixed and gets a NaN SE (Self & Liang 1987).
+- **Scope (pilot):** HMC-DN and state-margin PMC, margins fixed
+  (`fit_margins=False`), Gauss and Clayton copulas, complete data. Validated
+  at K = 2.
+- **Checks** (`pmcprg.tests.test_fr4_ice_lystig_hughes`, 22 fast tests):
+  - The value equals `forward`'s log-likelihood (relative error 10⁻¹³).
+  - The gradient matches a central difference of `forward` to a maximum
+    relative error of 6·10⁻⁷.
+  - The Hessian matches a difference of the exact gradient to 2·10⁻⁷, and a
+    4-point second difference of ℓ to 2·10⁻⁵. This holds on HMC-DN Gauss,
+    HMC-DN Clayton and PMC Gauss.
+  - The partial SE equals Oakes' SE to 10⁻⁹ relative, because Oakes' identity
+    is exactly `−∂²ℓ/∂ψ²`.
+  - Cost at K = 2, N = 600: 18 ms for the full 6×6 matrix, against 47 ms for
+    Oakes' four one-pair computations.
+  - ICE is not the exact MLE: its prior update ignores the initial-state term,
+    and it stops at a tolerance. At an ICE fit the score is O(1), not zero,
+    and in the checked examples a Newton step is at most ≈ 0.2 SE.
+- **Monte-Carlo coverage** (slow, R = 300, N = 600, pair (0, 0), margins
+  known, the Oakes pilot's seeds; each triple is joint / Oakes / naive):
+
+  | Family, τ     | SE ratio              | 95 % coverage         | 90 % coverage         |
+  |---------------|-----------------------|-----------------------|-----------------------|
+  | Gauss, 0.6    | 1.00 / 0.95 / 0.77    | 0.943 / 0.936 / 0.863 | 0.890 / 0.866 / 0.789 |
+  | Clayton, 0.5  | 1.03 / 1.01 / 0.91    | 0.947 / 0.943 / 0.927 | 0.910 / 0.903 / 0.863 |
+
+  The joint SE is 2–5 % above Oakes' partial SE. This fixture is the
+  overlapping-states one of the Godambe study, run with margins fixed. The
+  joint information closes Oakes' remaining small shortfall. The
+  under-coverage in the Godambe study appears only when margins are
+  re-estimated. It needs the margin coordinates in θ, together with their
+  pseudo-observation chain rule and the IFM correction for the ICE margin
+  step, which is not an MLE step. That extension is documented in the
+  module docstring, along with two-parameter copulas, pair margins and gaps.
+
+### Added — t-EV copula, the extreme-value limit of the Student-t copula (FR-9, last round)
+
+- **`CopulaTEV`** (`pmcprg/copulas/extreme_value/t_ev.py`, `CopulaEnum.TEV`,
+  ID 30, short name `tEV`, `TAU_MIN_MAX = [EPS, 1.0]`, parameters `tau_k`
+  and `nu`): Demarta & McNeil's (2005) t-EV copula,
+  `ℓ(w, z) = w·T_{ν+1}(a) + z·T_{ν+1}(b)`, `a = k((w/z)^{1/ν} − ρ)`,
+  `b = k((z/w)^{1/ν} − ρ)`, `k = √((ν+1)/(1−ρ²))`, `w = −ln u`, `z = −ln v`.
+  This completes FR-9 for the families the package's τ + one-extra
+  parameter machinery can hold (Galambos, Hüsler–Reiss, Tawn types 1/2,
+  t-EV); the three-parameter asymmetric logistic Tawn model remains out of
+  scope.
+- **Formula re-derived, not transcribed — and the brief's is right.**
+  ℓ_w is the limit of the Student-t h-function at (1 − s w, 1 − s z), s → 0
+  (the t quantiles grow like s^{−1/ν}, so their ratio tends to (w/z)^{1/ν}),
+  which gives ℓ_w = T_{ν+1}(a), and Euler's relation gives ℓ. In the
+  package's convention t = w/(w + z) the brief's argument assignment
+  ((t/(1−t))^{1/ν} in the t-term) is the only valid one: with the other, A(1)
+  = T_{ν+1}(−kρ) ≠ 1. The family is exchangeable (A(t) = A(1 − t) by
+  construction). Checked in `mpmath`: the Student h-limit at s = 10⁻⁴⁰
+  matches T_{ν+1}(a) to 12 digits; bounds, convexity and symmetry of A hold
+  at 400 random 40-digit points; λ_U = 2T_{ν+1}(−√((ν+1)(1−ρ)/(1+ρ))), the
+  Student-t copula's own coefficient, equals 2(1 − A(½)) to 7·10⁻¹⁶. The
+  tests also check the limit against the package's own `CopulaStudent`
+  (the gap closes like s^{2/ν}).
+- **Densities in log space.** ℓ_wz = −t_{ν+1}(a)·k·q/(νz) = −t_{ν+1}(b)·k/(qνw)
+  (q = (w/z)^{1/ν}; equal because t(b)/t(a) = q^{ν+2}), h = C·ℓ_w/u and
+  c = C(ℓ_wℓ_z − ℓ_wz)/(uv), with every term non-negative:
+  ln c = wT(−a) + zT(−b) + ln(T(a)T(b) + m). a is formed from √η,
+  η = (1 − ρ)/(1 + ρ), and expm1 (ρ is never formed); m takes the form whose
+  t-argument is bounded; ln T in the far lower tail uses the incomplete-Beta
+  series (DLMF 8.17.8), within 7·10⁻¹⁶ of 50-digit `mpmath` for
+  n ∈ [1.05, 1001]. Against an independent `mpmath` ground truth (C from ℓ;
+  h and c by numerical differentiation of C in (ln w, ln z) at 40–640 digits)
+  on 1744 points — u, v ∈ {10⁻¹², 10⁻⁶, 0.01, 0.3, 0.5, 0.9, 1 − 10⁻⁶,
+  1 − 10⁻¹²}, 29 (τ, ν) with ν ∈ {0.05, 0.5, 1, 2, 4, 50, 100, 1000} and τ
+  from 10⁻¹⁰ to 0.999 — the largest relative errors are 3.5·10⁻¹³ (pdf),
+  1.1·10⁻¹⁴ (cdf) and 7.6·10⁻¹⁴ (h). The 112 points whose differentiation
+  would need more digits (ln c down to −6308) agree with the closed forms
+  in 60-digit `mpmath` to 1.4·10⁻¹² (pdf) and 1.1·10⁻¹⁴ (cdf).
+- **Parametrisation: τ and ν, no joint constraint.** ρ is recovered from
+  (τ, ν), internally as s = ln η. Every τ ∈ (0, 1) is reached at every ν:
+  ρ → 1 is comonotone, ρ → −1 is independence, so **negative ρ is
+  admissible** (weak positive dependence, e.g. τ = 0.0087 at ρ = −0.5,
+  ν = 4) and τ = 0 is never attained; τ decreases in s on every grid tried.
+  `constructible_params` therefore stays the identity (jittered starts,
+  family draws and the selection placeholder all build). The numerical cap
+  is ν-free, τ ≤ 1 − 1.25·10⁻⁶ (x = √((ν+1)η) ≈ 10⁻⁶, Hüsler–Reiss's
+  λ ≤ 10⁶); a larger τ is built at the cap and stores it (RB-10). ν is
+  admissible on [0.05, 1000], the range the kernel was validated on.
+  Proved in passing, for any symmetric EV copula: λ_U/2 ≤ τ ≤ 2λ_U
+  (observed here: τ ≤ λ_U); it brackets the τ → s Brent search.
+- **`nu`, not `df`.** `_two_parameter_spec` (joint MLE, ICE M-step),
+  `EXTRA_PARAM_BOUNDS_BY_PARAM` and the GUI's extra-parameter widgets are all
+  keyed by the parameter *name*: under `df`, t-EV would have taken
+  Student's (atanh τ, 1/ν) branch with Student's bounds (ν > 2.001) and
+  shared Student's GUI widget. It would still have fitted (the constructor
+  does the τ map), through one Brent inversion per likelihood evaluation.
+  `EXTRA_PARAM_BOUNDS_BY_PARAM["nu"] = (0.5, 100.0, 4.0)`; Student's `df`
+  entry is unchanged. A test checks that the t-EV spec is not Student's,
+  that `CopulaTEV(df=…)` is refused, and that the ICE M-step returns
+  `{tau_k, nu}`.
+- **Kendall's τ in logit space.** τ = 2∫_{−∞}^0 t_{ν+1}(a)·k·e^{L/ν}·σ(L)/(νA) dL
+  (L = logit t, Genest–MacKay with A'' = −ℓ_wz/(t(1 − t)), symmetry), by a
+  16-point composite Gauss–Legendre rule on [−1024, 0] graded around L = 0
+  and around the zero ν ln ρ of a: within 7·10⁻¹⁵ of a 30-digit `mpmath`
+  quadrature (A', A'' numerical derivatives of A), 36 points
+  ν ∈ [0.5, 100], τ ∈ [10⁻²¹, 1 − 5·10⁻⁵], at 0.2 ms per τ. The shared
+  t-space rule `tau_from_A_terms_gl` was off by up to 1.8·10⁻⁹ there, and
+  `quad` by 100 % at ν = 100, τ → 1. Monte-Carlo Kendall's τ (16 × 50 000
+  pairs, four points) agrees within 1.3 standard errors.
+- **Hüsler–Reiss limit.** With (ν + 1)(1 − ρ)/(1 + ρ) = 1/λ² held fixed,
+  ν → ∞ gives Hüsler–Reiss(λ). At τ_HR ∈ {0.1, 0.5, 0.9}, max |ΔC| on the
+  edge grid is 6·10⁻⁴, 6·10⁻⁵ and 6·10⁻⁶ at ν = 10², 10³ and 10⁴, and |Δτ| is
+  ≤ 2.4·10⁻⁴ at ν = 10³ — rate 1/ν. ln c converges at the same rate where it
+  is not a far tail (0.036 nat at ν = 10³), but only pointwise in the
+  corners (polynomial against Gaussian tails).
+- **Joint MLE in its own coordinates.** `_two_parameter_spec` gets a `nu`
+  branch in (logit λ_U, 1/ν): λ_U has a closed-form inverse in s (`stdtrit`),
+  so no Brent search is needed per evaluation. λ_U ∈ [10⁻⁶, τ_hi] keeps
+  τ ∈ [5·10⁻⁷, τ_hi], and a memo hands the constructor the s back. The box is
+  run twice, as Tawn's is. `fit(method='tau')` warns and falls back to MLE.
+  Recovery at n = 3000 (20 replicates per point, 160/160 converged,
+  0.15 s per fit): τ̂ RMSE 0.002–0.012 everywhere. ν̂ RMSE is 0.10 at
+  (τ, ν) = (0.3, 1), 0.08 at (0.7, 1), 0.22 at (0.5, 2), 0.35 at (0.9, 3),
+  0.79 at (0.7, 5) and 1.2 at (0.2, 4). **Large ν is weakly identified**:
+  at (0.5, 10), ν̂ ranges over [6.0, 74.6] (median 9.8); at (0.5, 50), over
+  [16, 100], with 10 of 20 fits at the box end 100. Five contrived starts
+  (τ_start from 10⁻⁶ to 0.95) reach the same optimum within 10⁻¹² nat on
+  five data sets. Standard errors raise `NotImplementedError`, as for Tawn.
+- **Tests**: `pmcprg/tests/test_t_ev.py` (129 cases, 11 s; integer seeds
+  only; identical outcomes under `PYTHONHASHSEED` 0 and 12345).
+  `test_copula_limits.py` gains t-EV: 6 (ρ, ν) entries, with ρ as the
+  file's θ and ν in its `delta` slot, and a decimal CDF whose Student-t CDF
+  comes from `mpmath`'s incomplete Beta. The cases have |ρ| ∈ [0.27,
+  1 − 8·10⁻⁴], so the double ρ pins η. The references were regenerated
+  **incrementally**: 228 lines added, none removed, and every pre-existing
+  entry is unchanged. Family count 29 → 30 (`test_copulas.py`); t-EV joins
+  the families with their own `reachable_tau_bounds`
+  (`test_frank_reachable_tau.py`).
+
 ### Added — Tawn extreme-value copulas, types 1 and 2 (FR-9, round 3)
 
 - **`CopulaTawn1`/`CopulaTawn2`** (`pmcprg/copulas/extreme_value/tawn.py`,
