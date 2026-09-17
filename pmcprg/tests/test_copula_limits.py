@@ -217,7 +217,13 @@ _REF_C = {
     "GH90": _rotated_90(_c_gh), "GH270": _rotated_270(_c_gh),
     "Joe90": _rotated_90(_c_joe), "Joe270": _rotated_270(_c_joe),
     "BB190": _rotated_90(_c_bb1), "BB1270": _rotated_270(_c_bb1),
+    "A1290": _rotated_90(_c_a12), "A12270": _rotated_270(_c_a12),
+    "A1490": _rotated_90(_c_a14), "A14270": _rotated_270(_c_a14),
     "Tawn1": _tawn(True), "Tawn2": _tawn(False), "tEV": _c_t_ev,
+    # FR-8, closing round: survival BB1 (180°) and its own 90°/270°
+    # rotations — the audit's own "BB1 de survie".
+    "SBB1": _survival(_c_bb1),
+    "SBB190": _rotated_90(_survival(_c_bb1)), "SBB1270": _rotated_270(_survival(_c_bb1)),
 }
 
 
@@ -308,8 +314,12 @@ _TAIL_TAUS = {
     "GH90": (-0.3, -0.7, -0.95), "GH270": (-0.3, -0.7, -0.95),
     "Joe90": (-0.3, -0.7, -0.95), "Joe270": (-0.3, -0.7, -0.95),
     "BB190": (-0.4, -0.7, -0.9), "BB1270": (-0.4, -0.7, -0.9),
+    "A1290": (-0.4, -0.7, -0.9), "A12270": (-0.4, -0.7, -0.9),
+    "A1490": (-0.4, -0.7, -0.9), "A14270": (-0.4, -0.7, -0.9),
     "Tawn1": (0.3, 0.7, 0.95), "Tawn2": (0.3, 0.7, 0.95),
     "tEV": (0.3, 0.7, 0.95),
+    "SBB1": (0.4, 0.7, 0.9),
+    "SBB190": (-0.4, -0.7, -0.9), "SBB1270": (-0.4, -0.7, -0.9),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),

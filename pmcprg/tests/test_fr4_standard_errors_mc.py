@@ -17,14 +17,26 @@ Student's ν̂ is right-skewed at n = 1000 (measured SD ratio 1.07, coverage
 0.90 over 300 replicates at ν = 5): its bands are wider and stated there.
 
 The LR test of independence is checked for its level under H₀ on rank
-pseudo-observations: ½χ²₀ + ½χ²₁ for Clayton (independence on the boundary;
-about half of the statistics are 0), χ²₁ for Frank (interior).
+pseudo-observations: ½χ²₀ + ½χ²₁ for Clayton and Joe (independence on the
+boundary; about half of the statistics are 0), χ²₁ for Frank (interior).
+A12 and A14 do not contain the independence copula anywhere in their
+registered τ-range ([1/3, 1)) and are checked elsewhere
+(``test_fr4_standard_errors.py::test_lr_test_refuses_families_without_a_one_parameter_independence``)
+to have ``independence_lr_test`` raise ``ValueError`` on them instead.
 
 Measured with the seeds below (ratio / coverage, τ first):
 Gauss 1.017/0.935 (mle), 1.012/0.945 (tau); Clayton 0.990/0.950, 0.994/0.932;
 Gumbel 1.018/0.950, 1.024/0.953; Frank 1.035/0.935, 1.030/0.938; Plackett
 1.030/0.948 (mle); BB1 τ 1.098/0.950, δ 0.985/0.960, θ 0.983/0.950; Student
 τ 0.935/0.935, ν 1.018/0.945, ρ 0.933/0.935.
+
+FR-4 "Reste" families (outside-ICE MC calibration, closed by this file):
+Joe (τ = 0.4) 0.962/0.943 (mle), 0.971/0.938 (tau); AMH (τ = 0.15)
+0.982/0.950, 0.957/0.948; FGM (τ = 0.1) 0.942/0.935, 0.957/0.945; CubSec
+(τ = 0.06, n = 1000, R = 300 — its range [0, 0.165] is the package's
+narrowest) 1.034/0.950, 1.056/0.957; A12 (τ = 0.6) 0.983/0.943, 0.982/0.950;
+A14 (τ = 0.6) 0.976/0.938, 0.986/0.938. Joe's LR-test level at 5 %: 0.051,
+with a 0.542 share of zero statistics (both within their Clayton bands).
 """
 from __future__ import annotations
 
@@ -35,11 +47,17 @@ import pytest
 from scipy.stats import rankdata
 
 from pmcprg.copulas import (
+    CopulaA12,
+    CopulaA14,
+    CopulaAMH,
     CopulaBB1,
     CopulaClayton,
+    CopulaCubSec,
+    CopulaFGM,
     CopulaFrank,
     CopulaGaussian,
     CopulaGH,
+    CopulaJoe,
     CopulaPlackett,
     CopulaStudent,
     independence_lr_test,
@@ -130,6 +148,60 @@ def test_bb1_sd_ratio_and_coverage():
         assert 0.905 <= coverage <= 0.995, (name, coverage)
 
 
+SIX_FAMILY_MC = [
+    (CopulaJoe, "mle", 0.4), (CopulaJoe, "tau", 0.4),
+    (CopulaAMH, "mle", 0.15), (CopulaAMH, "tau", 0.15),
+    (CopulaFGM, "mle", 0.1), (CopulaFGM, "tau", 0.1),
+    (CopulaA12, "mle", 0.6), (CopulaA12, "tau", 0.6),
+    (CopulaA14, "mle", 0.6), (CopulaA14, "tau", 0.6),
+]
+
+
+@pytest.mark.parametrize("cls, method, tau", SIX_FAMILY_MC,
+                         ids=[f"{c.__name__}-{m}" for c, m, _ in SIX_FAMILY_MC])
+def test_shifted_or_signed_range_families_sd_ratio_and_coverage(cls, method, tau):
+    """n = R = 400, τ chosen well inside each family's own registered range
+    (FR-4 "Reste": Joe, AMH, FGM, A12, A14 — CubSec, narrower still, is
+    below). Same bands as :func:`test_one_parameter_sd_ratio_and_coverage`.
+
+    Joe [0, 1): τ = 0.4, as for the other one-sided families already
+    covered (Clayton, GH). AMH [-0.182, 0.333): τ = 0.15, away from both
+    ends. FGM [-2/9, 2/9] = [-0.222, 0.222]: τ = 0.1, away from both ends.
+    A12/A14 [1/3, 1), which — unlike Clayton/GH/Joe — do not contain the
+    independence copula anywhere in their range: τ = 0.6, away from 1/3 as
+    well as from 1.
+
+    ratio ∈ [0.85, 1.15], coverage ∈ [0.917, 0.983].
+    """
+    res, boundary = _monte_carlo(cls, {"tau_k": tau}, method, n=400, R=400, seed0=4000)
+    assert boundary == 0
+    for name, (ratio, coverage) in res.items():
+        assert 0.85 <= ratio <= 1.15, (name, ratio)
+        assert 0.917 <= coverage <= 0.983, (name, coverage)
+
+
+@pytest.mark.parametrize("method", ["mle", "tau"])
+def test_cubsec_sd_ratio_and_coverage(method):
+    """n = 1000, R = 300 at τ = 0.06.
+
+    CubSec's registered range [0, 33/200] = [0, 0.165] is the narrowest in
+    the package. At n = 400 (the scale used above) the SE of τ̂ is large
+    enough relative to that width that a non-trivial fraction of replicates
+    land on the boundary (measured: 2-3 % of 200 replicates at τ = 0.06,
+    n = 400) — n = 1000 brings the SE down enough that none do, at the same
+    τ, well inside both ends of the range.
+
+    ratio ∈ [0.85, 1.15] (R = 300: relative SE of the SD estimate 4.1 %,
+    same band as R = 400 plus margin); coverage ∈ [0.917, 0.983] (binomial
+    SE of coverage 1.3 % at R = 300, same band as R = 400 plus margin).
+    """
+    res, boundary = _monte_carlo(CopulaCubSec, {"tau_k": 0.06}, method, n=1000, R=300, seed0=4500)
+    assert boundary == 0
+    for name, (ratio, coverage) in res.items():
+        assert 0.85 <= ratio <= 1.15, (name, ratio)
+        assert 0.917 <= coverage <= 0.983, (name, coverage)
+
+
 def test_student_sd_ratio_and_coverage():
     """n = 1000, R = 200 at (τ, ν) = (0.5, 5).
 
@@ -150,14 +222,17 @@ def test_student_sd_ratio_and_coverage():
     assert 0.85 <= coverage <= 0.99, coverage
 
 
-@pytest.mark.parametrize("family, boundary", [(CopulaClayton, True), (CopulaFrank, False)])
+@pytest.mark.parametrize("family, boundary",
+                         [(CopulaClayton, True), (CopulaFrank, False), (CopulaJoe, True)])
 def test_independence_lr_test_level(family, boundary):
     """R = 1000 independent samples, n = 200, rank pseudo-observations.
 
-    Rejection rate at 5 %: binomial SE 0.69 % → band [0.029, 0.071]. For the
-    boundary family, the share of zero statistics estimates the χ²₀ weight ½
-    (SE 1.6 %); the band [0.45, 0.60] allows for the τ-pad of the optimiser,
-    which turns a few tiny positive estimates into LR ≈ 0 (measured: 0.53).
+    Rejection rate at 5 %: binomial SE 0.69 % → band [0.029, 0.071]. For a
+    boundary family (independence at τ → 0⁺, like Clayton and Joe), the
+    share of zero statistics estimates the χ²₀ weight ½ (SE 1.6 %); the band
+    [0.45, 0.60] allows for the τ-pad of the optimiser, which turns a few
+    tiny positive estimates into LR ≈ 0 (measured: 0.53 for Clayton, 0.54
+    for Joe).
     """
     n, R = 200, 1000
     p, zero = [], 0

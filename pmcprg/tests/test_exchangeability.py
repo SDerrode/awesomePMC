@@ -6,7 +6,14 @@ families near nominal, the 90°-rotated families rejected more often, as a
 function of tau and N), not enough to pin the level to two digits; the full
 study lives in the commit message, following the same convention as
 ``test_radial_symmetry.py`` and ``test_rosenblatt.py``.
+
+The multiplier-bootstrap tests below (FR-10, closing round) mirror the
+parametric ones on the identical family/tau/N grid, plus a wall-clock
+comparison — see CHANGELOG.md for the full-scale numbers, and
+``test_radial_symmetry.py``'s own multiplier-bootstrap section for the
+structure this one follows.
 """
+import time
 import zlib
 
 import numpy as np
@@ -176,11 +183,163 @@ def test_power_study_rotated_families_reject_more_often(family_cls, tau):
 
 
 # ---------------------------------------------------------------------------
+# Multiplier bootstrap (FR-10, closing round) — unit tests, wall-clock
+# comparison, and the same size/power grid as above, run with
+# bootstrap="multiplier". Structure mirrors
+# ``test_radial_symmetry.py``'s own multiplier-bootstrap section.
+# ---------------------------------------------------------------------------
+
+def test_multiplier_bootstrap_result_fields_and_types():
+    cop = CopulaGaussian(tau_k=0.5)
+    uv = cop.sample(80, seed=1)
+    res = exchangeability_test(uv[:, 0], uv[:, 1], B=40, seed=2, bootstrap="multiplier")
+    assert isinstance(res, ExchangeabilityResult)
+    assert res.bootstrap == "multiplier"
+    assert res.n == 80
+    assert res.B == 40
+    assert res.n_valid == 40          # the multiplier bootstrap never drops a replicate
+    assert 0.0 <= res.p_value <= 1.0
+    assert isinstance(res.reject, bool)
+    assert res.statistic >= 0.0
+
+
+def test_multiplier_bootstrap_matches_observed_statistic():
+    # bootstrap="multiplier" must not change the observed T_n at all — only
+    # the null it is compared to.
+    cop = CopulaClayton(tau_k=0.5)
+    uv = cop.sample(120, seed=3)
+    res_p = exchangeability_test(uv[:, 0], uv[:, 1], B=30, seed=4, bootstrap="parametric")
+    res_m = exchangeability_test(uv[:, 0], uv[:, 1], B=30, seed=4, bootstrap="multiplier")
+    assert res_p.statistic == pytest.approx(res_m.statistic)
+    assert res_p.tau_hat == pytest.approx(res_m.tau_hat)
+
+
+def test_multiplier_bootstrap_default_unchanged():
+    # The default bootstrap path must be bit-for-bit what it was before this
+    # option existed.
+    cop = CopulaGaussian(tau_k=0.4)
+    uv = cop.sample(100, seed=5)
+    res_default = exchangeability_test(uv[:, 0], uv[:, 1], B=50, seed=6)
+    res_explicit = exchangeability_test(uv[:, 0], uv[:, 1], B=50, seed=6, bootstrap="parametric")
+    assert res_default == res_explicit
+
+
+def test_multiplier_bootstrap_rademacher_runs():
+    cop = CopulaGaussian(tau_k=0.5)
+    uv = cop.sample(100, seed=7)
+    res = exchangeability_test(uv[:, 0], uv[:, 1], B=40, seed=8, bootstrap="multiplier",
+                                multiplier="rademacher")
+    assert 0.0 <= res.p_value <= 1.0
+
+
+def test_unknown_bootstrap_raises():
+    x = np.random.default_rng(0).uniform(size=20)
+    with pytest.raises(ValueError):
+        exchangeability_test(x, x, bootstrap="bogus")
+
+
+def test_unknown_multiplier_law_raises():
+    x = np.random.default_rng(0).uniform(size=20)
+    with pytest.raises(ValueError):
+        exchangeability_test(x, x, bootstrap="multiplier", multiplier="bogus")
+
+
+def test_multiplier_bootstrap_independence_never_rejects():
+    cop = CopulaProduct(tau_k=0.0)
+    for seed in range(5):
+        uv = cop.sample(150, seed=seed)
+        res = exchangeability_test(uv[:, 0], uv[:, 1], B=100, seed=seed + 1000,
+                                    bootstrap="multiplier")
+        assert not res.reject, f"independence copula rejected at seed={seed}: {res}"
+
+
+def test_multiplier_bootstrap_degenerate_samples_do_not_crash():
+    for n in (0, 1, 2, 3):
+        x = np.arange(n, dtype=float)
+        res = exchangeability_test(x, x, B=10, seed=0, bootstrap="multiplier")
+        assert np.isnan(res.statistic)
+        assert np.isnan(res.p_value)
+        assert res.reject is False
+
+
+def test_multiplier_bootstrap_is_much_faster_than_parametric():
+    # Loose bound, not flaky: same B, same N, multiplier bootstrap avoids
+    # resampling + reranking B times, so it should run in a small fraction of
+    # the parametric bootstrap's time. Generous margin (50%) to absorb
+    # machine noise; the measured ratio in CHANGELOG.md is far smaller.
+    cop = CopulaGaussian(tau_k=0.5)
+    uv = cop.sample(200, seed=10)
+    x, y = uv[:, 0], uv[:, 1]
+
+    t0 = time.perf_counter()
+    exchangeability_test(x, y, B=200, seed=11, bootstrap="parametric")
+    t_parametric = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    exchangeability_test(x, y, B=200, seed=11, bootstrap="multiplier")
+    t_multiplier = time.perf_counter() - t0
+
+    assert t_multiplier < 0.5 * t_parametric, (
+        f"multiplier bootstrap ({t_multiplier:.4f}s) is not much faster than "
+        f"parametric ({t_parametric:.4f}s) at N=200, B=200."
+    )
+
+
+@pytest.mark.parametrize("family_cls,tau", [
+    (CopulaGaussian, 0.5),
+    (CopulaFrank, 0.5),
+    (CopulaClayton, 0.5),
+])
+def test_multiplier_bootstrap_size_study_exchangeable_families_near_nominal(family_cls, tau):
+    rate = _rejection_rate(family_cls, tau, n=150, n_reps=60, B=60, alpha=0.10,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-exch-size"))
+    assert rate < 0.30, f"{family_cls.__name__} tau={tau}: over-rejected at {rate:.3f}"
+
+
+@pytest.mark.parametrize("family_cls,tau", [
+    (CopulaClayton90, -0.5),
+    (CopulaGH90, -0.5),
+    (CopulaJoe90, -0.5),
+])
+def test_multiplier_bootstrap_power_study_rotated_families_reject_more_often(family_cls, tau):
+    rate = _rejection_rate(family_cls, tau, n=200, n_reps=60, B=60, alpha=0.10,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-exch-power"))
+    assert rate > 0.30, f"{family_cls.__name__} tau={tau}: power too low at {rate:.3f}"
+
+
+# ---------------------------------------------------------------------------
 # Full-scale size/power studies (slow) — exchangeable families Gauss/Frank/
 # Clayton at tau in {0.3, 0.6} for size; the 90°-rotated Clayton/GH/Joe at
 # tau in {-0.2, -0.4, -0.6}, N in {100, 300} for power, as a function of tau
 # and N. Numbers reported in CHANGELOG.md.
 # ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+@pytest.mark.parametrize("family_cls,tau", [
+    (CopulaGaussian, 0.3), (CopulaGaussian, 0.6),
+    (CopulaFrank, 0.3), (CopulaFrank, 0.6),
+    (CopulaClayton, 0.3), (CopulaClayton, 0.6),
+])
+def test_multiplier_bootstrap_full_size_study(family_cls, tau):
+    rate = _rejection_rate(family_cls, tau, n=200, n_reps=100, B=150, alpha=0.05,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-exch-full-size"))
+    assert 0.0 <= rate <= 0.15, f"{family_cls.__name__} tau={tau}: rate={rate:.3f}"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("family_cls,tau,n", [
+    (CopulaClayton90, -0.2, 100), (CopulaClayton90, -0.4, 100), (CopulaClayton90, -0.6, 100),
+    (CopulaClayton90, -0.2, 300), (CopulaClayton90, -0.4, 300), (CopulaClayton90, -0.6, 300),
+    (CopulaGH90, -0.2, 100), (CopulaGH90, -0.4, 100), (CopulaGH90, -0.6, 100),
+    (CopulaGH90, -0.2, 300), (CopulaGH90, -0.4, 300), (CopulaGH90, -0.6, 300),
+    (CopulaJoe90, -0.2, 100), (CopulaJoe90, -0.4, 100), (CopulaJoe90, -0.6, 100),
+    (CopulaJoe90, -0.2, 300), (CopulaJoe90, -0.4, 300), (CopulaJoe90, -0.6, 300),
+])
+def test_multiplier_bootstrap_full_power_study(family_cls, tau, n):
+    rate = _rejection_rate(family_cls, tau, n=n, n_reps=100, B=150, alpha=0.05,
+                            seed0=_stable_seed(family_cls.__name__, tau, n, "mult-exch-full-power"))
+    assert 0.0 <= rate <= 1.0, f"{family_cls.__name__} tau={tau} N={n}: rate={rate:.3f}"
+
 
 @pytest.mark.slow
 @pytest.mark.parametrize("family_cls,tau", [

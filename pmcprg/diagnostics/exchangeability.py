@@ -126,11 +126,73 @@ is the same Monte-Carlo p-value convention as
 :class:`~pmcprg.diagnostics.bootstrap.BootstrapResult`,
 :mod:`pmcprg.diagnostics.radial_symmetry` and :mod:`pmcprg.diagnostics.rosenblatt`
 (Davison & Hinkley 1997, ch. 4; Phipson & Smyth 2010): never exactly 0, exact
-under the (here: bootstrap-approximated) null. A multiplier-bootstrap
-follow-up, mirroring radial symmetry's own second round, is a natural fast
-extension but is explicitly left for later — this is the fourth and last
-FR-10 item, and the audit item's text does not single out exchangeability
-for the multiplier bootstrap the way it does for radial symmetry.
+under the (here: bootstrap-approximated) null.
+
+Null distribution: multiplier bootstrap (FR-10, closing round)
+-----------------------------------------------------------------
+FR-10's multiplier-bootstrap request (Kojadinovic & Yan 2011,
+doi:10.1007/s11222-009-9142-y; Kojadinovic, Yan & Holmes 2011,
+doi:10.5705/ss.2011.037a) was delivered for radial symmetry in
+:mod:`pmcprg.diagnostics.radial_symmetry`'s own round 2 and is completed here
+for the fourth and last FR-10 item, closing the item for all three
+Cramér–von Mises screening tests in this package (radial symmetry,
+Rosenblatt, exchangeability). ``bootstrap="multiplier"`` implements it.
+
+``T_n``'s statistic is ``n · mean_i[C_n(û_i,v̂_i) − C_n(v̂_i,û_i)]²`` — the
+*same* Cramér–von Mises skeleton as radial symmetry's own ``T_n``, with the
+reflected reference ``(1−u, 1−v)`` replaced by the transposed one ``(v, u)``.
+The derivation transfers with that one substitution, but is worked out fresh
+rather than assumed (task instruction: check the sign and derivative terms,
+not just the family resemblance). Under H0 the *population* identity
+``C(u,v) = C(v,u)`` makes the deterministic part vanish exactly as radial
+symmetry's ``u + v − 1`` term cancels between its two evaluations (see that
+module's docstring), so
+
+    √n D_n(u, v) := √n [C_n(u, v) − C_n(v, u)]
+                  = α_n(u, v) − α_n(v, u) + o_P(1),
+
+with ``α_n = √n(C_n − C)`` the empirical copula process, unchanged from
+radial symmetry. Its multiplier-CLT linearisation (Rémillard & Scaillet 2009;
+Kojadinovic & Yan 2011) is the identical plug-in of
+:func:`pmcprg.diagnostics.radial_symmetry._empirical_copula_partials`'s
+construction (duplicated here, see below, to keep this module
+self-contained):
+
+    α_n^ξ(u, v) = n^{-1/2} Σ_{i=1}^n ξ_i [1{û_i ≤ u, v̂_i ≤ v} − C_n(u, v)
+                  − Ċ_1(u, v)(1{û_i ≤ u} − u) − Ċ_2(u, v)(1{v̂_i ≤ v} − v)],
+
+``ξ_1, …, ξ_n`` i.i.d., mean 0, variance 1 (standard normal by default,
+``±1`` Rademacher optionally), ``Ċ_1, Ċ_2`` the partial derivatives of
+``C_n``, plug-in estimated by the same central finite difference (bandwidth
+``h = min(0.5, n^{-1/2})``). One replicate is
+
+    T_n^ξ = mean_i [α_n^ξ(û_i, v̂_i) − α_n^ξ(v̂_i, û_i)]².
+
+Sign and evaluation points checked explicitly rather than copied: the two
+query sets fed to the shared kernel builder are ``(û_i, v̂_i)`` and
+``(v̂_i, û_i)`` — swaps of the observed pairs, not reflections, so both stay
+inside ``[0, 1]`` with no boundary handling different from radial symmetry's
+own (the finite-difference bandwidth clips symmetrically at both ends
+either way). The subtraction order (evaluated-at-``(u,v)`` minus
+evaluated-at-``(v,u)``) matches the population statistic's own order, so no
+extra sign flip is needed — unlike, say, a reflection through ``1 − ·``,
+a coordinate transpose has no orientation to get backwards. As in radial
+symmetry, ``C_n``, the ranks and ``Ċ_1, Ċ_2`` are computed **once**; every
+replicate is a fresh draw of ``ξ`` and one matrix–vector product — no
+resampling, no refit.
+
+**Honesty about fidelity.** This is the same derivation posture as radial
+symmetry's own multiplier round: a hand derivation of the general multiplier
+CLT for the empirical copula process, applied to *this* statistic's
+transposed-difference form, not a transcription of a published formula for
+the exchangeability statistic specifically. The construction is principled
+(it reuses machinery — the finite-difference ``Ċ_1, Ċ_2`` plug-in — this
+codebase already trusts) and the "transfer from radial symmetry" step was
+checked term by term above rather than assumed; it is nonetheless validated
+here by simulation (size and power on the same family/τ/N grid as the
+parametric bootstrap already uses in this module) rather than by claimed
+fidelity to Kojadinovic & Yan's or Genest, Nešlehová & Quessy's exact
+statistic.
 
 Weighting
 ---------
@@ -140,6 +202,18 @@ copula of the *whole* sample, a joint functional with no published
 frequency- or soft-label-weighted form. ``weights`` is accepted only to
 raise, so a caller passing ICE posteriors gets an explicit error instead of a
 silently wrong answer.
+
+References (multiplier bootstrap)
+----------------------------------
+* Kojadinovic, I. & Yan, J. (2011). A goodness-of-fit test for multivariate
+  multiplicative models with unspecified marginals. *Stat. Comput.* 21,
+  17–30. doi:10.1007/s11222-009-9142-y
+* Kojadinovic, I., Yan, J. & Holmes, M. (2011). Fast large-sample
+  goodness-of-fit tests for copulas. *Statist. Sinica* 21, 841–871.
+  doi:10.5705/ss.2011.037a
+* Rémillard, B. & Scaillet, O. (2009). Testing for equality between two
+  copulas. *J. Multivariate Anal.* 100(3), 377–386 — the multiplier-CLT
+  linearisation of the empirical copula process this module reuses.
 
 References
 ----------
@@ -162,6 +236,7 @@ References
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -179,6 +254,13 @@ __all__ = ["ExchangeabilityResult", "exchangeability_statistic", "exchangeabilit
 #: :mod:`pmcprg.diagnostics.rosenblatt`, for the same reason.
 MIN_N = 4
 
+#: Bootstrap calibration methods accepted by :func:`exchangeability_test`.
+BOOTSTRAP_METHODS = ("parametric", "multiplier")
+#: Multiplier laws accepted for ``bootstrap="multiplier"`` — both i.i.d.,
+#: mean 0, variance 1, as the multiplier CLT requires. Same choices as
+#: :mod:`pmcprg.diagnostics.radial_symmetry`.
+MULTIPLIER_LAWS = ("normal", "rademacher")
+
 
 @dataclass(frozen=True)
 class ExchangeabilityResult:
@@ -195,10 +277,14 @@ class ExchangeabilityResult:
                  ``C(u, v) = C(v, u)``). False whenever ``p_value`` is NaN.
     alpha      : float — significance level used for ``reject``.
     n          : int   — number of pairs the statistic was computed on.
-    tau_hat    : float — Kendall's τ of the sample, also the calibrating
-                 Gaussian surrogate's only fitted parameter.
+    tau_hat    : float — Kendall's τ of the sample. For ``bootstrap='parametric'``
+                 it is also the calibrating Gaussian surrogate's only fitted
+                 parameter; for ``bootstrap='multiplier'`` it is reported for
+                 diagnostics only (the multiplier bootstrap fits nothing).
     B          : int   — bootstrap replicates requested.
     n_valid    : int   — replicates that produced a finite statistic.
+    bootstrap  : str   — ``'parametric'`` (default) or ``'multiplier'``, the
+                 calibration method actually used — see the module docstring.
     """
 
     statistic: float
@@ -209,6 +295,7 @@ class ExchangeabilityResult:
     tau_hat: float
     B: int
     n_valid: int
+    bootstrap: str = "parametric"
 
 
 def _pseudo_obs(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -255,6 +342,84 @@ def _fit_gaussian_surrogate(tau_hat: float):
     return CopulaGaussian(tau_k=tau)
 
 
+# ---------------------------------------------------------------------------
+# Multiplier bootstrap (FR-10, closing round) — see the module docstring for
+# the derivation. Duplicated from :mod:`pmcprg.diagnostics.radial_symmetry`
+# rather than imported, in the same self-contained-module spirit as
+# ``_empirical_copula_at`` above; only the query points fed to
+# ``_multiplier_kernel`` differ (transpose ``(v, u)`` here vs. reflection
+# ``(1-u, 1-v)`` there).
+# ---------------------------------------------------------------------------
+
+def _empirical_copula_partials(
+    u: np.ndarray, v: np.ndarray, uq: np.ndarray, vq: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Plug-in estimates of ``∂C_n/∂u`` and ``∂C_n/∂v`` at ``(uq, vq)``.
+
+    Identical construction to
+    :func:`pmcprg.diagnostics.radial_symmetry._empirical_copula_partials`:
+    central finite difference, bandwidth ``h = min(0.5, n^{-1/2})``, one-sided
+    near the boundary by clipping and dividing by the actual step.
+    """
+    n = u.size
+    h = min(0.5, 1.0 / math.sqrt(n))
+    u_hi, u_lo = np.minimum(uq + h, 1.0), np.maximum(uq - h, 0.0)
+    v_hi, v_lo = np.minimum(vq + h, 1.0), np.maximum(vq - h, 0.0)
+    dC_du = (_empirical_copula_at(u_hi, vq, u, v)
+             - _empirical_copula_at(u_lo, vq, u, v)) / (u_hi - u_lo)
+    dC_dv = (_empirical_copula_at(uq, v_hi, u, v)
+             - _empirical_copula_at(uq, v_lo, u, v)) / (v_hi - v_lo)
+    return dC_du, dC_dv
+
+
+def _multiplier_kernel(
+    u: np.ndarray, v: np.ndarray, uq: np.ndarray, vq: np.ndarray,
+) -> np.ndarray:
+    """``K`` such that ``α_n^ξ(uq, vq) = K @ ξ / √n`` (module docstring).
+
+    Returns an ``(m, n)`` matrix, ``m = uq.size``. Identical formula to
+    :func:`pmcprg.diagnostics.radial_symmetry._multiplier_kernel`.
+    """
+    Cn_q = _empirical_copula_at(uq, vq, u, v)                     # (m,)
+    dC_du, dC_dv = _empirical_copula_partials(u, v, uq, vq)       # (m,)
+    le_u = (u[None, :] <= uq[:, None]).astype(float)              # (m, n)
+    le_v = (v[None, :] <= vq[:, None]).astype(float)              # (m, n)
+    indicator = le_u * le_v
+    K = (indicator - Cn_q[:, None]
+         - dC_du[:, None] * (le_u - uq[:, None])
+         - dC_dv[:, None] * (le_v - vq[:, None]))
+    return K
+
+
+def _draw_multipliers(n: int, B: int, rng: np.random.Generator, law: str) -> np.ndarray:
+    """``(n, B)`` i.i.d. mean-0, variance-1 multipliers."""
+    if law == "normal":
+        return rng.standard_normal(size=(n, B))
+    if law == "rademacher":
+        return rng.choice(np.array([-1.0, 1.0]), size=(n, B))
+    raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {law!r}.")
+
+
+def _multiplier_bootstrap_draws(
+    u: np.ndarray, v: np.ndarray, *, B: int, seed: int, multiplier: str,
+) -> np.ndarray:
+    """``T_n^ξ`` for ``B`` multiplier replicates, vectorised over all of them at once.
+
+    Query points are the observed pairs and their **transpose** ``(v_i, u_i)``
+    — not the reflection ``(1-u_i, 1-v_i)`` radial symmetry uses — matching
+    ``T_n``'s own ``C_n(u,v) - C_n(v,u)`` difference (module docstring).
+    """
+    n = u.size
+    uq = np.concatenate([u, v])
+    vq = np.concatenate([v, u])
+    K = _multiplier_kernel(u, v, uq, vq)               # (2n, n)
+    rng = np.random.default_rng(seed)
+    xi = _draw_multipliers(n, B, rng, multiplier)      # (n, B)
+    alpha = (K @ xi) / math.sqrt(n)                    # (2n, B)
+    diff = alpha[:n, :] - alpha[n:, :]                 # (n, B): √n D_n^ξ(û_i, v̂_i)
+    return np.mean(diff ** 2, axis=0)                  # (B,): T_n^ξ
+
+
 def exchangeability_test(
     x: np.ndarray,
     y: np.ndarray,
@@ -263,23 +428,32 @@ def exchangeability_test(
     seed: int = 0,
     alpha: float = 0.05,
     weights=None,
+    bootstrap: str = "parametric",
+    multiplier: str = "normal",
 ) -> ExchangeabilityResult:
     """Test H0: the copula of ``(x, y)`` is exchangeable, ``C(u,v) = C(v,u)`` (FR-10).
 
     Parameters
     ----------
-    x, y    : array-like, shape ``(n,)`` — one fully-observed sample of pairs
-              (raw data or pseudo-observations both work: ranks are
-              recomputed here either way).
-    B       : parametric-bootstrap replicates. Cost ``O(B n²)``: each
-              replicate resamples from the Gaussian surrogate, reranks and
-              recomputes the CvM statistic (``O(n²)`` for the
-              empirical-copula evaluation) — same order as
-              :func:`pmcprg.diagnostics.radial_symmetry.radial_symmetry_test`'s
-              own parametric bootstrap.
-    seed    : bootstrap RNG seed.
-    alpha   : significance level for :attr:`ExchangeabilityResult.reject`.
-    weights : must be ``None`` — see "Weighting" in the module docstring.
+    x, y       : array-like, shape ``(n,)`` — one fully-observed sample of
+                 pairs (raw data or pseudo-observations both work: ranks are
+                 recomputed here either way).
+    B          : bootstrap replicates. ``bootstrap='parametric'`` costs
+                 ``O(B n²)`` with a per-replicate resample and rerank;
+                 ``bootstrap='multiplier'`` costs the same ``O(n²)`` once plus
+                 one ``O(n² B)`` matrix product for *all* replicates together
+                 — see the module docstring and
+                 :mod:`pmcprg.diagnostics.radial_symmetry`'s own docstring for
+                 why this is dramatically faster in practice.
+    seed       : bootstrap RNG seed.
+    alpha      : significance level for :attr:`ExchangeabilityResult.reject`.
+    weights    : must be ``None`` — see "Weighting" in the module docstring.
+    bootstrap  : ``'parametric'`` (default, unchanged from FR-10's first
+                 round for this item) or ``'multiplier'`` (FR-10 closing
+                 round, see the module docstring).
+    multiplier : ``'normal'`` (default) or ``'rademacher'`` — the i.i.d.
+                 mean-0, variance-1 law of the multiplier bootstrap's ``ξ_i``.
+                 Ignored when ``bootstrap='parametric'``.
 
     Returns
     -------
@@ -294,6 +468,10 @@ def exchangeability_test(
         )
     if not (0.0 < alpha < 1.0):
         raise ValueError(f"alpha must be in (0, 1), got {alpha}.")
+    if bootstrap not in BOOTSTRAP_METHODS:
+        raise ValueError(f"bootstrap must be one of {BOOTSTRAP_METHODS}, got {bootstrap!r}.")
+    if bootstrap == "multiplier" and multiplier not in MULTIPLIER_LAWS:
+        raise ValueError(f"multiplier must be one of {MULTIPLIER_LAWS}, got {multiplier!r}.")
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -306,6 +484,7 @@ def exchangeability_test(
         return ExchangeabilityResult(
             statistic=float("nan"), p_value=float("nan"), reject=False,
             alpha=float(alpha), n=int(n), tau_hat=float("nan"), B=int(B), n_valid=0,
+            bootstrap=bootstrap,
         )
 
     u, v = _pseudo_obs(x, y)
@@ -314,16 +493,20 @@ def exchangeability_test(
     tau_hat, _ = kendalltau(x, y)
     tau_hat = float(tau_hat) if np.isfinite(tau_hat) else 0.0
 
-    surrogate = _fit_gaussian_surrogate(tau_hat)
-    rng = np.random.default_rng(seed)
-    raw_draws = []
-    for _ in range(int(B)):
-        xb, yb = surrogate.sample(n, seed=int(rng.integers(0, 2**31 - 1))).T
-        ub, vb = _pseudo_obs(xb, yb)
-        tb = exchangeability_statistic(ub, vb)
-        if np.isfinite(tb):
-            raw_draws.append(tb)
-    draws = np.asarray(raw_draws, dtype=float)
+    if bootstrap == "multiplier":
+        draws = _multiplier_bootstrap_draws(u, v, B=int(B), seed=seed, multiplier=multiplier)
+        draws = draws[np.isfinite(draws)]
+    else:
+        surrogate = _fit_gaussian_surrogate(tau_hat)
+        rng = np.random.default_rng(seed)
+        raw_draws = []
+        for _ in range(int(B)):
+            xb, yb = surrogate.sample(n, seed=int(rng.integers(0, 2**31 - 1))).T
+            ub, vb = _pseudo_obs(xb, yb)
+            tb = exchangeability_statistic(ub, vb)
+            if np.isfinite(tb):
+                raw_draws.append(tb)
+        draws = np.asarray(raw_draws, dtype=float)
 
     p_value = (
         float((1 + np.sum(draws >= stat)) / (draws.size + 1))
@@ -332,10 +515,11 @@ def exchangeability_test(
     reject = bool(np.isfinite(p_value) and p_value < alpha)
 
     logger.debug(
-        "exchangeability_test: n=%d tau_hat=%.4f T_n=%.4f p=%.4f alpha=%.3f reject=%s",
-        n, tau_hat, stat, p_value, alpha, reject,
+        "exchangeability_test: n=%d tau_hat=%.4f T_n=%.4f p=%.4f alpha=%.3f reject=%s "
+        "bootstrap=%s",
+        n, tau_hat, stat, p_value, alpha, reject, bootstrap,
     )
     return ExchangeabilityResult(
         statistic=float(stat), p_value=p_value, reject=reject, alpha=float(alpha),
-        n=int(n), tau_hat=tau_hat, B=int(B), n_valid=int(draws.size),
+        n=int(n), tau_hat=tau_hat, B=int(B), n_valid=int(draws.size), bootstrap=bootstrap,
     )

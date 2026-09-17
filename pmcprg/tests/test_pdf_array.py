@@ -34,6 +34,11 @@ def _params_for(entry: CopulaEnum) -> dict:
     elif entry.value.SHORT_NAME in ("A12", "A14"):
         # τ ∈ [1/3, 1) — use a safely interior value
         tau = 0.5
+    elif entry.value.SHORT_NAME in ("A1290", "A12270", "A1490", "A14270"):
+        # Their 90°/270° rotations (audit FR-8): τ ∈ [−1, −1/3], the mirror
+        # image — the generic branch below would pick −0.4, inside too, but
+        # only 0.07 from the interior bound −1/3.
+        tau = -0.5
     elif tau_max - tau_min > 0.5:
         # Generic interior value, same sign as the family's own dependence:
         # positive for a one-sided family like Clayton, negative for its

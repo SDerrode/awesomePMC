@@ -9,6 +9,269 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — multiplier bootstrap for Rosenblatt and exchangeability, closing FR-10
+
+- **`bootstrap="multiplier"` added to `rosenblatt_gof_test` and
+  `exchangeability_test`** (`pmcprg.diagnostics.rosenblatt`,
+  `pmcprg.diagnostics.exchangeability`), alongside the unchanged
+  `bootstrap="parametric"` default, mirroring `radial_symmetry_test`'s own
+  `bootstrap`/`multiplier` parameters exactly. This closes FR-10's
+  multiplier-bootstrap request (Kojadinovic & Yan 2011,
+  doi:10.1007/s11222-009-9142-y) for all three Cramér–von Mises screening
+  tests in this package (radial symmetry, Rosenblatt, exchangeability).
+- **Exchangeability**: `T_n = n·mean_i[C_n(û_i,v̂_i) − C_n(v̂_i,û_i)]²` needed
+  the *same* multiplier linearisation as radial symmetry's own `T_n`
+  (`α_n(u,v) − α_n(1−u,1−v)` under H0, with plug-in `Ċ_1, Ċ_2` derivative
+  corrections), with the reflected reference `(1−u, 1−v)` replaced by the
+  transposed one `(v, u)` — derived and sign-checked rather than assumed to
+  transfer mechanically (the query points are swaps of the observed pairs,
+  not reflections, so no boundary or orientation surprises). Speed-up at
+  N=200, B=200: parametric 0.113 s vs multiplier 0.0024 s (**48×**). Size
+  (N=200, 100 reps, B=150, α=0.05): Gaussian τ=0.3/0.6 → 2.0%/2.0%; Frank
+  τ=0.3/0.6 → 6.0%/4.0%; Clayton τ=0.3/0.6 → 4.0%/4.0% — comparable to the
+  parametric bootstrap's own numbers for the same grid (4.0%/1.0%,
+  5.0%/11.0%, 8.0%/3.0%), all within Monte-Carlo reach of nominal. Power
+  (90°-rotated families, same reps/B): `CopulaClayton90` τ=−0.2/−0.4/−0.6 →
+  16%/65%/73% at N=100, 67%/98%/100% at N=300 (parametric: 24%/61%/88% and
+  61%/99%/100%); `CopulaGH90` → 5%/14%/23% (N=100), 25%/57%/56% (N=300)
+  (parametric: 10%/20%/15% and 25%/56%/61%); `CopulaJoe90` → 24%/71%/81%
+  (N=100), 71%/97%/100% (N=300) (parametric: 31%/71%/86% and 81%/100%/100%)
+  — comparable magnitude throughout, as expected from a shared derivation.
+- **Rosenblatt**: a genuinely different linearisation was needed, not a
+  copy of the copula-process one, because `S_n` compares an ordinary
+  empirical CDF of the Rosenblatt-transformed sample `{(Û_i,V̂_i)}` to a
+  *fixed* reference `Π(u,v) = u·v`, not to a data-dependent functional of
+  itself — the classical one-sample multiplier CLT for an empirical process
+  against a known reference, no `Ċ_1, Ċ_2` plug-in needed (see the module
+  docstring for the argument this is a different case in kind from radial
+  symmetry's and exchangeability's own). **Documented simplification**: the
+  construction treats the fitted `θ̂` as fixed, omitting the
+  parameter-estimation correction a fully rigorous residual-empirical-process
+  treatment would need (no citation available offline to transcribe it, and
+  no in-house derivative-of-`h`-by-`θ` machinery to build it from scratch).
+  Speed-up at N=200, B=200: parametric 0.550 s vs multiplier 0.0037 s
+  (**149×**). This omission has a measurable, honestly-reported cost: the
+  simulation shows the multiplier bootstrap's replicate variance runs larger
+  than the true sampling variance (the classical direction, Durbin 1973, for
+  omitting a residual-process correction), making it markedly
+  **conservative** — size (N=200, 200 reps, B=150, α=0.05) at essentially
+  0.0% for Gauss/Clayton/Frank τ∈{0.3,0.6} (parametric: 5.3%/5.3%, 4.7%/5.3%,
+  6.7%/7.3%, all near nominal), and power correspondingly reduced: true
+  Clayton / fit Gauss, τ=0.2/0.4/0.6 → 0%/0%/0% at N=100, 0%/0%/26% at N=300
+  (parametric: 19%/52%/85% and 45%/98%/100%); true GH / fit Gauss, τ=0.2/0.4/
+  0.6 → 0%/0%/0% at N=100 (parametric: 6%/7%/11%) — a substantial, quantified
+  loss of power in exchange for the speed-up. `bootstrap="parametric"`
+  remains the recommended default for this test when power matters;
+  `bootstrap="multiplier"` is offered for cost-constrained rapid screening
+  where its conservative bias (never over-rejecting) is an acceptable
+  trade-off.
+- **Regression tests**: for both modules, `bootstrap="parametric"` (the
+  default, unchanged) reproduces bit-identical results to before this
+  option existed (`test_multiplier_bootstrap_default_unchanged` in both
+  `pmcprg/tests/test_rosenblatt.py` and `pmcprg/tests/test_exchangeability.py`),
+  plus unit tests for the new option, a wall-clock comparison, and
+  reduced-budget size/power studies with `@pytest.mark.slow` full-grid
+  mirrors — structured exactly like `test_radial_symmetry.py`'s own
+  multiplier-bootstrap section.
+- `ruff check pmcprg` clean; full fast suite (`pytest -q -m "not slow"`,
+  5022 tests) passes.
+
+### Added — survival BB1 and its own 90°/270° rotations, closing FR-8 completely
+
+- **Survival BB1 and its own 90°/270° rotations**, closing FR-8 completely:
+  the audit's own list of families needing 90°/270° rotations named "BB1 de
+  survie" (survival BB1) separately from plain BB1, and it was the one
+  family still missing after the previous round's six one-signed families.
+  `SurvivalBB1` (`pmcprg.copulas.archimedean.survival`) is BB1's 180°
+  rotation — τ unchanged, tail roles swapped (λ_L ↔ λ_U) — and
+  `SurvivalBB190`/`SurvivalBB1270` (`pmcprg.copulas.archimedean.rotated`)
+  are its 90°/270° children, registered as three new `CopulaEnum` entries
+  (bringing the registry to 37). `delta` passes through `SurvivalCopula`
+  unchanged, same as `tau_k` already did; `SurvivalBB1` is the first base
+  family `SurvivalCopula` wraps with a joint `constrain_params`/
+  `constructible_params` constraint (BB1's own `δ < 1/(1 − τ)`), which
+  needed a new generic delegation added to `SurvivalCopula` itself (audit
+  G1, mirroring the fix `RotatedCopula` needed for plain BB1's own
+  rotations). The 180° and 90°/270° identities hold to 10⁻¹⁰–10⁻¹⁶; a
+  numerically verified (not assumed) finding: `SurvivalBB190` and
+  `SurvivalBB1270` are the same copula as `CopulaBB1270`/`CopulaBB190`
+  (plain BB1's own rotations, swapped) at the same (τ, δ) — the dihedral
+  composition 180° ∘ 90° = 270° for an exchangeable base — registered as
+  their own families regardless, per the audit's own list. Reference file
+  extended by pure addition (9 new entries, 0 changed bytes in the 161
+  pre-existing ones).
+
+## [1.1.0] - 2026-09-17
+
+### Highlights
+
+- **Five new copula families**: three extreme-value families with a closed
+  or quadrature-based τ (Galambos, Hüsler–Reiss, t-EV) and the two
+  two-parameter Tawn variants (types 1/2, asymmetry ψ) — bringing the
+  registry to 34 entries.
+- **90°/270° rotations for all six one-signed families** (Clayton, GH, Joe,
+  BB1, A12, A14): negative dependence is now representable everywhere the
+  audit asked for it, through one generic mechanism
+  (`pmcprg.copulas.archimedean.rotated`) rather than per-family code.
+- **Three new goodness-of-fit / screening tests**: radial symmetry (with a
+  20.7× faster multiplier-bootstrap option), a Rosenblatt-transform test,
+  and an exchangeability test — `pmcprg.diagnostics`.
+- **Standard errors of a copula parameter *inside* ICE**, the audit's
+  three ranked options, all implemented: Oakes' (1999) observed
+  information, Godambe's (2005) IFM correction for re-estimated margins,
+  and Lystig & Hughes' (2002) exact joint information over the prior and
+  every pair's copula.
+- Two research-library norms reinforced by this batch: every new formula
+  was re-derived and checked against an independent high-precision
+  reference rather than transcribed (three formulas given in early task
+  briefs for this release turned out to be wrong, and were caught this
+  way); every new Monte-Carlo test seeds itself deterministically
+  (`zlib.crc32`, never Python's salted `hash()`).
+
+(Detailed entries below are unchanged from the development log.)
+
+### Added — 90°/270° rotations of A12 and A14, closing FR-8 for all six families (FR-8, last round)
+
+- **A12 and A14 did not expose the kernel interface** either; both were
+  refactored first, as BB1 was, with **every public value unchanged bit for
+  bit**: `pdf`, `cdf`, `cdf_array`, `pdf_array`, `logpdf_array`,
+  `conditional_cdf` and `sample` compared byte for byte with the pre-refactor
+  modules on 3 725 points (grid down to 10⁻³⁰⁰ and 1 − 2.2·10⁻¹⁶) at 9 τ per
+  family, 0 mismatches. The 132 existing tests selected by `-k "A12 or A14"`
+  across 11 files (`test_copula_limits.py`, `test_palier1_*`,
+  `test_scientific.py`, `test_pdf_array.py`, …) give the same results
+  before and after. **Kernel coordinates:** A14's is `log u`, like GH's and
+  BB1's (its generator `(t^{−1/θ} − 1)^θ` is a function of `log t` alone).
+  A12's is the **pair** `(log u, log(1 − u))`: its generator `(1/t − 1)^θ`
+  and every formula of the module use both logarithms separately, the
+  reflection is the swapped pair (exact), and `rotated.py` never looks
+  inside a kernel coordinate. A scalar `log((1 − u)/u)` would have worked
+  too, but only by recomputing `log u` differently from the existing code.
+- **A shared inverse h-function.** In their own transformed coordinate
+  `a` (A12: `(1 − u)/u`; A14: `u^{−1/θ} − 1`), both families have
+  `h(v|u) = (a/t)^{θ−1} ((1 + a)/(1 + t))^p`, p = 2 for A12 and θ + 1 for
+  A14. `_k_inv_h` solves `h = w` by a monotone Newton iteration in
+  `D = log(t/a)` (convex increasing, closed-form upper bounds, as in GH's).
+  It is vectorised and accurate to one ulp of v (h at the returned v
+  brackets w between neighbouring floats, up to τ = 0.97), unlike BB1's
+  Brent loop. The `1 − h` member of `_k_h` uses the matching
+  cancellation-free form `−(θ−1)D − p·log1p(expm1(D)·r)`. The public
+  `inv_h`/`inv_h_array` of the bases are still `CopulaVirt`'s (Brent,
+  ≈2.5·10⁻⁹ in v); `_k_inv_h` only serves the rotations. As a side effect,
+  sampling a rotated A12/A14 is fast (40 000 points in ≈20 ms).
+- **`CopulaA1290`/`CopulaA12270`/`CopulaA1490`/`CopulaA14270`**, the same
+  two-line subclasses as every earlier round, registered as
+  `CopulaEnum.A1290`/`A12270`/`A1490`/`A14270` (IDs 31–34) with
+  `TAU_MIN_MAX = [−1, −1/3]`, the mirror of `[1/3, 1]`. As one-parameter
+  families they need no `fit` override: `CopulaVirt.fit` works on the
+  padded registered range directly.
+- **The first rotated range that does not touch τ = 0**, checked in every
+  range consumer. `constructible_tau_range` pads only the singular end
+  (→ `[−0.99993, −1/3]`); `correct_tau` clips 0.5 or −0.1 to −1/3, not to 0.
+  A `"sweep"` multistart start (τ = 0.5) lands at −1/3 (θ = 1). `"random"`
+  draws fall in `[−13/15, −7/15]`. The selection placeholder pulls τ = 0
+  onto −1/3. On a τ = −0.6 sample (n = 800) the ICE M-step returns −0.592
+  and the Huard evidence is finite. On independent data `fit`/ICE stop at
+  −1/3. All of this worked unchanged. **One check did not generalise:**
+  `pmcprg.copulas.independence_lr_test` recognised independence only at a
+  *lower* range end (`0 ≤ τ_min ≤ 10⁻¹²`). It therefore refused every
+  earlier rotation (`CopulaClayton90`, …, range `[−1, −ε]`) with "does not
+  contain the independence copula", as if it were A12. It now also accepts
+  an upper end in `[−10⁻¹², 0]` (null ½χ²₀ + ½χ²₁, boundary estimate taken
+  at the padded upper end). On `(u, v)` it gives the same statistic and
+  p-value as Clayton's test on `(1 − u, v)`, with a mirrored τ̂; positive
+  families take the unchanged code path. A12/A14 and their rotations are
+  still, correctly, refused.
+- **The generic test sweep assumed it too.** `test_scientific.py` built
+  every family at `clip(0.5, range)`. For Clayton90 … BB1270 that is
+  τ = −ε, so none of the earlier rotations was ever swept away from
+  independence. For the new families it is −1/3, a non-exchangeable θ = 1
+  copula, and `test_kendall_tau_numerical` failed on it (−0.280 for
+  −0.333): its Hoeffding helper used `conditional_cdf(u, v)` as ∂C/∂v,
+  which assumes exchangeability. Negative ranges are now swept at the
+  mirror value −0.5. ∂C/∂v of a rotation comes from its base through the
+  reflection (`1 − h(1−u|v)` at 90°, `h(u|1−v)` at 270°). The quadrature is
+  now Gauss–Legendre on the whole of (0, 1): the former trapezoid on
+  [0.01, 0.99] dropped boundary strips worth +0.07 on every rotation at
+  −0.5, against +0.001 to +0.04 on the positive families. Every registered
+  family is now within 10⁻⁴, and the test's tolerance is 10⁻³ instead of
+  0.05 (its docstring already said 0.02). All 34 families, the eight
+  earlier rotations now at τ = −0.5, pass the whole file, slow tests
+  included (normalisation, PDF–CDF consistency, Fréchet bounds, realised
+  τ).
+- **Correctness.** On a 25×25 grid at τ ∈ {−1/3, −0.4, −0.6, −0.9}, the
+  VineCopula identities `C90(u,v) = v − C(1−u,v)` / `C270(u,v) = u − C(u,1−v)`
+  hold to 2.2·10⁻¹⁶. log c matches the base at the reflected point to
+  2.8·10⁻¹⁴, `h90(v|u) = h(v|1−u)` / `h270(v|u) = 1 − h(1−v|u)` hold to
+  7·10⁻¹⁵, and `inv_h` round-trips to 9·10⁻¹⁵. τ_rot = −τ_base to < 10⁻⁴,
+  checked by Gauss–Legendre quadrature of `1 − 4∫∫ ∂C/∂u ∂C/∂v` (measured
+  < 5·10⁻⁶). `test_copula_limits.py` covers the four families at
+  τ ∈ {−0.4, −0.7, −0.9} (the base's decimal CDF reflected, no
+  independence cases since −1/3 is not independence). The reference file
+  was extended by **pure addition**: 12 new entries (+456 lines, 0 removed),
+  the 140 existing ones byte-identical, all new rows converged, 2.8 s
+  incremental computation.
+- **`fit` recovery** (n = 3 000, `method='tau'` / `'mle'`): at
+  τ = −0.35/−0.5/−0.7/−0.9, A1290 gives −0.355/−0.353, −0.497/−0.498,
+  −0.704/−0.701, −0.898/−0.898, and A14270 −0.351/−0.350, −0.482/−0.488,
+  −0.696/−0.691, −0.898/−0.899; all 32 fits are within 0.03.
+  `fit_best` picks the correct rotation at τ = −0.4 (n = 1 500, both
+  directions, both families).
+- **Tail signature, measured.** Both bases have tail dependence in both
+  diagonal corners, so both rotations populate both anti-diagonal corners,
+  as BB1's do. For A12, `λ_L − λ_U = 2^{−1/θ} + 2^{1/θ} − 2 ≥ 0` at every θ,
+  so A1290's lower-right corner never loses to its upper-left one. At
+  corner side 0.05 and 40 000 points, the two corners weigh 0.0271 vs
+  0.0056 at τ = −0.35 and 0.0379 vs 0.0323 at −0.7, reaching parity at
+  −0.9 (ratio 1.02). For A14, `λ_L = 1/2` is crossed by `λ_U = 2 − 2^{1/θ}`
+  at θ = 1/log₂1.5 (τ ≈ 0.547), and **A14's dominant rotated corner flips**
+  there. A1490 has 0.0267 vs 0.0061 (lower-right first) at τ = −0.35 but
+  0.0318 vs 0.0358 (upper-left first) at −0.7; at 200 000 points and
+  τ = −0.8, the upper-left/lower-right ratio is ≈1.17. The 270° rotations
+  mirror each case, and the diagonal corners stay empty (< 0.002).
+- **Exchangeability** (FR-10 sanity check): at τ = −0.36 and −0.45
+  (n = 1 000, B = 100, 5 replicates each), 38 of the 40 replicates across
+  the four families reject at 5 % (all 20 at −0.36). At τ = −0.8, where the
+  two corners balance, the power drops (1–5 of 5 per family). The test file
+  asserts rejection on 3 replicates per family at τ = −0.4.
+- **Tests.** New `pmcprg/tests/test_rotated_a12_a14.py` (277 tests, ≈15 s,
+  identical under two `PYTHONHASHSEED` values; seeds are literals or
+  `zlib.crc32`). `test_copula_limits.py` extended with the four families.
+  `test_copulas.py::test_available_count` updated 30 → 34.
+  `test_pdf_array.py` gives the four families an explicit τ = −0.5 (its
+  generic branch would pick −0.4, only 0.07 from the interior bound).
+  `test_frank_reachable_tau.py` needed no change (no reachable-τ cap).
+  `test_scientific.py`: see above.
+  **FR-8 is now complete for all six one-signed families** (Clayton, GH,
+  Joe, BB1, A12, A14).
+
+### Added — Monte-Carlo calibration of the outside-ICE standard errors for the six remaining families (FR-4)
+
+- `pmcprg/tests/test_fr4_standard_errors_mc.py` covers the six families the
+  audit's FR-4 "Reste" note still listed: Joe, AMH, FGM, CubSec, A12, A14.
+  Each is simulated at a τ chosen well inside its own registered
+  `TAU_MIN_MAX`, fitted by both `method='mle'` and `method='tau'` (Joe, AMH,
+  FGM, A12, A14; n = R = 400) or both at n = 1000, R = 300 (CubSec, whose
+  range [0, 33/200] is the package's narrowest — n = 400 produced occasional
+  boundary hits there), and `standard_errors()` checked the same way as the
+  six families already covered (Gauss, Clayton, Gumbel, Frank, Plackett,
+  Student): the SE ratio and the 95 % Wald coverage, against the same
+  statistically justified bands.
+- All six calibrate within their bands: Joe 0.962-0.971/0.938-0.943; AMH
+  0.957-0.982/0.948-0.950; FGM 0.942-0.957/0.935-0.945; CubSec
+  1.034-1.056/0.950-0.957; A12 0.982-0.983/0.943-0.950; A14
+  0.976-0.986/0.938-0.938. No bug found in `pmcprg/copulas/_stderr.py`.
+- Joe (independence at τ → 0⁺, like Clayton) additionally checked for the
+  independence LR test's level under H₀: 5.1 % rejection at the 5 % level,
+  54.2 % share of zero statistics, both matching Clayton's ½χ²₀ + ½χ²₁
+  bands. A12 and A14 do not contain the independence copula in their
+  registered range ([1/3, 1)) and are confirmed refused by
+  `independence_lr_test` (`ValueError`) by the pre-existing
+  `test_fr4_standard_errors.py::test_lr_test_refuses_families_without_a_one_parameter_independence`.
+- Closes the audit's "Reste" note for the outside-ICE Monte-Carlo
+  calibration of FR-4: all ten one/two-parameter families with a
+  `standard_errors()` path now have a Monte-Carlo coverage study.
+
 ### Added — Lystig & Hughes' exact observed information of an ICE fit, the third FR-4 option (FR-4)
 
 - **`ice_lh_information(model, Y)`** (new module `pmcprg.pmc._lystig_hughes`)

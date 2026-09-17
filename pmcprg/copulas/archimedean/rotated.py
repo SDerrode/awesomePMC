@@ -1,5 +1,7 @@
 """
-90°/270°-rotation copulas (audit FR-8, Clayton pilot).
+90°/270°-rotation copulas (audit FR-8: Clayton, GH, Joe, BB1, A12, A14, and
+BB1's own 180°/survival rotation — ``SurvivalBB190``/``SurvivalBB1270``,
+closing round, section near the bottom of this file).
 
 Given a base copula C with density c and h-function h(v|u) = ∂C/∂u:
 
@@ -81,10 +83,34 @@ implementation, not a compromise on the mechanism here. Because BB1 carries
 a second parameter (``delta``), it also needed :meth:`RotatedCopula.
 constrain_params`/:meth:`RotatedCopula.constructible_params` overrides
 (below) that Clayton/GH/Joe's rotations never needed (their base classes'
-versions are the identity). A12 and A14 remain explicitly out of scope this
-round — they do not yet expose the kernel interface either, and were not
-touched (see the module docstring of ``survival.py``, which stopped at the
-same three families for the same reason).
+versions are the identity).
+
+``CopulaA1290``/``CopulaA12270``/``CopulaA1490``/``CopulaA14270`` (FR-8,
+last round) close FR-8 for all six one-signed families. A12 and A14 did not
+expose the kernel interface either, and were refactored the same way as BB1
+(public values unchanged bit for bit): A14's kernel coordinate is ``log u``
+(GH/BB1's), while A12's is the *pair* ``(log u, log(1 − u))``, since its
+generator ``(1/t − 1)^θ`` needs both logarithms separately — this module
+never looks inside a kernel coordinate, so a tuple is as good as a float
+here (module docstring of ``a12.py``). Both families' h-functions share
+the shape ``(a/t)^{θ−1}((1 + a)/(1 + t))^p`` in their transformed
+coordinate ``a``, so their ``_k_inv_h`` is one monotone Newton iteration
+with closed-form bounds (vectorised, ulp-accurate), not BB1's Brent loop.
+Their registered range ``[−1, −1/3]`` is the mirror of ``[1/3, 1]``: the
+first rotated range whose inner end is *not* independence, which the
+range-generic machinery (``constructible_tau_range``, ``correct_tau``,
+multistart family draws, the Huard grid, the selection placeholder)
+handles unchanged — see ``test_rotated_a12_a14.py``; the one range check
+that did not generalise was ``independence_lr_test``, which recognised
+independence only at a *lower* range end and so refused the older
+rotations (range ``[−1, −ε]``) as if they lacked it, like A12. (In the
+tests, ``test_scientific.py``'s generic sweep clipped τ = +0.5 into each
+range, so it had only ever checked the earlier rotations at τ = −ε; it now
+sweeps negative ranges at −0.5.) A12 and A14 have
+tail dependence in both diagonal corners (A12: λ_L = 2^{−1/θ},
+λ_U = 2 − 2^{1/θ}; A14: λ_L = 1/2, λ_U = 2 − 2^{1/θ}), so, like BB1's,
+their rotations populate both anti-diagonal corners; for A14 the dominant
+one changes with τ (section comment below).
 
 Reference: Brechmann, E. C. & Schepsmeier, U. (2013). *Journal of Statistical
 Software* 52(3); Joe, H. (2014). *Dependence Modeling with Copulas*, Chapman
@@ -100,10 +126,13 @@ import numpy as np
 
 from pmcprg.copulas._base               import CopulaVirt
 from pmcprg.copulas._fit                import FitResult
+from pmcprg.copulas.archimedean.a12     import CopulaA12
+from pmcprg.copulas.archimedean.a14     import CopulaA14
 from pmcprg.copulas.archimedean.bb1     import CopulaBB1
 from pmcprg.copulas.archimedean.clayton import CopulaClayton
 from pmcprg.copulas.archimedean.gumbel  import CopulaGH
 from pmcprg.copulas.archimedean.joe     import CopulaJoe
+from pmcprg.copulas.archimedean.survival import SurvivalBB1
 from pmcprg.numerics                 import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
@@ -493,6 +522,153 @@ class CopulaBB1270(RotatedCopula270):
                          converged=base_fit.converged)
 
 
+# ---------------------------------------------------------------------------
+# Concrete rotated copulas — A12 and A14 (FR-8, last round)
+# ---------------------------------------------------------------------------
+#
+# Both needed the kernel interface added first (``a12.py``/``a14.py``, this
+# round), then take the same two-line subclass as every family above. They
+# are one-parameter families: the inherited ``constrain_params``/
+# ``constructible_params`` delegation is the identity for them, and the
+# generic ``CopulaVirt.fit`` (bounded search on the padded registered range
+# ``[−1, −1/3]``) needs no override, unlike BB1's.
+#
+# Tail dependence of the bases is two-sided — A12: λ_L = 2^{−1/θ} ≥ 1/2,
+# λ_U = 2 − 2^{1/θ}; A14: λ_L = 1/2 at every θ, λ_U = 2 − 2^{1/θ} — so the
+# lower (0,0) mass goes to (1,0) under 90° and to (0,1) under 270°, and the
+# upper (1,1) mass to (0,1) and (1,0) respectively. For A12,
+# λ_L − λ_U = 2^{−1/θ} + 2^{1/θ} − 2 ≥ 0 at every θ, so A1290's lower-right
+# corner never loses to its upper-left one: measured on 40 000 points (corner
+# side 0.05), 0.0271 vs 0.0056 at τ = −0.35, 0.0379 vs 0.0323 at −0.7, near
+# parity at −0.9 (both tails → 1). For A14, λ_L = 1/2 is crossed by λ_U at
+# θ = 1/log₂1.5 ≈ 1.71 (τ ≈ 0.547), and the dominant corner flips with it:
+# A1490 has 0.0267 vs 0.0061 (lower-right first) at τ = −0.35 but 0.0318 vs
+# 0.0358 (upper-left first) at τ = −0.7. The 270° rotations mirror each
+# case. ``test_rotated_a12_a14.py`` measures these instead of assuming them.
+
+class CopulaA1290(RotatedCopula90):
+    """90°-rotated A12 copula (Nelsen 4.2.12) — τ ∈ [−1, −1/3], mass in
+    both anti-diagonal corners (section comment above)."""
+    _base_class = CopulaA12
+
+
+class CopulaA12270(RotatedCopula270):
+    """270°-rotated A12 copula — same τ(θ) map as :class:`CopulaA1290`, the
+    corner masses mirrored across the anti-diagonal."""
+    _base_class = CopulaA12
+
+
+class CopulaA1490(RotatedCopula90):
+    """90°-rotated A14 copula (Nelsen 4.2.14) — τ ∈ [−1, −1/3], mass in
+    both anti-diagonal corners (section comment above)."""
+    _base_class = CopulaA14
+
+
+class CopulaA14270(RotatedCopula270):
+    """270°-rotated A14 copula — same τ(θ) map as :class:`CopulaA1490`, the
+    corner masses mirrored across the anti-diagonal."""
+    _base_class = CopulaA14
+
+
+# ---------------------------------------------------------------------------
+# Concrete rotated copulas — survival BB1 (FR-8, closing round)
+# ---------------------------------------------------------------------------
+#
+# The audit's FR-8 list of families needing 90°/270° rotations names "BB1 de
+# survie" (survival BB1) separately from plain BB1 — so, like every base
+# family above, its own 90°/270° children are built here, over
+# ``_base_class = SurvivalBB1`` (``pmcprg.copulas.archimedean.survival``)
+# rather than ``CopulaBB1`` directly. ``SurvivalBB1`` already exposes the
+# kernel interface (inherited unchanged from ``CopulaBB1`` through
+# ``SurvivalCopula``'s ``_kcoord_reflected``/``_k_logpdf``/... delegation),
+# so — like GH/Joe before it — the two-line subclass pattern applies with no
+# further refactor, and the same ``constrain_params``/``constructible_params``
+# joint-constraint delegation this module needed for plain ``CopulaBB190``
+# (module docstring) is already in place one level down, in
+# ``SurvivalCopula`` itself (``survival.py``), so nothing extra is needed
+# here either.
+#
+# A worked-out identity, checked numerically in
+# ``pmcprg/tests/test_survival_bb1.py`` rather than left as an algebraic
+# claim: composing the 180° (survival) and 90°/270° rotations in this order
+# lands back on plain BB1's own 90°/270° rotations, swapped —
+#     SurvivalBB190(u,v)  = v − [(1−u)+v−1+BB1(u,1−v)] = u − BB1(u,1−v) = CopulaBB1270(u,v)
+#     SurvivalBB1270(u,v) = u − [u+(1−v)−1+BB1(1−u,v)] = v − BB1(1−u,v) = CopulaBB190(u,v)
+# (both at the *same* (τ, δ)) — an instance of the dihedral composition rule
+# 180° ∘ 90° = 270° (and 180° ∘ 270° = 90°) for a copula group whose base is
+# exchangeable, which BB1 is (``bb1.py`` module docstring: ``c(u,v) =
+# c(v,u)``). This makes ``SurvivalBB190``/``SurvivalBB1270`` mathematically
+# redundant with the already-registered ``CopulaBB1270``/``CopulaBB190`` —
+# but the audit names "BB1 de survie" as its own family needing both
+# rotations, so both are registered here as their own ``CopulaEnum`` entries
+# (IDs 35-37 with ``SurvivalBB1`` itself) rather than left unimplemented or
+# silently aliased, keeping FR-8's own family list complete and explicit.
+#
+# BB1's own tail asymmetry is two-sided and swapped by the 180° rotation
+# (λ_L(Ŝ) = λ_U(BB1), λ_U(Ŝ) = λ_L(BB1), ``survival.py``'s ``SurvivalBB1``
+# docstring); the 90°/270° reflection then pushes that swapped two-sided
+# mass into the anti-diagonal corners exactly as plain BB190/BB1270's own
+# section comment above describes for BB1's un-swapped asymmetry — the
+# identity above says this is not a coincidence, it is the same corner
+# geometry (``test_survival_bb1.py`` measures it directly rather than
+# assuming the mirror of BB190/BB1270's own numbers applies unchanged).
+
+class SurvivalBB190(RotatedCopula90):
+    """90°-rotated survival BB1 copula (FR-8, closing round) — negative
+    dependence, mass in both anti-diagonal corners, mathematically identical
+    to :class:`CopulaBB1270` at the same (τ, δ) (section comment above)."""
+    _base_class = SurvivalBB1
+
+    @classmethod
+    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+        """Delegate to :meth:`SurvivalBB1.fit` on the ``(1 − u, v)``-reflected
+        data, mirroring :meth:`CopulaBB190.fit` one level up (its docstring's
+        reasoning applies unchanged: the generic two-parameter fit's BB1
+        ``delta`` branch is sign-aware, but reusing the base family's own
+        validated 2-D MLE via the reflection identity is simpler and more
+        robust than exercising that branch's negative-range path directly)."""
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
+        reflected = np.column_stack([1.0 - data[:, 0], data[:, 1]])
+        base_fit = SurvivalBB1.fit(reflected, method=method)
+        tau_k = -base_fit.tau_k
+        cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
+        uv = np.column_stack([1.0 - base_fit.uv[:, 0], base_fit.uv[:, 1]])
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            log_lik = float(np.sum(cop.logpdf_array(uv)))
+        return FitResult(copula=cop, method='mle', tau_k=tau_k,
+                         log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
+                         converged=base_fit.converged)
+
+
+class SurvivalBB1270(RotatedCopula270):
+    """270°-rotated survival BB1 copula — same τ(θ, δ) map as
+    :class:`SurvivalBB190` (both negate the base τ, δ unchanged),
+    mathematically identical to :class:`CopulaBB190` at the same (τ, δ)
+    (section comment above)."""
+    _base_class = SurvivalBB1
+
+    @classmethod
+    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+        """Delegate to :meth:`SurvivalBB1.fit` on the ``(u, 1 − v)``-reflected
+        data, mirroring :meth:`SurvivalBB190.fit` (see its docstring for
+        why)."""
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
+        reflected = np.column_stack([data[:, 0], 1.0 - data[:, 1]])
+        base_fit = SurvivalBB1.fit(reflected, method=method)
+        tau_k = -base_fit.tau_k
+        cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
+        uv = np.column_stack([base_fit.uv[:, 0], 1.0 - base_fit.uv[:, 1]])
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            log_lik = float(np.sum(cop.logpdf_array(uv)))
+        return FitResult(copula=cop, method='mle', tau_k=tau_k,
+                         log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
+                         converged=base_fit.converged)
+
+
 if __name__ == '__main__':
     from pathlib import Path
 
@@ -505,6 +681,12 @@ if __name__ == '__main__':
         (CopulaJoe270,     'CopulaJoe270'),
         (CopulaBB190,      'CopulaBB190'),
         (CopulaBB1270,     'CopulaBB1270'),
+        (CopulaA1290,      'CopulaA1290'),
+        (CopulaA12270,     'CopulaA12270'),
+        (CopulaA1490,      'CopulaA1490'),
+        (CopulaA14270,     'CopulaA14270'),
+        (SurvivalBB190,    'SurvivalBB190'),
+        (SurvivalBB1270,   'SurvivalBB1270'),
     ]:
         cop = cls(tau_k=-0.5)
         print(f'\n--- {name} ---')

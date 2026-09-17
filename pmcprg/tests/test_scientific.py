@@ -39,14 +39,20 @@ def _registered_families() -> list:
             continue
         cls = getattr(importlib.import_module(meta.MODULE), meta.CLASS_NAME)
         tau_min, tau_max = meta.TAU_MIN_MAX
-        tau = float(np.clip(_TARGET_TAU, tau_min, tau_max))
+        # A range entirely on the negative side (the 90°/270° rotations of
+        # FR-8) is swept at the mirror value −0.5. Clipping +0.5 into it used
+        # to land on its end nearest 0 — independence up to ε for
+        # Clayton90 … BB1270, so none of the rotations was checked away from
+        # independence — and, for the A12/A14 rotations (range [−1, −1/3]),
+        # on the non-exchangeable θ = 1 copula, which the Hoeffding helper
+        # below mishandled until it learned the rotation's ∂C/∂v.
+        target = -_TARGET_TAU if tau_max <= 0.0 else _TARGET_TAU
+        tau = float(np.clip(target, tau_min, tau_max))
         # constructible_params (identity for every family without a joint
         # τ/extra-parameter constraint) repairs a clipped τ that lands where
-        # the default extra parameter is inadmissible — BB190/BB1270 (audit
-        # FR-8, BB1 round): clipping 0.5 into their negative range lands at
-        # −EPS, where the default δ = 1.5 needs θ_base > 0 at τ_base ≈ 0,
-        # i.e. δ ≈ 1, exactly the same joint constraint BB1 itself needed
-        # this hook for.
+        # the default extra parameter is inadmissible (BB1's δ = 1.5 needs
+        # τ > 1/3; BB190/BB1270 inherit the constraint with τ negated,
+        # audit FR-8, BB1 round).
         cop_params = cls.constructible_params({"tau_k": tau})
         params.append(pytest.param(cls(**cop_params), id=meta.SHORT_NAME))
     return params
@@ -82,20 +88,38 @@ def _grid_integral(cop, n: int = 80) -> float:
     return float(trapezoid(trapezoid(Z, u, axis=1), u))
 
 
+def _dC_dv(cop, u, v) -> float:
+    """∂C/∂v at (u, v). ``conditional_cdf(u, v)`` is ∂C/∂v only for an
+    exchangeable copula; a 90°/270° rotation (audit FR-8) is not one, and its
+    ∂C/∂v comes from its (exchangeable) base through the reflection:
+    ∂C90/∂v = 1 − h_base(1−u | v), ∂C270/∂v = h_base(u | 1−v)."""
+    from pmcprg.copulas.archimedean.rotated import RotatedCopula90, RotatedCopula270
+    if isinstance(cop, RotatedCopula90):
+        return 1.0 - cop._base.conditional_cdf(1.0 - u, v)
+    if isinstance(cop, RotatedCopula270):
+        return cop._base.conditional_cdf(u, 1.0 - v)
+    return cop.conditional_cdf(u, v)
+
+
 def _kendall_tau_hoeffding(cop, n: int = 50) -> float:
-    """Hoeffding formula: τ = 1 − 4∫∫ h(v|u)·h(u|v) du dv.
+    """Hoeffding formula: τ = 1 − 4∫∫ ∂C/∂u·∂C/∂v du dv.
 
     The integrand is bounded in [0,1] everywhere, making the numerical
-    integration far more accurate than the C·c formula.
-    Note: valid for symmetric copulas C(u,v) = C(v,u), which is the case
-    for all families implemented here.
+    integration far more accurate than the C·c formula. ∂C/∂u is
+    ``conditional_cdf(v, u)``; ∂C/∂v is :func:`_dC_dv`, which differs from
+    ``conditional_cdf(u, v)`` for the non-exchangeable rotated families.
+
+    Gauss–Legendre with ``n`` nodes per axis on the whole of (0, 1). The
+    former trapezoid rule on [0.01, 0.99] dropped the boundary strips: +0.001
+    to +0.04 on the positive families, and +0.07 on every rotation at
+    τ = −0.5, where ∂C/∂u·∂C/∂v is large along the edges (−0.43 instead of
+    −0.5). This rule is within 10⁻⁴ for every registered family.
     """
-    u = np.linspace(0.01, 0.99, n)
-    U, V = np.meshgrid(u, u)
-    Z = np.vectorize(
-        lambda ui, vi: cop.conditional_cdf(vi, ui) * cop.conditional_cdf(ui, vi)
-    )(U, V)
-    return 1.0 - 4.0 * float(trapezoid(trapezoid(Z, u, axis=1), u))
+    x, w = np.polynomial.legendre.leggauss(n)
+    x, w = 0.5 * (x + 1.0), 0.5 * w
+    Z = np.array([[cop.conditional_cdf(vi, ui) * _dC_dv(cop, ui, vi) for vi in x]
+                  for ui in x])
+    return 1.0 - 4.0 * float(w @ Z @ w)
 
 
 def _cdf_mixed_deriv(cop, u, v, h: float = 1e-3) -> float:
@@ -213,10 +237,10 @@ def test_pdf_cdf_consistency(cop):
 
 @pytest.mark.parametrize('cop', _ALL)
 def test_kendall_tau_numerical(cop):
-    """Hoeffding-formula τ matches configured tau_k within 0.02."""
+    """Hoeffding-formula τ matches configured tau_k within 10⁻³."""
     tau_est = _kendall_tau_hoeffding(cop, n=50)
     tau_ref = cop.params['tau_k']
-    assert abs(tau_est - tau_ref) < 0.05, (
+    assert abs(tau_est - tau_ref) < 1e-3, (
         f"tau_k={tau_ref:.3f}, Hoeffding estimate={tau_est:.3f}"
     )
 

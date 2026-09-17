@@ -25,6 +25,23 @@ cannot be computed is now NaN, and a density that underflows is 0.0
 (audit RB-9). Log-space evaluation of Archimedean densities: Hofert,
 Mächler & McNeil (2012), *J. Multivariate Anal.* 110, 133–150,
 doi:10.1016/j.jmva.2012.02.019.
+
+Kernel interface (audit FR-8, A12/A14 round). Every quantity above is a
+function of ``log u`` alone — ``a = u^{−1/θ} − 1 = expm1(−log u/θ)``,
+``1 − u^{1/θ} = −expm1(log u/θ)`` — so A14's natural kernel coordinate is
+``ka = log u``, the same as GH's and BB1's (its generator
+``(t^{−1/θ} − 1)^θ`` is built from ``t`` directly, not from ``1 − t`` as
+Joe's). ``_kcoord_reflected(x) = log1p(−x)`` is the exact log of ``1 − x``
+for the 90°/270° rotation wrapper (``pmcprg.copulas.archimedean.rotated``).
+The refactor only replaces ``np.log(u)`` by ``ka``: every public value is
+unchanged, bit for bit.
+
+In ``a``, h(v|u) = (a/t)^{θ−1} ((1 + a)/(1 + t))^{θ+1} with
+``t = (a^θ + b^θ)^{1/θ}`` and ``1 + a = u^{−1/θ}`` — A12's shape with the
+exponent 2 replaced by θ + 1 (module docstring of ``a12.py``) — so ``_k_h``'s
+``1 − h`` member and ``_k_inv_h`` (monotone Newton, then
+``v = (1 + b)^{−θ}``) reuse A12's two helpers with p = θ + 1. The public
+``inv_h``/``inv_h_array`` remain :class:`CopulaVirt`'s.
 """
 if __name__ == '__main__':
     import sys
@@ -35,37 +52,44 @@ import logging
 import numpy as np
 
 from pmcprg.copulas._base import CopulaVirt
+from pmcprg.copulas.archimedean.a12 import _nelsen_inv_h_logb, _nelsen_logh_nocancel
 from pmcprg.numerics   import EPS, ONE_MINUS_EPS, minmaxEPS
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Log-space kernel shared by every evaluation path
+# Log-space kernel on ka = log u, kb = log v (module docstring) — shared by
+# every evaluation path, including the rotation wrapper's kernel interface.
 # ---------------------------------------------------------------------------
 
-def _a14_logu(u, th):
+def _a14_loga(ka, th):
+    """``log a`` with ``a = u^{−1/θ} − 1 = U^{1/θ}``, from ``ka = log u``."""
+    return np.log(np.expm1(-ka / th))
+
+
+def _a14_logu(ka, th):
     """``log U`` with ``U = (u^{−1/θ} − 1)^θ``, without forming ``U``."""
-    return th * np.log(np.expm1(-np.log(u) / th))
+    return th * np.log(np.expm1(-ka / th))
 
 
-def _a14_terms(u, v, th):
-    """``(log U1, log U2, log S, S^{1/θ})`` for arrays or numpy scalars."""
-    log_u1 = _a14_logu(u, th)
-    log_u2 = _a14_logu(v, th)
+def _a14_terms(ka, kb, th):
+    """``(log U1, log U2, log S, S^{1/θ})`` from ``ka = log u``, ``kb = log v``."""
+    log_u1 = _a14_logu(ka, th)
+    log_u2 = _a14_logu(kb, th)
     log_s  = np.logaddexp(log_u1, log_u2)
     s1t    = np.exp(log_s / th)
     return log_u1, log_u2, log_s, s1t
 
 
-def _a14_logpdf(u, v, th):
-    """log c(u, v) on arrays (or numpy scalars) already clipped to (0, 1).
+def _a14_logpdf(ka, kb, th):
+    """log c(u, v) from ``ka = log u``, ``kb = log v``.
 
     c = U1 U2 S^{1/θ−2} (1 + S^{1/θ})^{−2−θ} (θ − 1 + 2θ S^{1/θ})
         / [θ u v (1 − u^{1/θ})(1 − v^{1/θ})],
     with ``log(1 − u^{1/θ}) = log(−expm1(log u / θ))`` — stable as u → 1.
     """
-    log_u1, log_u2, log_s, s1t = _a14_terms(u, v, th)
+    log_u1, log_u2, log_s, s1t = _a14_terms(ka, kb, th)
     with np.errstate(divide='ignore'):
         # θ − 1 + 2θ S^{1/θ}: at θ = 1 the constant vanishes and the term is
         # 2 S^{1/θ}; logaddexp(−inf, x) = x handles that boundary exactly.
@@ -75,27 +99,50 @@ def _a14_logpdf(u, v, th):
             + (1.0 / th - 2.0) * log_s
             - (2.0 + th) * np.log1p(s1t)
             + log_last
-            - np.log(th) - np.log(u) - np.log(v)
-            - np.log(-np.expm1(np.log(u) / th))
-            - np.log(-np.expm1(np.log(v) / th)))
+            - np.log(th) - ka - kb
+            - np.log(-np.expm1(ka / th))
+            - np.log(-np.expm1(kb / th)))
 
 
-def _a14_cdf(u, v, th):
-    """C = (1 + S^{1/θ})^{−θ} = exp(−θ log1p(S^{1/θ}))."""
-    _, _, _, s1t = _a14_terms(u, v, th)
-    return np.exp(-th * np.log1p(s1t))
+def _a14_cdf(ka, kb, th):
+    """``(C, 1 − C)``: C = (1 + S^{1/θ})^{−θ} = exp(−θ log1p(S^{1/θ}))."""
+    _, _, _, s1t = _a14_terms(ka, kb, th)
+    e = -th * np.log1p(s1t)
+    return np.exp(e), -np.expm1(e)
 
 
-def _a14_h(v, u, th):
-    """h(v|u) = (1+S^{1/θ})^{−θ−1} · S^{1/θ−1} · (u^{−1/θ}−1)^{θ−1} · u^{−1/θ−1}.
+def _a14_h(kb, ka, th):
+    """``(h, 1 − h)`` of h(v|u) = (1+S^{1/θ})^{−θ−1} · S^{1/θ−1} · (u^{−1/θ}−1)^{θ−1} · u^{−1/θ−1}.
 
     ``(u^{−1/θ} − 1)^{θ−1} = U1^{(θ−1)/θ}``, so everything is in log space.
+    h is that textbook product (unchanged, so the public
+    :meth:`CopulaA14.conditional_cdf` keeps its values bit for bit); 1 − h
+    comes from the cancellation-free form shared with A12
+    (:func:`pmcprg.copulas.archimedean.a12._nelsen_logh_nocancel`) with
+    ``a = u^{−1/θ} − 1``, ``r = a/(1 + a) = 1 − u^{1/θ}`` (``log(1 + a) =
+    −log u/θ`` exactly) and p = θ + 1.
     """
-    log_u1, _, log_s, s1t = _a14_terms(u, v, th)
-    return np.exp(-(th + 1.0) * np.log1p(s1t)
-                  + (1.0 / th - 1.0) * log_s
-                  + ((th - 1.0) / th) * log_u1
-                  - (1.0 / th + 1.0) * np.log(u))
+    log_u1, _, log_s, s1t = _a14_terms(ka, kb, th)
+    logh = (-(th + 1.0) * np.log1p(s1t)
+            + (1.0 / th - 1.0) * log_s
+            + ((th - 1.0) / th) * log_u1
+            - (1.0 / th + 1.0) * ka)
+    la = _a14_loga(ka, th)
+    logh_nc = _nelsen_logh_nocancel(la, _a14_loga(kb, th), la + ka / th, th, th + 1.0)
+    return np.exp(logh), -np.expm1(logh_nc)
+
+
+def _a14_inv_h(lw, ka, th):
+    """``(v, 1 − v)`` solving h(v|u) = w, from ``lw = log w`` and ``ka = log u``.
+
+    Monotone Newton (:func:`pmcprg.copulas.archimedean.a12._nelsen_inv_h_logb`)
+    for ``log b``, b = v^{−1/θ} − 1; then ``log v = −θ·log(1 + b)``, and
+    ``1 − v = −expm1(log v)`` without forming the complement.
+    """
+    la = _a14_loga(ka, th)
+    lb = _nelsen_inv_h_logb(lw, la, la + ka / th, th, th + 1.0)
+    lv = -th * np.logaddexp(0.0, lb)
+    return np.exp(lv), -np.expm1(lv)
 
 
 class CopulaA14(CopulaVirt):
@@ -111,18 +158,51 @@ class CopulaA14(CopulaVirt):
         # silently realised τ = 0.539 when asked for 0.6.
         self.theta = 1.0 / (1.0 - self.params['tau_k']) - 0.5
 
+    # ------------------------------------------------------------------
+    # Kernel interface (audit FR-8) — consumed by the 90°/270° rotation
+    # wrapper in ``pmcprg.copulas.archimedean.rotated``. The kernel
+    # coordinate of a point x is log x (module docstring), as for GH/BB1:
+    # ``_kcoord_reflected(x)`` computes it for 1 − x, i.e. log1p(−x).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _kcoord(x):
+        return np.log(x)
+
+    @staticmethod
+    def _kcoord_reflected(x):
+        return np.log1p(-x)
+
+    def _k_logpdf(self, ka, kb):
+        return _a14_logpdf(ka, kb, self.theta)
+
+    def _k_cdf(self, ka, kb):
+        return _a14_cdf(ka, kb, self.theta)
+
+    def _k_h(self, kb, ka):
+        return _a14_h(kb, ka, self.theta)
+
+    def _k_inv_h(self, lw, ka):
+        return _a14_inv_h(lw, ka, self.theta)
+
+    # ------------------------------------------------------------------
+    # Public API — built from the kernel interface above
+    # ------------------------------------------------------------------
+
     def pdf(self, uv):
         """c(u, v) = exp(log c), see :func:`_a14_logpdf`; 0.0 only on underflow."""
         u0 = minmaxEPS(uv[0])
         u1 = minmaxEPS(uv[1])
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return float(np.exp(_a14_logpdf(np.float64(u0), np.float64(u1), self.theta)))
+            return float(np.exp(self._k_logpdf(self._kcoord(np.float64(u0)),
+                                               self._kcoord(np.float64(u1)))))
 
     def cdf(self, uv):
         u0 = minmaxEPS(uv[0])
         u1 = minmaxEPS(uv[1])
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return float(np.clip(_a14_cdf(np.float64(u0), np.float64(u1), self.theta), 0.0, 1.0))
+            c, _ = self._k_cdf(self._kcoord(np.float64(u0)), self._kcoord(np.float64(u1)))
+            return float(np.clip(c, 0.0, 1.0))
 
     def cdf_array(self, uv: np.ndarray) -> np.ndarray:
         """Vectorised closed-form CDF (A14 has no statsmodels backend)."""
@@ -130,7 +210,8 @@ class CopulaA14(CopulaVirt):
         u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
         v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return np.clip(_a14_cdf(u, v, self.theta), 0.0, 1.0)
+            c, _ = self._k_cdf(self._kcoord(u), self._kcoord(v))
+            return np.clip(c, 0.0, 1.0)
 
     def pdf_array(self, uv: np.ndarray) -> np.ndarray:
         """Vectorised closed-form PDF, ``exp`` of :meth:`logpdf_array`."""
@@ -149,14 +230,15 @@ class CopulaA14(CopulaVirt):
         u  = np.clip(uv[:, 0], EPS, ONE_MINUS_EPS)
         v  = np.clip(uv[:, 1], EPS, ONE_MINUS_EPS)
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return _a14_logpdf(u, v, self.theta)
+            return self._k_logpdf(self._kcoord(u), self._kcoord(v))
 
     def conditional_cdf(self, v: float, u: float) -> float:
         """h(v|u) = (1+S^{1/θ})^{−θ−1} · S^{1/θ−1} · (u^{−1/θ}−1)^{θ−1} · u^{−1/θ−1}."""
         u = minmaxEPS(u)
         v = minmaxEPS(v)
         with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
-            return float(np.clip(_a14_h(np.float64(v), np.float64(u), self.theta), 0.0, 1.0))
+            h, _ = self._k_h(self._kcoord(np.float64(v)), self._kcoord(np.float64(u)))
+            return float(np.clip(h, 0.0, 1.0))
 
     def tail_dependence(self) -> tuple[float, float]:
         """A14: λ_L = 1/2 for every θ, λ_U = 2 − 2^{1/θ} (Nelsen 2006, family 4.2.14).
@@ -166,7 +248,9 @@ class CopulaA14(CopulaVirt):
         """
         return 0.5, float(2.0 - 2.0 ** (1.0 / self.theta))
 
-    # Numerical majorant (inherited from CopulaVirt)
+    # Numerical majorant and the public inv_h/inv_h_array (Brent on
+    # conditional_cdf) are inherited from CopulaVirt, unchanged by the
+    # kernel refactor; ``_k_inv_h`` serves the rotations only.
 
 
 if __name__ == '__main__':

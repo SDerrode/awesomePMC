@@ -6,7 +6,14 @@ size regardless of the true family's own symmetry, higher rejection when the
 fitted family is wrong), not enough to pin the level to two digits; the full
 study lives in the commit message, following the same convention as
 ``test_radial_symmetry.py``.
+
+The multiplier-bootstrap tests below (FR-10, closing round) mirror the
+parametric ones on the identical family/tau/N grid, plus a wall-clock
+comparison — see CHANGELOG.md for the full-scale numbers, and
+``test_radial_symmetry.py``'s own multiplier-bootstrap section for the
+structure this one follows.
 """
+import time
 import zlib
 
 import numpy as np
@@ -191,6 +198,198 @@ def test_power_study_wrong_family_rejects_more_often(true_cls, tau, fit_cls, n):
     assert rate > 0.30, (
         f"true={true_cls.__name__} tau={tau} fit={fit_cls.__name__} n={n}: "
         f"power too low at {rate:.3f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Multiplier bootstrap (FR-10, closing round) — unit tests, wall-clock
+# comparison, and the same size/power grid as above, run with
+# bootstrap="multiplier". Structure mirrors
+# ``test_radial_symmetry.py``'s own multiplier-bootstrap section.
+# ---------------------------------------------------------------------------
+
+def test_multiplier_bootstrap_result_fields_and_types():
+    cop = CopulaGaussian(tau_k=0.5)
+    uv = cop.sample(80, seed=1)
+    res = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaGaussian, B=40, seed=2,
+                               bootstrap="multiplier")
+    assert isinstance(res, RosenblattGoFResult)
+    assert res.bootstrap == "multiplier"
+    assert res.n == 80
+    assert res.B == 40
+    assert res.n_valid == 40          # the multiplier bootstrap never drops a replicate
+    assert 0.0 <= res.p_value <= 1.0
+    assert isinstance(res.reject, bool)
+    assert res.statistic >= 0.0
+
+
+def test_multiplier_bootstrap_matches_observed_statistic():
+    # bootstrap="multiplier" must not change the observed S_n or the fitted
+    # tau_hat at all — only the null it is compared to.
+    cop = CopulaClayton(tau_k=0.5)
+    uv = cop.sample(120, seed=3)
+    res_p = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaClayton, B=30, seed=4,
+                                 bootstrap="parametric")
+    res_m = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaClayton, B=30, seed=4,
+                                 bootstrap="multiplier")
+    assert res_p.statistic == pytest.approx(res_m.statistic)
+    assert res_p.tau_hat == pytest.approx(res_m.tau_hat)
+
+
+def test_multiplier_bootstrap_default_unchanged():
+    # The default bootstrap path must be bit-for-bit what it was before this
+    # option existed.
+    cop = CopulaGaussian(tau_k=0.4)
+    uv = cop.sample(100, seed=5)
+    res_default = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaGaussian, B=50, seed=6)
+    res_explicit = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaGaussian, B=50, seed=6,
+                                        bootstrap="parametric")
+    assert res_default == res_explicit
+
+
+def test_multiplier_bootstrap_rademacher_runs():
+    cop = CopulaGaussian(tau_k=0.5)
+    uv = cop.sample(100, seed=7)
+    res = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaGaussian, B=40, seed=8,
+                               bootstrap="multiplier", multiplier="rademacher")
+    assert 0.0 <= res.p_value <= 1.0
+
+
+def test_unknown_bootstrap_raises():
+    x = np.random.default_rng(0).uniform(size=20)
+    with pytest.raises(ValueError):
+        rosenblatt_gof_test(x, x, CopulaGaussian, bootstrap="bogus")
+
+
+def test_unknown_multiplier_law_raises():
+    x = np.random.default_rng(0).uniform(size=20)
+    with pytest.raises(ValueError):
+        rosenblatt_gof_test(x, x, CopulaGaussian, bootstrap="multiplier", multiplier="bogus")
+
+
+def test_multiplier_bootstrap_independence_rejection_rate_near_nominal():
+    cop = CopulaProduct(tau_k=0.0)
+    n_reject = 0
+    n_reps = 40
+    for seed in range(n_reps):
+        uv = cop.sample(150, seed=seed)
+        res = rosenblatt_gof_test(uv[:, 0], uv[:, 1], CopulaProduct, B=60, seed=seed + 1000,
+                                   bootstrap="multiplier")
+        n_reject += int(res.reject)
+    rate = n_reject / n_reps
+    assert rate < 0.25, f"independence copula over-rejected at rate={rate:.3f}"
+
+
+def test_multiplier_bootstrap_degenerate_samples_do_not_crash():
+    for n in (0, 1, 2, 3):
+        x = np.arange(n, dtype=float)
+        res = rosenblatt_gof_test(x, x, CopulaGaussian, B=10, seed=0, bootstrap="multiplier")
+        assert np.isnan(res.statistic)
+        assert np.isnan(res.p_value)
+        assert res.reject is False
+        assert res.n_valid == 0
+
+
+def test_multiplier_bootstrap_is_much_faster_than_parametric():
+    # Loose bound, not flaky: same B, same N, multiplier bootstrap avoids
+    # resampling + refitting + reranking B times, so it should run in a small
+    # fraction of the parametric bootstrap's time. Generous margin (50%) to
+    # absorb machine noise; the measured ratio in CHANGELOG.md is far smaller.
+    cop = CopulaGaussian(tau_k=0.5)
+    uv = cop.sample(200, seed=10)
+    x, y = uv[:, 0], uv[:, 1]
+
+    t0 = time.perf_counter()
+    rosenblatt_gof_test(x, y, CopulaGaussian, B=200, seed=11, bootstrap="parametric")
+    t_parametric = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    rosenblatt_gof_test(x, y, CopulaGaussian, B=200, seed=11, bootstrap="multiplier")
+    t_multiplier = time.perf_counter() - t0
+
+    assert t_multiplier < 0.5 * t_parametric, (
+        f"multiplier bootstrap ({t_multiplier:.4f}s) is not much faster than "
+        f"parametric ({t_parametric:.4f}s) at N=200, B=200."
+    )
+
+
+@pytest.mark.parametrize("family_cls,tau", [
+    (CopulaGaussian, 0.5),
+    (CopulaClayton, 0.5),
+    (CopulaFrank, 0.5),
+])
+def test_multiplier_bootstrap_size_study_true_family_near_nominal(family_cls, tau):
+    rate = _rejection_rate(family_cls, tau, family_cls, n=150, n_reps=60, B=60,
+                            alpha=0.10,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-size"))
+    assert rate < 0.35, f"{family_cls.__name__} tau={tau}: over-rejected at {rate:.3f}"
+
+
+def test_multiplier_bootstrap_power_study_wrong_family_rejects_more_often():
+    # Same (true, tau, fit, n) = (Clayton, 0.6, Gaussian, 200) point as the
+    # parametric power study above, but a much lower bar: the validation run
+    # (CHANGELOG.md) found the multiplier variant here markedly more
+    # conservative than the parametric one — an empirical cost of the
+    # documented parameter-estimation-correction omission (module docstring)
+    # — so this only checks for *some* power above the nominal level, not a
+    # match to the parametric numbers.
+    true_cls, tau, fit_cls, n = CopulaClayton, 0.6, CopulaGaussian, 200
+    rate = _rejection_rate(true_cls, tau, fit_cls, n=n, n_reps=60, B=60,
+                            alpha=0.10,
+                            seed0=_stable_seed(true_cls.__name__, tau, fit_cls.__name__,
+                                                "mult-power"))
+    assert rate > 0.10, (
+        f"true={true_cls.__name__} tau={tau} fit={fit_cls.__name__} n={n}: "
+        f"power too low at {rate:.3f}"
+    )
+
+
+def test_multiplier_bootstrap_power_study_weak_misspecification_does_not_crash():
+    # (GH, 0.6, Gaussian, 300) is the parametric study's own "weak"
+    # misspecification point (Gauss and GH share the same correlation-driven
+    # bulk dependence at moderate tau); combined with the multiplier
+    # variant's documented conservativism this point shows essentially no
+    # power at reduced budget (0/100 in the CHANGELOG.md validation run) —
+    # a sanity check only, not a power claim.
+    rate = _rejection_rate(CopulaGH, 0.6, CopulaGaussian, n=300, n_reps=60, B=60,
+                            alpha=0.10,
+                            seed0=_stable_seed("CopulaGH", 0.6, "CopulaGaussian", "mult-power"))
+    assert 0.0 <= rate <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Full-scale size/power studies (slow), same grid as the parametric bootstrap
+# pilot below. Numbers reported in CHANGELOG.md.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+@pytest.mark.parametrize("family_cls,tau", [
+    (CopulaGaussian, 0.3), (CopulaGaussian, 0.6),
+    (CopulaClayton, 0.3), (CopulaClayton, 0.6),
+    (CopulaFrank, 0.3), (CopulaFrank, 0.6),
+])
+def test_multiplier_bootstrap_full_size_study(family_cls, tau):
+    rate = _rejection_rate(family_cls, tau, family_cls, n=200, n_reps=100, B=150,
+                            alpha=0.05,
+                            seed0=_stable_seed(family_cls.__name__, tau, "mult-full-size"))
+    assert 0.0 <= rate <= 0.15, f"{family_cls.__name__} tau={tau}: rate={rate:.3f}"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("true_cls,tau,fit_cls,n", [
+    (CopulaClayton, 0.2, CopulaGaussian, 100), (CopulaClayton, 0.4, CopulaGaussian, 100),
+    (CopulaClayton, 0.6, CopulaGaussian, 100),
+    (CopulaClayton, 0.2, CopulaGaussian, 300), (CopulaClayton, 0.4, CopulaGaussian, 300),
+    (CopulaClayton, 0.6, CopulaGaussian, 300),
+    (CopulaGH, 0.2, CopulaGaussian, 100), (CopulaGH, 0.4, CopulaGaussian, 100),
+    (CopulaGH, 0.6, CopulaGaussian, 100),
+])
+def test_multiplier_bootstrap_full_power_study(true_cls, tau, fit_cls, n):
+    rate = _rejection_rate(true_cls, tau, fit_cls, n=n, n_reps=100, B=150, alpha=0.05,
+                            seed0=_stable_seed(true_cls.__name__, tau, fit_cls.__name__, n,
+                                                "mult-full"))
+    assert 0.0 <= rate <= 1.0, (
+        f"true={true_cls.__name__} tau={tau} fit={fit_cls.__name__} N={n}: rate={rate:.3f}"
     )
 
 

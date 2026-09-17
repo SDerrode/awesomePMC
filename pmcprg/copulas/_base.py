@@ -148,6 +148,21 @@ class CopulaEnum(CopulaDataMixin, Enum):
     TAWN1            = 28, "Tawn1",  "Tawn type 1",                    "CopulaTawn1",   True, ["tau_k", "psi"],   [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.tawn"
     TAWN2            = 29, "Tawn2",  "Tawn type 2",                    "CopulaTawn2",   True, ["tau_k", "psi"],   [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.tawn"
     TEV              = 30, "tEV",    "t extreme-value (t-EV)",         "CopulaTEV",     True, ["tau_k", "nu"],    [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.t_ev"
+    # FR-8, last round: mirror images of A12/A14's [1/3, 1] — the first
+    # rotated ranges that do not touch τ = 0 (independence is not a member).
+    A1290            = 31, "A1290",  "Archimedean12 (90° rotation)",   "CopulaA1290",   True, ["tau_k"],          [-1.0, -1.0 / 3.0],         "pmcprg.copulas.archimedean.rotated"
+    A12270           = 32, "A12270", "Archimedean12 (270° rotation)",  "CopulaA12270",  True, ["tau_k"],          [-1.0, -1.0 / 3.0],         "pmcprg.copulas.archimedean.rotated"
+    A1490            = 33, "A1490",  "Archimedean14 (90° rotation)",   "CopulaA1490",   True, ["tau_k"],          [-1.0, -1.0 / 3.0],         "pmcprg.copulas.archimedean.rotated"
+    A14270           = 34, "A14270", "Archimedean14 (270° rotation)",  "CopulaA14270",  True, ["tau_k"],          [-1.0, -1.0 / 3.0],         "pmcprg.copulas.archimedean.rotated"
+    # FR-8, closing round: the audit's own family list also names "BB1 de
+    # survie" (survival BB1) — the 180° rotation of BB1, missing until now —
+    # and its 90°/270° children. τ is unchanged by a 180° rotation, so
+    # SURVIVAL_BB1's range mirrors BB1's own [0+ε, 1); the two rotations then
+    # mirror BB190/BB1270's own [-1, -ε] exactly like every other 90°/270°
+    # pair here.
+    SURVIVAL_BB1     = 35, "SBB1",    "Survival BB1 (Joe-Clayton)",         "SurvivalBB1",    True, ["tau_k", "delta"], [0.0 + EPS, 1.0],   "pmcprg.copulas.archimedean.survival"
+    SURVIVAL_BB190   = 36, "SBB190",  "Survival BB1 (90° rotation)",        "SurvivalBB190",  True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],  "pmcprg.copulas.archimedean.rotated"
+    SURVIVAL_BB1270  = 37, "SBB1270", "Survival BB1 (270° rotation)",       "SurvivalBB1270", True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],  "pmcprg.copulas.archimedean.rotated"
 
     def describe(self):
         return self.name, self.value

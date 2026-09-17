@@ -99,7 +99,10 @@ def test_available_count():
     # + BB190 + BB1270 (FR-8, third round) = 27
     # + Tawn1 + Tawn2 (FR-9, round 3) = 29
     # + tEV (FR-9, last round) = 30
-    assert len(CopulaEnum.available()) == 30
+    # + A1290 + A12270 + A1490 + A14270 (FR-8, last round) = 34
+    # + SurvivalBB1 + SurvivalBB190 + SurvivalBB1270 (FR-8, closing round,
+    #   the audit's own "BB1 de survie") = 37
+    assert len(CopulaEnum.available()) == 37
 
 
 def test_cubsec_long_name_english():

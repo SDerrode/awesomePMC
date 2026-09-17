@@ -8,7 +8,35 @@ Given a base copula C, its survival copula is:
     (λ_L, λ_U)  of Ĉ = (λ_U, λ_L) of C   [tail roles swap]
     τ_K is preserved (concordance invariant under (u,v)→(1−u,1−v)).
 
-Concrete subclasses: SurvivalClayton, SurvivalGH, SurvivalJoe.
+Concrete subclasses: SurvivalClayton, SurvivalGH, SurvivalJoe, SurvivalBB1
+(FR-8, last round — the audit's own list of families needing 90°/270°
+rotations also named "BB1 de survie", the 180° rotation of BB1, which this
+module had not built yet even though its three one-parameter siblings were
+already here).
+
+SurvivalBB1's second parameter (``delta``) needs no special-casing in
+:meth:`SurvivalCopula._update_params`: it already copies the *whole*
+``self.params`` dict onto the base copula (``self._base.params =
+self.params``), not a hand-picked subset keyed on ``tau_k`` alone — unlike
+:class:`pmcprg.copulas.archimedean.rotated.RotatedCopula`, which negates
+``tau_k`` and so has to rebuild the dict field by field. ``delta`` rides
+along for free, exactly as ``tau_k`` already did for the three one-parameter
+survivals.  What *is* new — BB1 is the first base family passed to
+:class:`SurvivalCopula` whose ``constrain_params``/``constructible_params``
+are not the identity (``δ < 1/(1 − τ)``, module docstring of ``bb1.py``) —
+is the delegation added below: :meth:`SurvivalCopula.constrain_params` and
+:meth:`SurvivalCopula.constructible_params` now forward to
+``_base_class``'s own hooks unchanged (no sign flip: a 180° rotation leaves
+τ's sign alone, unlike the 90°/270° case), so a multistart draw or a bounded
+optimiser fitting ``SurvivalBB1`` sees the same admissible set as fitting
+``CopulaBB1`` directly. Clayton/GH/Joe's own hooks are the identity, so
+nothing changes for them (dict round-trips to the same values).
+
+τ_K is unchanged under this 180° rotation (module docstring above), so
+``SurvivalBB1.TAU_MIN_MAX`` mirrors ``CopulaBB1``'s own registered range
+``[0 + ε, 1)`` bit for bit — exactly as ``SurvivalClayton``'s range mirrors
+``CopulaClayton``'s ``[0 + ε, 1)`` rather than negating it (verified against
+the registry in ``pmcprg/copulas/_base.py``, not assumed).
 
 Reference: Nelsen, R. B. (2006). *An Introduction to Copulas*, 2nd ed.,
 Springer, ch. 2 (survival copulas, Ĉ(u,v) = u + v − 1 + C(1−u, 1−v)).
@@ -53,7 +81,8 @@ if __name__ == '__main__':
 import logging
 import numpy as np
 
-from pmcprg.copulas._base                   import CopulaVirt
+from pmcprg.copulas._base                   import CopulaVirt, FitResult
+from pmcprg.copulas.archimedean.bb1         import CopulaBB1
 from pmcprg.copulas.archimedean.clayton     import CopulaClayton
 from pmcprg.copulas.archimedean.gumbel      import CopulaGH
 from pmcprg.copulas.archimedean.joe         import CopulaJoe
@@ -93,6 +122,79 @@ class SurvivalCopula(CopulaVirt):
         self._base._update_params()
         if hasattr(self._base, 'theta'):
             self.theta = self._base.theta
+        if hasattr(self._base, 'delta'):
+            self.delta = self._base.delta
+
+    # ------------------------------------------------------------------
+    # Kernel interface (audit FR-8, closing round) — lets a SurvivalCopula
+    # itself serve as the ``_base_class`` of a 90°/270° rotation
+    # (``pmcprg.copulas.archimedean.rotated.RotatedCopula``), the way
+    # ``SurvivalBB1`` does for ``SurvivalBB190``/``SurvivalBB1270``. Own
+    # natural kernel coordinate of x: since Ŝ(u,v) = u+v−1+C(1−u,1−v), Ŝ's
+    # own coordinate of x is C's coordinate of (1−x) — exactly ``_base``'s
+    # own ``_kcoord_reflected``/``_kcoord`` with the two swapped (kS(x) =
+    # kC(1−x), kS(1−x) = kC(x)).
+    # ------------------------------------------------------------------
+    def _kcoord(self, x):
+        return self._base._kcoord_reflected(x)
+
+    def _kcoord_reflected(self, x):
+        return self._base._kcoord(x)
+
+    def _k_logpdf(self, ka, kb):
+        """ĉ(a,b) = c(1−a,1−b): with ka = kS(a) = kC(1−a) (kb likewise),
+        this is exactly ``_base``'s own ``_k_logpdf`` at the same (ka, kb) —
+        no further transform, same substitution as :meth:`_logpdf`."""
+        return self._base._k_logpdf(ka, kb)
+
+    def _k_cdf(self, ka, kb):
+        """(Ŝ(a,b), 1 − Ŝ(a,b)) from ka = kC(1−a), kb = kC(1−b): a and b are
+        recovered from ka, kb via ``expm1`` (exact — ``exp(ka) = 1 − a``
+        already, ``expm1`` only sharpens it near a = 0), then combined with
+        the base's C/complement at the same (ka, kb) by the same
+        branch-on-C trick as :meth:`_cdf`."""
+        a = -np.expm1(ka)
+        b = -np.expm1(kb)
+        c, cbar = self._base._k_cdf(ka, kb)
+        with np.errstate(over='ignore', invalid='ignore'):
+            out = np.where(c <= 0.5, (a - (1.0 - b)) + c, (a + b) - cbar)
+        out = np.clip(out, 0.0, 1.0)
+        return out, 1.0 - out
+
+    def _k_h(self, kb, ka):
+        """(ĥ(b|a), 1 − ĥ(b|a)): ĥ(v|u) = 1 − h_C(1−v|1−u) (module
+        docstring) — the base's own ``_k_h`` at the same (kb, ka), its two
+        members swapped."""
+        h, hbar = self._base._k_h(kb, ka)
+        return hbar, h
+
+    def _k_inv_h(self, lw, ka):
+        """(b, 1 − b) solving ĥ(b|a) = w, from lw = log w: ĥ(v|u) = w ⟺
+        h_C(1−v|1−u) = 1 − w (:meth:`inv_h`'s own derivation), so this is
+        the base's own ``_k_inv_h`` at ``log(1 − w) = log1p(−w)`` and the
+        same ``ka``, its two members swapped."""
+        w = np.exp(lw)
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            b_val, bbar_val = self._base._k_inv_h(np.log1p(-w), ka)
+        return bbar_val, b_val
+
+    # ------------------------------------------------------------------
+    # Joint-constraint delegation (audit G1, first needed by SurvivalBB1 —
+    # BB1 is the first base family here with more than τ alone). No sign
+    # flip is needed, unlike ``RotatedCopula``'s own version of this hook:
+    # the 180° rotation leaves τ's sign unchanged (module docstring), so the
+    # base's admissible set *is* the survival family's admissible set,
+    # params passed through as-is. For Clayton/GH/Joe, whose base
+    # ``constrain_params``/``constructible_params`` are :class:`CopulaVirt`'s
+    # identity, this changes nothing (the dict comes back unchanged).
+    # ------------------------------------------------------------------
+    @classmethod
+    def constrain_params(cls, params: dict) -> dict:
+        return cls._base_class.constrain_params(params)
+
+    @classmethod
+    def constructible_params(cls, params: dict) -> dict:
+        return cls._base_class.constructible_params(params)
 
     @staticmethod
     def _columns(uv):
@@ -208,6 +310,65 @@ class SurvivalJoe(SurvivalCopula):
     _base_class = CopulaJoe
 
 
+class SurvivalBB1(SurvivalCopula):
+    """Survival BB1 copula (FR-8, last round) — tail roles swapped, still
+    two-sided.
+
+    Base: BB1 (λ_L Clayton-like, λ_U Gumbel-like) → rotation swaps the two:
+    λ_L(Ŝ) = λ_U(BB1) = 2 − 2^{1/δ}, λ_U(Ŝ) = λ_L(BB1) = 2^{−1/(θδ)}
+    (:meth:`SurvivalCopula.tail_dependence`). BB1 is exchangeable
+    (``c(u,v) = c(v,u)``, module docstring of ``bb1.py``), and survival
+    preserves exchangeability (the reflection ``(u,v) → (1−u,1−v)`` is itself
+    symmetric in ``u``/``v``): ``SurvivalBB1`` is exchangeable too — unlike
+    its own 90°/270° rotations below, which are not (module docstring of
+    ``rotated.py``).
+
+    ``delta`` (δ ≥ 1) passes through :meth:`SurvivalCopula._update_params`
+    unchanged, same as every other parameter; τ is unchanged by the 180°
+    rotation (module docstring), so ``TAU_MIN_MAX`` mirrors ``CopulaBB1``'s
+    own ``[0 + ε, 1)`` bit for bit, and ``constrain_params``/
+    ``constructible_params`` delegate to ``CopulaBB1``'s joint ``δ <
+    1/(1 − τ)`` hook unchanged (class docstring above).
+    """
+    _base_class = CopulaBB1
+    n_params: int = 2
+
+    @classmethod
+    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+        """Delegate to :meth:`CopulaBB1.fit` on the ``(1 − u, 1 − v)``-
+        reflected data — module docstring: ``(U,V) ~ SurvivalBB1`` iff
+        ``(1−U,1−V) ~ BB1``. τ is *not* negated back (unchanged by a 180°
+        rotation, unlike the 90°/270° case's ``CopulaBB190``/
+        ``CopulaBB1270.fit``, which this mirrors otherwise).
+
+        Needed for the same reason those two override ``fit``: BB1's own
+        ``fit`` always uses MLE regardless of ``method`` (τ alone cannot
+        identify ``delta``, module docstring of ``bb1.py``) — the generic
+        ``CopulaVirt.fit(method='tau')`` this class would otherwise inherit
+        does not, and builds the final copula at the *default* δ = 1.5
+        without projecting it through :meth:`constructible_params` first, so
+        it can raise past the family's own admissible set (found in
+        practice: δ = 1.5 is inadmissible at any τ ≤ 1/3, the same
+        BB1-specific gap ``CopulaBB1.constrain_params``'s own docstring
+        describes). Reusing BB1's own validated fit via the reflection
+        identity sidesteps it entirely, exactly as it does for the
+        90°/270° rotations.
+        """
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
+        reflected = 1.0 - data
+        base_fit = CopulaBB1.fit(reflected, method=method)
+        tau_k = base_fit.tau_k
+        cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
+        uv = 1.0 - base_fit.uv
+        with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+            log_lik = float(np.sum(cop.logpdf_array(uv)))
+        return FitResult(copula=cop, method='mle', tau_k=tau_k,
+                         log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
+                         converged=base_fit.converged)
+
+
 # ---------------------------------------------------------------------------
 # Quick smoke test / demo
 # ---------------------------------------------------------------------------
@@ -219,8 +380,10 @@ if __name__ == '__main__':
         (SurvivalClayton, 'SurvivalClayton'),
         (SurvivalGH,      'SurvivalGH'),
         (SurvivalJoe,     'SurvivalJoe'),
+        (SurvivalBB1,     'SurvivalBB1'),
     ]:
-        cop = cls(tau_k=0.5)
+        kwargs = {'tau_k': 0.5, 'delta': 1.5} if cls is SurvivalBB1 else {'tau_k': 0.5}
+        cop = cls(**kwargs)
         lam_L, lam_U = cop.tail_dependence()
         print(f'\n--- {name} ---')
         print(f'tau_k    : {cop.params["tau_k"]:.4f}  range={cop.tau_range}')

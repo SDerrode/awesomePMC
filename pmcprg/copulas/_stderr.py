@@ -729,7 +729,9 @@ def independence_lr_test(family, uv, weights=None) -> IndependenceLRTest:
     * Independence **inside** the family (Gaussian, Frank, FGM, AMH,
       Plackett): LR → χ²₁.
     * Independence at an **end** of the parameter space (Clayton, Gumbel, Joe,
-      their survival versions, Cubic Section — τ ≥ 0 only): the restricted
+      their survival versions, Cubic Section — τ ≥ 0 only — and the
+      90°/270° rotations of FR-8 whose range ends at τ = −ε, e.g.
+      ``CopulaClayton90`` — τ ≤ 0 only): the restricted
       maximiser sits on the boundary about half of the time under H₀, and
       LR → ½χ²₀ + ½χ²₁ (Self & Liang 1987): ``p = ½ P(χ²₁ ≥ LR)`` for
       LR > 0, ``p = 1`` for LR = 0.
@@ -749,7 +751,8 @@ def independence_lr_test(family, uv, weights=None) -> IndependenceLRTest:
 
     Raises
     ------
-    ValueError when the family does not contain independence (A12, A14), has
+    ValueError when the family does not contain independence (A12, A14 and
+    their rotations, whose ranges stop at ±1/3), has
     no free parameter (Product) or has two parameters.
     """
     from scipy.optimize import minimize_scalar
@@ -766,10 +769,16 @@ def independence_lr_test(family, uv, weights=None) -> IndependenceLRTest:
     a, b = (float(t) for t in entry.value.TAU_MIN_MAX)
     if b - a < 1e-8:
         raise ValueError(f"{cls.__name__} has no free parameter.")
+    # ``end``: the independence end of a one-sided range. The negative
+    # mirror (FR-8 rotations, range [−1, −ε]) used to fall through to the
+    # "does not contain independence" error below, as if it were A12's.
+    end = None
     if a < 0.0 < b:
         boundary = False
     elif 0.0 <= a <= 1e-12:
-        boundary = True
+        boundary, end = True, "lo"
+    elif -1e-12 <= b <= 0.0:
+        boundary, end = True, "hi"
     else:
         raise ValueError(f"{cls.__name__} does not contain the independence copula "
                          f"(τ-range [{a:.4g}, {b:.4g}]).")
@@ -791,9 +800,10 @@ def independence_lr_test(family, uv, weights=None) -> IndependenceLRTest:
     res = minimize_scalar(neg, bounds=(lo, hi), method="bounded")
     tau_hat, ll_hat = entry.reachable_tau(float(res.x)), loglik(float(res.x))
     if boundary:
-        ll_lo = loglik(lo)
-        if not np.isfinite(ll_hat) or (np.isfinite(ll_lo) and ll_lo > ll_hat):
-            tau_hat, ll_hat = lo, ll_lo
+        tau_end = lo if end == "lo" else hi
+        ll_end = loglik(tau_end)
+        if not np.isfinite(ll_hat) or (np.isfinite(ll_end) and ll_end > ll_hat):
+            tau_hat, ll_hat = tau_end, ll_end
     if not np.isfinite(ll_hat):
         raise ValueError(f"{cls.__name__}: the pseudo-likelihood is not finite at any τ "
                          "the search evaluated.")
