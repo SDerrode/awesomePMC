@@ -29,7 +29,17 @@ theta rather than the opposite way), so one pair of conventions serves both:
   handed to :func:`invert_tau`, so the Brent bracket is a plain interval
   search, not a closed-form inversion.
 
-Kept deliberately small: this is a two-family case, and both families'
+A third piece was added for Tawn (FR-9, round 3):
+:func:`tau_from_A_terms_gl`, a *vectorised* composite Gauss-Legendre rule on a
+mesh graded towards an arbitrary ridge centre and towards both ends. Tawn's
+ridge sits at ``t* = psi_v/(psi_u + psi_v)``, not at 1/2, and its two-parameter
+fit and multistart repair invert tau(theta, psi) far more often than a
+one-parameter family: ``quad`` above costs 3-7 ms per tau there (and with only
+the +/- 5/param breakpoints is off by 4e-9 relative at theta >= 1e3 against a
+40-digit ``mpmath`` reference), the graded rule 0.2 ms at <= 1e-10 (see that
+function). Galambos and Hüsler–Reiss keep ``quad``, unchanged.
+
+Kept deliberately small: this is a few-family case, and the families'
 closed-form A(t), A'(t), A''(t) differ enough (Galambos: a power-mean
 kernel of t^{-theta}, (1-t)^{-theta}; Hüsler–Reiss: the standard normal CDF
 and PDF) that forcing them into a shared ``_A_terms`` would only obscure
@@ -100,6 +110,56 @@ def tau_from_A_terms(A_terms: ATerms, param: float, *,
     points = sorted({p for p in (0.5 - eps, 0.5, 0.5 + eps) if 0.0 < p < 1.0})
     val, _ = quad(integrand, 0.0, 1.0, points=points, limit=quad_limit)
     return float(np.clip(val, 0.0, 1.0))
+
+
+def graded_mesh(center: float, width: float, *, n_decades: int = 12) -> np.ndarray:
+    """Breakpoints on [0, 1] for :func:`tau_from_A_terms_gl`.
+
+    ``center +/- width·3^k`` (k = 0, 1, … while ``width·3^k < 1``) resolve a
+    ridge of scale ``width`` around ``center``; ``10^-k`` and ``1 − 10^-k``
+    (k = 1 … ``n_decades``) resolve the algebraic end behaviour of the
+    integrand (``t^(theta−1)``-type for Tawn near theta = 1.5, where a uniform
+    rule converges slowly).
+    """
+    pts = {0.0, 1.0, float(center)}
+    for k in range(1, n_decades + 1):
+        pts.add(10.0 ** -k)
+        pts.add(1.0 - 10.0 ** -k)
+    step = float(width)
+    while step < 1.0:
+        pts.add(center - step)
+        pts.add(center + step)
+        step *= 3.0
+    return np.array(sorted(p for p in pts if 0.0 <= p <= 1.0))
+
+
+_GL_NODES: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def tau_from_A_terms_gl(A_terms: ATerms, param: float, *, center: float, width: float,
+                        n_nodes: int = 16, n_decades: int = 12) -> float:
+    """Kendall's tau by a composite ``n_nodes``-point Gauss-Legendre rule on
+    :func:`graded_mesh` — one vectorised call of ``A_terms`` (which must accept
+    arrays).
+
+    ``width`` is the ridge scale of A'' (Tawn: ``t*(1 − t*)/theta``). Checked
+    for Tawn against a 60-digit ``mpmath`` quadrature (A'' by finite
+    differences of A, not the closed form), theta from 1 + 1e-6 to 1e6 and
+    psi from 0.01 to 1: relative error <= 3e-13 for theta <= 50, <= 1e-10 at
+    theta = 1e6 (where the double-precision integrand itself limits it); see
+    ``pmcprg/tests/test_tawn.py``. ``param <= 0`` is not special-cased: the
+    caller handles its own independence end.
+    """
+    nodes = _GL_NODES.get(n_nodes)
+    if nodes is None:
+        nodes = _GL_NODES[n_nodes] = np.polynomial.legendre.leggauss(n_nodes)
+    x, w = nodes
+    b = graded_mesh(center, width, n_decades=n_decades)
+    lo, hi = b[:-1, None], b[1:, None]
+    t = (0.5 * (hi - lo) * x + 0.5 * (hi + lo)).ravel()
+    wt = (0.5 * (hi - lo) * w).ravel()
+    A, _, App = A_terms(t, float(param))
+    return float(np.clip(np.dot(wt, t * (1.0 - t) * App / A), 0.0, 1.0))
 
 
 def invert_tau(tau_from_param: Callable[[float], float], tau_target: float,

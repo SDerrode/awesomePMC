@@ -9,6 +9,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Tawn extreme-value copulas, types 1 and 2 (FR-9, round 3)
+
+- **`CopulaTawn1`/`CopulaTawn2`** (`pmcprg/copulas/extreme_value/tawn.py`,
+  `CopulaEnum.TAWN1`/`TAWN2`, IDs 28–29, `TAU_MIN_MAX = [EPS, 1.0]`,
+  parameters `tau_k` and `psi`): the two two-parameter restrictions of
+  Tawn's (1988) asymmetric logistic model
+  `ℓ(w, z) = (1 − ψ_u)w + (1 − ψ_v)z + ((ψ_u w)^θ + (ψ_v z)^θ)^{1/θ}`,
+  `w = −ln u`, `z = −ln v` — type 1 fixes ψ_u = 1 (ψ = ψ_v free), type 2
+  fixes ψ_v = 1, as VineCopula's families 104/204 do (assignment from
+  VineCopula's C code, which parametrises A by the *v*-share of w + z;
+  recalled, not re-read — no network). The two types are exact transposes,
+  `C₂(u, v) = C₁(v, u)`, so a reader of the other convention only swaps the
+  names. The full three-parameter model and t-EV stay out of scope.
+- **Formulas re-derived, not transcribed.** The brief's Pickands function is
+  only meaningful once `t` is tied to a margin (the literature ties it both
+  ways); the module names each weight by the margin it multiplies. Bounds
+  `max(t, 1 − t) ≤ A ≤ 1`, `A(0) = A(1) = 1` and convexity follow by hand
+  from the ℓ^θ-norm sitting between the ℓ^∞- and ℓ¹-norms, and were checked
+  at 1000 random 40-digit `mpmath` points (no violation). ℓ_w, ℓ_z, ℓ_wz,
+  h = C·ℓ_w/u and c = C(ℓ_wℓ_z − ℓ_wz)/(uv) are sums of non-negative terms,
+  evaluated in log space (softplus/`expm1`, no power formed). Against an
+  independent `mpmath` ground truth (C from ℓ; h and c by 60–960-digit
+  central differences in (w, z)) on 3072 points — u, v ∈ {10⁻¹², 10⁻⁶, 0.01,
+  0.3, 0.5, 0.9, 1 − 10⁻⁶, 1 − 10⁻¹²}, ψ ∈ {0.02, 0.1, 0.5, 0.9, 0.999, 1},
+  τ/ψ ∈ {10⁻⁶, 0.05, 0.5, 0.95}, both types — the largest relative errors
+  are 4.3·10⁻¹⁴ (pdf), 3.8·10⁻¹⁴ (cdf) and 1.5·10⁻¹³ (h). (A first
+  version lost 5·10⁻¹⁴ nat where y ≫ x by adding y to −N; ``x + y − N`` is
+  now formed on the side of the larger of x, y.)
+- **The reachable τ is capped at ψ.** As θ → ∞ the model tends to the
+  Marshall–Olkin copula, whose τ is ψ_uψ_v/(ψ_u + ψ_v − ψ_uψ_v) — ψ for both
+  types (derived by hand from the Stieltjes form of Genest & MacKay's
+  identity; `mpmath` at θ = 10⁵: τ = 0.3999984 for ψ = 0.4). (τ, ψ) is
+  therefore jointly constrained, like BB1's (τ, δ): the constructor refuses
+  τ ≥ ψ; θ ∈ (1, 10⁶], a τ in [τ(10⁶, ψ), ψ) builds at the cap and stores the
+  τ it realises (RB-10). `constructible_params` moves only ψ of a refused
+  pair, to the middle `(1 + τ)/2` of the admissible interval (τ, 1] — not
+  "just inside" as BB1 does, because Tawn's refused end is the *singular*
+  Marshall–Olkin limit — or to 1 (Gumbel) within ≈ 10⁻⁶ of τ = 1.
+  Jittered starts (jitter 0.1/0.25/0.5, 60 seeds), family draws with Tawn
+  candidates and the selection placeholder all build.
+- **ψ = 1 is Gumbel–Hougaard, to machine precision.** It uses Gumbel's
+  closed-form τ ↔ θ map, so θ is `CopulaGH`'s bit for bit; cdf values are
+  identical, h agrees to 2·10⁻¹³, ln c to rounding — Tawn's value is within
+  8·10⁻¹⁵ nat of `mpmath` where `CopulaGH`'s own is up to 8.6·10⁻¹³ nat off
+  (τ = 0.99, diagonal: its `(1 − 2θ)·ln A` term amplifies rounding by 199).
+- **Kendall's τ by a graded Gauss–Legendre rule** (`tau_from_A_terms_gl`,
+  new in `_pickands.py`; Galambos/Hüsler–Reiss keep `quad`, unchanged): a
+  vectorised composite 16-point rule on a mesh graded towards the ridge
+  t* = ψ_v/(ψ_u + ψ_v) at scale t*(1 − t*)/θ and towards both ends. `quad`
+  with the Galambos breakpoints was 4·10⁻⁹ off at θ ≥ 10³ (Gumbel included)
+  and cost 3–7 ms per τ; the graded rule costs 0.2 ms and is within
+  3·10⁻¹³ (θ ≤ 50) and 10⁻¹⁰ (θ = 10⁶) of a 60-digit `mpmath` quadrature
+  whose A'' is a finite difference of A, θ ∈ [1 + 10⁻⁶, 10⁶], ψ ∈ [0.01, 1].
+  θ(τ) is a Brent search on ln(θ − 1) (1–2.5 ms per construction). A
+  Monte-Carlo Kendall's τ on 4 × 200 000 pairs agrees within 7·10⁻⁴ at
+  (θ, ψ) = (1.5, 0.3), (3, 0.6), (50, 0.5), both types.
+- **Joint MLE in its own coordinates.** `_two_parameter_spec` gets an
+  explicit `psi` branch (the generic (τ, extra) box would have projected
+  onto τ < ψ and created flat directions, RB-8): the box is
+  (ln(θ − 1), ψ) ∈ [ln 10⁻⁶, ln(1/(1 − τ_hi) − 1)] × [0.01, 1], every point
+  of which is a Tawn copula; a memo hands the constructor back the θ that
+  produced each τ. `EXTRA_PARAM_BOUNDS_BY_PARAM["psi"] = (0.01, 1.0, 1.0)`
+  (init = the Gumbel member, admissible at every τ). `fit(method='tau')`
+  cannot identify ψ and falls back to MLE with a warning (BB1's precedent).
+  Recovery at n = 3000, 20 replicates per point, both types: τ̂ RMSE ≤ 0.010
+  everywhere; ψ̂ RMSE 0.009–0.020 at (τ, ψ) = (0.2, 0.3), (0.4, 0.6),
+  (0.7, 0.8), 0.012 at ψ = 1 (τ = 0.5), but **ψ is weakly identified at
+  small τ or near symmetry**: RMSE 0.07–0.08 at (0.1, 0.3) (ψ̂ from 0.20
+  to 0.50) and 0.05–0.06 at (0.3, 0.9). All 240 fits converged. The box is
+  run twice (a restart with fresh curvature memory): the likelihood is a
+  narrow curved ridge in (ln(θ − 1), ψ), and from contrived starts a single
+  L-BFGS-B pass stopped short on 3 of 50 (5 data sets × 5 start τ, both
+  types), once by 131 nat; with the restart all 50 reach the same optimum.
+- **Asymmetry is visible.** C₁(u, v) ≤ C₁(v, u) for u < v (strictly away
+  from θ = 1, ψ = 1; θ → ∞ limit (1 − ψ)z > 0 by hand). The FR-10
+  exchangeability test (n = 500, B = 100, 40 replicates) rejects 40/40 at
+  (τ, ψ) = (0.3, 0.35), 17/40 at (0.1, 0.15), 13/40 at (0.2, 0.5), 3/40 at
+  (0.4, 0.9), and 1/40 at ψ = 1 (Gumbel, exchangeable).
+- **`h⁻¹`** by vectorised bisection on logit v (68 halvings), so `sample`
+  draws 20 000 pairs in 0.16 s.
+- **Tests**: `pmcprg/tests/test_tawn.py` (≈ 290 cases, 6 s; integer seeds
+  only). `test_copula_limits.py` gains both types (12 (θ, ψ) entries,
+  ψ ∈ {0.001, 0.05, 0.5, 0.35, 0.9, 0.97}, ψ carried in the file's `delta`
+  slot), regenerated **incrementally** — 456 lines added, none removed;
+  every pre-existing entry is byte-for-byte unchanged. Family count 27 → 29
+  (`test_copulas.py`); Tawn joins Galambos/Hüsler–Reiss among the families
+  with their own `reachable_tau_bounds` (`test_frank_reachable_tau.py`).
+  Standard errors (`standard_errors`, Oakes/Godambe) are not implemented
+  for Tawn and say so (`NotImplementedError`, as for any unsupported
+  two-parameter family).
+
 ### Added — 90°/270° rotations of BB1, the kernel-interface prerequisite included (FR-8, third round)
 
 - **BB1 did not expose the kernel interface** (`_kcoord`, `_kcoord_reflected`,

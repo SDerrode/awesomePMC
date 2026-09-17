@@ -76,7 +76,7 @@ i   = 0
 j   = 0
 name = "Gauss"            # SHORT_NAME from CopulaEnum
 tau  = 0.7
-# optional extra params: df = 4.0 (Student), delta = 1.5 (BB1)
+# optional extra params: df = 4.0 (Student), delta = 1.5 (BB1), psi = 1.0 (Tawn1/Tawn2)
 
 Reference
 ---------

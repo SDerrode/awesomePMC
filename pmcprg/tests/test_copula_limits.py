@@ -164,6 +164,20 @@ def _c_husler_reiss(u, v, lam, _):
     return (-neg_log_c).exp()
 
 
+def _tawn(u_fixed):
+    """Tawn type 1 (``u_fixed``: ψ_u = 1, ψ_v = ψ) or type 2 (ψ_u = ψ, ψ_v = 1)
+    CDF, C = exp(−ℓ), ℓ = (1 − ψ_u)w + (1 − ψ_v)z + ((ψ_u w)^θ + (ψ_v z)^θ)^{1/θ}
+    (FR-9, ``pmcprg.copulas.extreme_value.tawn``) — written from the model's
+    definition, not from the module's log-space kernel. The ``δ`` slot of the
+    reference machinery carries ψ for these two families."""
+    def c(u, v, th, psi):
+        pu, pv = (_ONE, psi) if u_fixed else (psi, _ONE)
+        w, z = -u.ln(), -v.ln()
+        n = _pw(_pw(pu * w, th) + _pw(pv * z, th), _ONE / th)
+        return (-((_ONE - pu) * w + (_ONE - pv) * z + n)).exp()
+    return c
+
+
 _REF_C = {
     "Clayton": _c_clayton, "GH": _c_gh, "Joe": _c_joe, "Frank": _c_frank,
     "AMH": _c_amh, "Plackett": _c_plackett, "FGM": _c_fgm, "A12": _c_a12,
@@ -174,6 +188,7 @@ _REF_C = {
     "GH90": _rotated_90(_c_gh), "GH270": _rotated_270(_c_gh),
     "Joe90": _rotated_90(_c_joe), "Joe270": _rotated_270(_c_joe),
     "BB190": _rotated_90(_c_bb1), "BB1270": _rotated_270(_c_bb1),
+    "Tawn1": _tawn(True), "Tawn2": _tawn(False),
 }
 
 
@@ -264,6 +279,7 @@ _TAIL_TAUS = {
     "GH90": (-0.3, -0.7, -0.95), "GH270": (-0.3, -0.7, -0.95),
     "Joe90": (-0.3, -0.7, -0.95), "Joe270": (-0.3, -0.7, -0.95),
     "BB190": (-0.4, -0.7, -0.9), "BB1270": (-0.4, -0.7, -0.9),
+    "Tawn1": (0.3, 0.7, 0.95), "Tawn2": (0.3, 0.7, 0.95),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -276,7 +292,13 @@ _INDEP_TAUS = {
     "Clayton90": (-1e-4, -1e-8, -1e-12), "Clayton270": (-1e-4, -1e-8, -1e-12),
     "GH90": (-1e-4, -1e-8, -1e-12), "GH270": (-1e-4, -1e-8, -1e-12),
     "Joe90": (-1e-4, -1e-8, -1e-12), "Joe270": (-1e-4, -1e-8, -1e-12),
+    "Tawn1": (1e-12, 1e-8, 1e-4), "Tawn2": (1e-12, 1e-8, 1e-4),
 }
+
+# ψ of the Tawn cases (FR-9), per τ: it must exceed τ (the reachable-τ cap).
+# Strong asymmetry close to the cap (τ/ψ = 0.86 and 0.98, large θ), a weak
+# one (0.7, 0.9), and small ψ at the independence end.
+_TAWN_PSI = {0.3: 0.35, 0.7: 0.9, 0.95: 0.97, 1e-12: 1e-3, 1e-8: 0.05, 1e-4: 0.5}
 
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)
 _UV = np.array([(u, v) for u in _G for v in _G])
@@ -289,7 +311,14 @@ def _build(short, tau, df=4.0, delta=1.5):
         kw["df"] = df
     if "delta" in names:
         kw["delta"] = delta
+    if "psi" in names:
+        kw["psi"] = _TAWN_PSI.get(tau, 1.0)
     return _ENTRY[short].klass(**kw)
+
+
+def _second_param(cop):
+    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, else ``None``."""
+    return getattr(cop, "delta", getattr(cop, "psi", None))
 
 
 _CASES = [pytest.param(s, t, id=f"{s}-tau{t:+.2g}")
@@ -355,7 +384,7 @@ def _required_param_keys():
         short, tau = case.values
         if short not in _ELLIPTICAL:
             cop = _build(short, tau)
-            keys.add(_param_key(short, cop.theta, getattr(cop, "delta", None)))
+            keys.add(_param_key(short, cop.theta, _second_param(cop)))
     return keys
 
 
@@ -489,7 +518,7 @@ _REF_CACHE: dict = {}
 
 
 def _reference(short, tau, cop, df):
-    de = getattr(cop, "delta", None)
+    de = _second_param(cop)
     key = (short, float(cop.theta), de, df)
     if key not in _REF_CACHE:
         if short in _ELLIPTICAL:

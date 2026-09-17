@@ -72,11 +72,14 @@ def test_frank_constructible_range_is_the_reachable_range():
 # so τ = 1.0 (a registered bound refused by the constructor, RB-6, but still
 # checked here) reaches only ≈ 1 − 1e-6, not itself. Hüsler-Reiss declares its
 # own for the same reason since FR-9 round 2 (test_husler_reiss.py) — λ capped
-# at 1e6, reaching τ ≈ 1 − 1.13e-6.
+# at 1e6, reaching τ ≈ 1 − 1.13e-6. Tawn types 1/2 likewise since FR-9 round 3
+# (test_tawn.py) — θ capped at 1e6, reaching τ = 1 − 1e-6 at ψ = 1.
 @pytest.mark.parametrize("entry", [e for e in CopulaEnum if e.value.AVAILABLE and e is not FRANK
                                    and e is not CopulaEnum.PLACKETT
                                    and e is not CopulaEnum.GALAMBOS
-                                   and e is not CopulaEnum.HUSLER_REISS],
+                                   and e is not CopulaEnum.HUSLER_REISS
+                                   and e is not CopulaEnum.TAWN1
+                                   and e is not CopulaEnum.TAWN2],
                          ids=lambda e: e.value.SHORT_NAME)
 def test_other_families_are_unchanged(entry):
     assert entry.klass.reachable_tau_abs is None

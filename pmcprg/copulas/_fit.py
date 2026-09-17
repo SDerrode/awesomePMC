@@ -188,6 +188,9 @@ def _two_parameter_spec(cls, entry, tau_start: float):
       identity instead of this routine directly; this sign-awareness is
       still needed here because ICE's M-step
       (``pmcprg.pmc.ice._fit_copula_params``) calls this function directly.
+    * Tawn types 1/2 (``psi``, FR-9): ``p = (ln(θ − 1), ψ)``, a box that is
+      the admissible set, mapped back by the family's τ(θ, ψ); two passes
+      (branch comment below).
     * any other extra parameter: ``p = (τ, extra)`` in the registered boxes,
       projected by ``cls.constrain_params``.
 
@@ -268,6 +271,40 @@ def _two_parameter_spec(cls, entry, tau_start: float):
              [theta_b, log_delta_b]),
         ]
         return p0, stages, params_of
+
+    if name == "psi":
+        # Tawn types 1/2 (FR-9): (τ, ψ) is jointly constrained (τ < ψ), but
+        # every (θ, ψ) with θ > 1, ψ ∈ (0, 1] is a Tawn copula — so optimise
+        # in (ln(θ − 1), ψ), whose box is the admissible set, and map back by
+        # the family's own τ(θ, ψ) quadrature (whose memo hands the
+        # constructor this very θ back, without a Brent re-inversion).
+        # θ ≤ 1/(1 − τ_hi) keeps τ(θ, ψ) ≤ τ(θ, 1) = 1 − 1/θ ≤ τ_hi (τ is
+        # increasing in ψ); ln(θ − 1) ≥ ln 1e-6 keeps τ ≥ ≈ 5e-8 ≫ ε.
+        from pmcprg.copulas.extreme_value.tawn import _tau_of
+        s_b = (math.log(1e-6), math.log(max(1.0 / (1.0 - hi) - 1.0, 1e-5)))
+        psi_b = (xlo, xhi)
+        weights = cls._weights
+        # Start: θ₀ from Gumbel's closed form θ = 1/(1 − τ_start), and
+        # ψ₀ = (1 + τ_start)/2, interior to the admissible ψ-interval (τ, 1].
+        psi0 = clip(0.5 * (1.0 + t0), psi_b)
+        p0 = (clip(math.log(max(1.0 / (1.0 - t0) - 1.0, 1e-6)), s_b), psi0)
+
+        def params_of(p) -> dict:
+            s, psi = clip(p[0], s_b), clip(p[1], psi_b)
+            tau = _tau_of(1.0 + math.exp(s), *weights(psi))
+            return {"tau_k": max(tau, float(tau_min)), "psi": psi}
+
+        # The same box twice: the second stage is a restart with a fresh
+        # curvature memory. The likelihood is a narrow curved ridge in these
+        # coordinates; from a poor start (τ_start far from the data's) the
+        # first pass's line searches bounce off the (θ_max, ψ_min) corner and
+        # can stop short — 3 of 50 contrived starts (5 data sets × 5 starts,
+        # both types), once by 131 nat — while the restart reaches the same
+        # optimum from all 50.
+        stage = (lambda p: [clip(p[0], s_b), clip(p[1], psi_b)],
+                 lambda x: (clip(x[0], s_b), clip(x[1], psi_b)),
+                 [s_b, psi_b])
+        return p0, [stage, stage], params_of
 
     tau_b, extra_b = (lo, hi), (xlo, xhi)
     p0 = (t0, clip(xinit, extra_b))

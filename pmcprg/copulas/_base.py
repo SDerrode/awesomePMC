@@ -31,7 +31,7 @@ _COPULA_KLASS_CACHE: dict = {}
 # OF TRUTH: standalone fitting (``CopulaVirt.fit`` below) reads it directly, and
 # ICE-driven fitting (``pmcprg.pmc.ice.EXTRA_PARAM_BOUNDS``) derives its
 # class-keyed view from this dict + the registry — so the two cannot drift
-# (audit A-2). Currently: BB1 ``delta``, Student ``df``.
+# (audit A-2). Currently: BB1 ``delta``, Student ``df``, Tawn ``psi`` (FR-9).
 #
 # Every bound is itself admissible (audit RB-4/FR-3): the Student copula
 # requires ν > 2 and refuses ν = 2.0, where the former lower bound sat — the
@@ -41,6 +41,11 @@ _COPULA_KLASS_CACHE: dict = {}
 EXTRA_PARAM_BOUNDS_BY_PARAM: dict[str, tuple[float, float, float]] = {
     "delta": (1.0,    10.0,  1.5),
     "df":    (2.001, 100.0,  4.0),
+    # Tawn types 1/2 (FR-9): asymmetry ψ ∈ (0, 1], jointly constrained with τ
+    # (τ < ψ — ``pmcprg.copulas.extreme_value.tawn``). The init 1.0 is the
+    # Gumbel member, admissible at every τ < 1; the lower bound is admissible
+    # for τ < 0.01 only, as BB1's δ = 10 is for τ > 0.9 only.
+    "psi":   (0.01,    1.0,  1.0),
 }
 
 # τ-bound padding for the bounded optimisers (``fit(method='mle')`` here,
@@ -133,6 +138,8 @@ class CopulaEnum(CopulaDataMixin, Enum):
     JOE270           = 25, "Joe270", "Joe (270° rotation)",            "CopulaJoe270",  True, ["tau_k"],        [-1.0, 0.0 - EPS],             "pmcprg.copulas.archimedean.rotated"
     BB190            = 26, "BB190", "BB1 (90° rotation)",              "CopulaBB190",   True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],          "pmcprg.copulas.archimedean.rotated"
     BB1270           = 27, "BB1270", "BB1 (270° rotation)",            "CopulaBB1270",  True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],          "pmcprg.copulas.archimedean.rotated"
+    TAWN1            = 28, "Tawn1",  "Tawn type 1",                    "CopulaTawn1",   True, ["tau_k", "psi"],   [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.tawn"
+    TAWN2            = 29, "Tawn2",  "Tawn type 2",                    "CopulaTawn2",   True, ["tau_k", "psi"],   [0.0 + EPS, 1.0],           "pmcprg.copulas.extreme_value.tawn"
 
     def describe(self):
         return self.name, self.value
