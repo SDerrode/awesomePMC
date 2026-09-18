@@ -46,6 +46,8 @@ import numpy as np
 
 from pmcprg.copulas._base import CopulaEnum
 from pmcprg.pmc.ice import (
+    COPULA_MARGIN_MODES,
+    DEFAULT_COPULA_MARGINS,
     DEFAULT_MARGIN_SELECTION_RULE,
     DEFAULT_MISSING_DRAWS,
     DEFAULT_MISSING_STRATEGY,
@@ -60,6 +62,7 @@ from pmcprg.pmc.ice import (
     _BestIterate          as BestIterate,
     _best_iter            as best_iter_of,
     _DEFAULT_CANDIDATES   as DEFAULT_CANDIDATES,
+    _check_copula_margins as check_copula_margins,
     _check_init_strategy  as check_init_strategy,
     _check_missing_cfg    as check_missing_cfg,
     _evaluate_log_lik     as evaluate_log_lik,
@@ -67,6 +70,7 @@ from pmcprg.pmc.ice import (
     _kmeans_label_assignment as kmeans_label_assignment,
     _m_step               as m_step,
     _perturb_initial_model as perturb_initial_model,
+    _record_copula_margins as record_copula_margins,
     _snapshot_margins     as snapshot_margins,
     _snapshot_prior_p     as snapshot_prior_p,
     _snapshot_tau_family  as snapshot_tau_family,
@@ -807,6 +811,22 @@ def ice_missing_defaults() -> dict:
     }
 
 
+def copula_margin_defaults() -> dict:
+    """ICE and SEM default of the ``copula_margins`` key (AUDIT_COPULES FR-7 a).
+
+    ``"parametric"`` (:data:`DEFAULT_COPULA_MARGINS`) — the historical copula
+    step; ``"empirical"`` is documented at :func:`pmcprg.pmc.ice._parse_ice_cfg`.
+    Merged by ``_parse_ice_cfg`` and ``_parse_sem_cfg`` but kept out of
+    :func:`ice_estim_defaults` / :func:`sem_estim_defaults` for the reason
+    given in :func:`ice_missing_defaults`: those two dicts are the
+    ``test_ice_tab_exposes_every_api_config_key`` contract, and this key has
+    no widget in ``_IceTab`` yet. It is reachable from ``ice_cfg`` /
+    ``sem_cfg`` and from the TOML ``[ice]`` / ``[sem]`` tables, which a GUI
+    round trip preserves (``test_ice_section_round_trip_preserves_keys_without_widgets``).
+    """
+    return {"copula_margins": DEFAULT_COPULA_MARGINS}
+
+
 def sem_missing_defaults() -> dict:
     """SEM defaults of the keys read only when Y has missing observations.
 
@@ -821,6 +841,8 @@ def sem_missing_defaults() -> dict:
 
 __all__ = [
     # constants
+    "COPULA_MARGIN_MODES",
+    "DEFAULT_COPULA_MARGINS",
     "DEGENERATE_MIN_WEIGHT",
     "DEGENERATE_SD_RATIO",
     "DEGENERATE_TAU_EDGE",
@@ -841,6 +863,9 @@ __all__ = [
     "IceResult",
     "IceTrace",
     # config plumbing
+    "check_copula_margins",
+    "copula_margin_defaults",
+    "record_copula_margins",
     "ice_estim_defaults",
     "ice_missing_defaults",
     "sem_estim_defaults",

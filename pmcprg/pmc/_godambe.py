@@ -186,6 +186,21 @@ References
   algorithm. *J. R. Statist. Soc. B* 61(2), 479-482. doi:10.1111/1467-9868.00188
 * Louis, T. A. (1982). Finding the observed information matrix when using
   the EM algorithm. *J. R. Statist. Soc. B* 44(2), 226-233.
+
+Empirical copula margins (``copula_margins = "empirical"``, AUDIT_COPULES FR-7 a)
+-----------------------------------------------------------------------------------
+Everything here is derived for ICE's parametric copula step — pseudo-
+observations built from the model's own F. With ICE's ``copula_margins =
+"empirical"`` the copula parameter solves a posterior-weighted *rank*
+pseudo-likelihood instead (:func:`pmcprg.pmc.ice._empirical_margin_cdfs`),
+whose asymptotic variance carries an extra term from the estimated margins
+(Chen & Fan 2006, doi:10.1016/j.jeconom.2005.03.004) that is not computed
+here, so this would be the standard error of another estimator. ICE and SEM
+record a non-default value in the fitted model's ``[ice]`` / ``[sem]`` table,
+and :func:`ice_godambe_tau_se` raises ``NotImplementedError`` on such a model.
+The IFM correction above is the parametric
+counterpart of that term: D_θη measures how the copula score moves with the
+*parametric* margin parameters, which empirical copula margins no longer use.
 """
 
 from __future__ import annotations
@@ -199,7 +214,12 @@ import numpy as np
 from pmcprg.copulas._base import TAU_PAD_ABS, TAU_PAD_REL
 from pmcprg.copulas._stderr import standard_errors as _naive_standard_errors
 from pmcprg.pmc._oakes import _psi_of_tau, _tau_of_psi
-from pmcprg.pmc.ice import _margin_cdfs, _pair_pseudo_obs, _resolve_candidate
+from pmcprg.pmc.ice import (
+    _margin_cdfs,
+    _pair_pseudo_obs,
+    _refuse_nonparametric_copula_margins,
+    _resolve_candidate,
+)
 from pmcprg.pmc.inference import backward, forward, joint_posteriors, precompute_weights, smooth
 from pmcprg.pmc.model import PMCModel
 
@@ -553,10 +573,13 @@ def ice_godambe_tau_se(
     NotImplementedError : the model's margin structure is not ``"state"``,
         a requested pair's states' margins are not Gaussian, or a
         requested pair's family is not :data:`SUPPORTED_FAMILIES` (this
-        pilot: Gauss only — every other family is out of this audit's scope).
+        pilot: Gauss only — every other family is out of this audit's scope);
+        or the model was fitted with ``copula_margins = "empirical"`` (module
+        docstring, last section).
     """
     if not model.variant.uses_copula:
         raise ValueError(f"Variant {model.variant.value} does not use copulas.")
+    _refuse_nonparametric_copula_margins(model, "ice_godambe_tau_se")
     Y = np.asarray(Y, dtype=float)
     if np.any(~np.isfinite(Y)):
         raise ValueError(

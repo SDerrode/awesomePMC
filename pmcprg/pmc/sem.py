@@ -34,8 +34,9 @@ Given an initial model θ⁽⁰⁾ and observations Y = y_{1:N}, SEM alternates:
     dual-view sub-sample {y_n : (X̃_n, X̃_{n+1}) = (i, j)} ∪
     {y_{n+1} : (X̃_n, X̃_{n+1}) = (j, i)}, and the copula c_ij on the
     pseudo-observations (F_ij(y_n), F_ji(y_{n+1})) of the pairs drawn in
-    (i, j). A pair that does not occur in the draw keeps its margin (and
-    copula) unchanged.
+    (i, j) — the model's F, or with ``copula_margins = "empirical"`` the
+    rescaled empirical CDFs of those drawn sub-samples. A pair that does not
+    occur in the draw keeps its margin (and copula) unchanged.
 
 Where SEM differs from ICE
 --------------------------
@@ -106,14 +107,17 @@ from pmcprg.pmc._estim_common import (
     IceResult,
     IceTrace,
     best_iter_of,
+    check_copula_margins,
     check_init_strategy,
     check_missing_cfg,
     check_multistart_families,
     check_return_best_iterate,
+    copula_margin_defaults,
     evaluate_log_lik,
     gap_e_step,
     linearise_image,
     m_step,
+    record_copula_margins,
     report_degenerate_states,
     run_multistart,
     sem_estim_defaults,
@@ -191,6 +195,17 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
     * ``gap_nodes`` (int, default 64) — quadrature nodes of the grid variants,
                                         read only when Y has missing rows.
 
+    ``copula_margins`` (default ``"parametric"``) is ICE's key
+    (:func:`pmcprg.pmc.ice._parse_ice_cfg`), applied to SEM's shared M-step:
+    with ``"empirical"`` the copula pseudo-observations come from the
+    empirical margins of the drawn sub-samples, the one-hot weights of the
+    draw X̃ in place of ICE's posteriors — F̂_i(y) = #{n : X̃_n = i, y_n ≤ y} /
+    (n_i + 1) for a state margin, the ½-weighted dual-view sub-sample for a
+    pair margin (:func:`pmcprg.pmc.ice._empirical_margin_cdfs`). With missing
+    rows those sub-samples contain the drawn ỹ_mis (on the quadrature nodes
+    for the grid variants, hence ties, handled by ``≤``). A non-default value
+    is recorded in the fitted model's ``[sem]`` table.
+
     Resolution order (lowest → highest priority):
       1. defaults (``sem_estim_defaults()`` — shared + SEM-specific keys)
       2. TOML ``[ice]`` section (``model.ice_config()`` — shared keys)
@@ -199,7 +214,8 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
     """
     # Defaults come from a single source of truth so that ICE, SEM and the
     # GUI cannot silently drift apart (audit Q-9).
-    defaults: dict = {**sem_estim_defaults(), **sem_missing_defaults()}
+    defaults: dict = {**sem_estim_defaults(), **sem_missing_defaults(),
+                      **copula_margin_defaults()}
     # TOML [ice] section is the fallback for keys not duplicated under [sem];
     # a dedicated [sem] section then overrides the shared keys.
     cfg = {**defaults, **model.ice_config(), **model.sem_config()}
@@ -208,6 +224,7 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
     check_multistart_families(cfg["multistart_families"])
     check_return_best_iterate(cfg["return_best_iterate"])
     check_missing_cfg(cfg)
+    check_copula_margins(cfg["copula_margins"])
     return cfg
 
 
@@ -291,6 +308,7 @@ def sem(
             candidates=list(cfg["candidates"]),
             selection_criterion=str(cfg["selection_criterion"]),
             margin_selection_rule=str(cfg["margin_selection_rule"]),
+            copula_margins=str(cfg["copula_margins"]),
         )
 
     # Multistart driver is shared with ICE (see _estim_common.run_multistart).
@@ -371,6 +389,7 @@ def _sem_single_run(
     fit_margins = bool(cfg["fit_margins"])
     selection_criterion   = str(cfg["selection_criterion"])
     margin_selection_rule = str(cfg["margin_selection_rule"])
+    copula_margins = check_copula_margins(cfg.get("copula_margins", "parametric"))
     sem_seed    = int(cfg["sem_seed"])
     rng_ffbs    = np.random.default_rng(sem_seed + int(seed_offset))
     log_prefix  = f"SEM[{run_tag}]" if run_tag else "SEM"
@@ -390,6 +409,9 @@ def _sem_single_run(
     X_buf:       list[np.ndarray]       = []
 
     raw     = model.raw
+    # A non-default copula_margins is recorded in the [sem] table (no-op on
+    # the default path).
+    record_copula_margins(raw, copula_margins, section="sem")
     current = PMCModel.from_dict(raw)
 
     logger.info(
@@ -458,6 +480,7 @@ def _sem_single_run(
             candidates=candidates,
             selection_criterion=selection_criterion,
             margin_selection_rule=margin_selection_rule,
+            copula_margins=copula_margins,
         )
         current = PMCModel.from_dict(raw)
 

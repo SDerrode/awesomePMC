@@ -283,6 +283,21 @@ References
 * Self, S. G. & Liang, K.-Y. (1987). Asymptotic properties of maximum
   likelihood estimators and likelihood ratio tests under nonstandard
   conditions. *J. Amer. Statist. Assoc.* 82(398), 605-610.
+
+Empirical copula margins (``copula_margins = "empirical"``, AUDIT_COPULES FR-7 a)
+-----------------------------------------------------------------------------------
+The observed information of ℓ is a property of the parametric model and
+:func:`lh_loglik_derivatives` computes it at any θ; what does not carry over
+is its use as the inverse variance of the *estimator*. With ICE's
+``copula_margins = "empirical"`` the copula parameters solve a posterior-
+weighted rank pseudo-likelihood (:func:`pmcprg.pmc.ice._empirical_margin_cdfs`),
+not the likelihood equations — the fitted θ is not a stationary point of ℓ
+(``newton_step`` ≠ 0) and the estimator's asymptotic variance carries an
+extra term from the estimated margins (Chen & Fan 2006,
+doi:10.1016/j.jeconom.2005.03.004) that I(θ)⁻¹ does not contain. ICE and SEM
+record a non-default value in the fitted model's ``[ice]`` / ``[sem]`` table,
+and :func:`ice_lh_information` raises ``NotImplementedError`` on such a model
+(:func:`lh_loglik_derivatives`, a plain derivative of ℓ, does not).
 """
 
 from __future__ import annotations
@@ -305,7 +320,12 @@ from pmcprg.pmc._oakes import (
     _tau_extra_of_copula,
     _tau_of_psi,
 )
-from pmcprg.pmc.ice import _margin_cdfs, _pair_pseudo_obs, _resolve_candidate
+from pmcprg.pmc.ice import (
+    _margin_cdfs,
+    _pair_pseudo_obs,
+    _refuse_nonparametric_copula_margins,
+    _resolve_candidate,
+)
 from pmcprg.pmc.inference import precompute_weights
 from pmcprg.pmc.model import PMCModel, Variant
 
@@ -1008,12 +1028,13 @@ def ice_lh_information(
     Raises
     ------
     NotImplementedError : variant, margin structure or copula family out of
-        scope, or ``fit_margins=True`` with a non-Gaussian margin (module
-        docstring).
+        scope, ``fit_margins=True`` with a non-Gaussian margin, or a model
+        fitted with ``copula_margins = "empirical"`` (module docstring).
     ValueError : missing rows, or a non-symmetric / degenerate prior.
     """
     if not model.variant.uses_copula:
         raise ValueError(f"Variant {model.variant.value} does not use copulas.")
+    _refuse_nonparametric_copula_margins(model, "ice_lh_information")
     _check_scope(model)
     ll, g, H, names = lh_loglik_derivatives(
         model, Y, h_psi=h_psi, fit_margins=fit_margins, h_eta=h_eta,

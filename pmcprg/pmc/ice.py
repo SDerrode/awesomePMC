@@ -28,7 +28,9 @@ Iterate until convergence:
     2. For each pair (i,j) — copula selection + τ estimation:
        a. Collect pseudo-observations (u_n, v_n) = (F_{ij}(y_n), F_{ji}(y_{n+1}))
           weighted by ξ_n(i,j)  for n = 1, …, N-1  (F_{ij} = F_i for state
-          margins).
+          margins). With ``copula_margins = "empirical"`` the F are the
+          posterior-weighted empirical margins of :func:`_empirical_margin_cdfs`
+          (a weighted rank pseudo-likelihood; the E-step keeps the model's F).
        b. Select best copula family from 'candidates' by weighted log-likelihood.
        c. Estimate τ_{ij} by weighted MLE on τ ∈ [τ_min, τ_max].
 
@@ -73,6 +75,11 @@ ICE configuration (TOML [ice] section or dict)
                  highest log-likelihood instead of the last one.
   missing_strategy, missing_draws, missing_seed, gap_nodes — missing
   observations (NaN rows of Y): see :func:`ice`, section "Missing observations".
+  copula_margins : str (default "parametric") — "empirical" computes the
+                 copula step's pseudo-observations from posterior-weighted
+                 empirical margins instead of the model's F (AUDIT_COPULES
+                 FR-7 a; see :func:`_parse_ice_cfg` and
+                 :func:`_empirical_margin_cdfs`).
 
 References
 ----------
@@ -149,6 +156,8 @@ __all__ = [
     "MISSING_STRATEGIES",
     "DEFAULT_MISSING_STRATEGY",
     "DEFAULT_MISSING_DRAWS",
+    "COPULA_MARGIN_MODES",
+    "DEFAULT_COPULA_MARGINS",
 ]
 
 
@@ -1800,6 +1809,43 @@ def _margin_candidate_fits(
 _PAIR_MARGIN_MIN_WEIGHT: float = 1e-12
 
 
+def _state_margin_sample(
+    Y: np.ndarray,
+    gamma: np.ndarray,
+    i: int,
+    obs: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Weighted sample of the state margin f_i: every ``y_n`` with weight ``γ_n(i)``.
+
+    ``obs`` (N,) bool — observed rows (missing observations, strategy
+    ``"available"``): only the observed ``y_n`` are kept. The one sample both
+    the parametric margin update of :func:`_m_step` and the empirical copula
+    margins of :func:`_empirical_margin_cdfs` are built from.
+    """
+    w_n = gamma[:, i]                      # P(X_n=i | Y)
+    y_fit = Y
+    if obs is not None:                    # missing rows: observed y_n only
+        y_fit, w_n = Y[obs], w_n[obs]
+    return y_fit, w_n
+
+
+def _pair_margin_sample_observed(
+    Y: np.ndarray,
+    xi: np.ndarray,
+    i: int,
+    j: int,
+    obs: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """:func:`_pair_margin_sample`, restricted to the observed endpoints when
+    ``obs`` (N,) bool is given (missing observations, strategy
+    ``"available"``) — each kept endpoint with its own ξ weight."""
+    y_ij, w_ij = _pair_margin_sample(Y, xi, i, j)
+    if obs is not None:
+        keep = np.concatenate((obs[:-1], obs[1:]))
+        y_ij, w_ij = y_ij[keep], w_ij[keep]
+    return y_ij, w_ij
+
+
 def _pair_margin_sample(
     Y: np.ndarray,
     xi: np.ndarray,
@@ -1875,10 +1921,7 @@ def _m_step_pair_margins(
     """
     for blk in margins_raw:
         i_idx, j_idx = int(blk["i"]), int(blk["j"])
-        y_ij, w_ij = _pair_margin_sample(Y, xi, i_idx, j_idx)
-        if obs is not None:
-            keep = np.concatenate((obs[:-1], obs[1:]))
-            y_ij, w_ij = y_ij[keep], w_ij[keep]
+        y_ij, w_ij = _pair_margin_sample_observed(Y, xi, i_idx, j_idx, obs)
         total_w = float(w_ij.sum())
         if not total_w >= _PAIR_MARGIN_MIN_WEIGHT:
             logger.debug(
@@ -1903,6 +1946,7 @@ def _m_step(
     selection_criterion: str,
     margin_selection_rule: str,
     obs: np.ndarray | None = None,
+    copula_margins: str = "parametric",
 ) -> None:
     """ICE M-step — update ``raw`` in place from posterior weights.
 
@@ -1931,6 +1975,11 @@ def _m_step(
             are fitted on the observed ``y_n`` with weight ``γ_n(i)``; pair
             margins on the observed endpoints of their dual view; copulas on
             the pairs whose two endpoints are observed, weight ``ξ_n(i, j)``.
+    copula_margins : ``"parametric"`` (default — the historical code path,
+            unchanged) or ``"empirical"``: the margins the copula
+            pseudo-observations of step 3 are computed with
+            (:func:`_empirical_margin_cdfs`; AUDIT_COPULES FR-7 a). Steps 1
+            and 2 do not depend on it.
 
     Behaviour
     ---------
@@ -1948,11 +1997,17 @@ def _m_step(
        weighted family selection + τ fit via :func:`_select_and_fit_copula`.
        Pseudo-observations ``(F_ij(y_n), F_ji(y_{n+1}))`` with weight
        ``ξ_n(i, j)`` are computed from ``current``'s margins
-       (``(F_i(y_n), F_j(y_{n+1}))`` for state margins).
+       (``(F_i(y_n), F_j(y_{n+1}))`` for state margins) — or, with
+       ``copula_margins="empirical"``, from the weighted empirical
+       counterparts of those margins built on the samples of step 2 with the
+       same posterior weights (:func:`_empirical_margin_cdfs`), whether or
+       not ``fit_margins`` is on. The family scores and the τ fit both see
+       these pseudo-observations.
 
     Both margin updates are ICE-style conditional estimators, not exact EM
     M-steps once the model is a general PMC: see :func:`_pair_margin_sample`.
     """
+    _check_copula_margins(copula_margins)
     var = current.variant
 
     # 1. Update prior distribution.
@@ -1985,10 +2040,8 @@ def _m_step(
         else:
             for blk in margins_raw:
                 i_idx = int(blk["i"])
-                w_n   = gamma[:, i_idx]            # P(X_n=i | Y)
-                y_fit = Y
-                if obs is not None:                # missing rows: observed y_n only
-                    y_fit, w_n = Y[obs], w_n[obs]
+                # P(X_n=i | Y) on y_n — observed rows only when obs is given.
+                y_fit, w_n = _state_margin_sample(Y, gamma, i_idx, obs)
                 # GICE: if the block declares a ``candidates`` list, also
                 # select the family at this M-step (SP-2016 §3); otherwise
                 # the helper falls through to the v0.5 single-family fit.
@@ -2010,7 +2063,12 @@ def _m_step(
             both = np.nonzero(obs[:-1] & obs[1:])[0]
             Y = np.array(Y, dtype=float, copy=True)
             Y[~obs] = 0.0
-        f_cdf = _margin_cdfs(current, Y)
+        if copula_margins == "parametric":
+            f_cdf = _margin_cdfs(current, Y)
+        else:
+            # FR-7 a: weighted empirical margins, same samples and weights as
+            # the margin update of step 2 (observed rows only when obs is set).
+            f_cdf = _empirical_margin_cdfs(current, Y, xi, gamma, obs=obs)
 
         for blk in copulas_raw:
             ii = int(blk["i"])
@@ -2115,6 +2173,232 @@ def _pair_pseudo_obs(current: PMCModel, f_cdf: np.ndarray, ii: int, jj: int):
     if current.margin_structure == "pair":
         return f_cdf[: N - 1, ii, jj], f_cdf[1:, jj, ii]
     return f_cdf[: N - 1, ii], f_cdf[1:, jj]
+
+
+# ---------------------------------------------------------------------------
+# Empirical copula margins — config key ``copula_margins`` (AUDIT_COPULES FR-7 a)
+# ---------------------------------------------------------------------------
+
+#: Values of the ICE / SEM ``copula_margins`` config key: the margins the
+#: copula step's pseudo-observations are computed with. ``"parametric"`` is
+#: the historical behaviour (the model's own F_i / F_ij); ``"empirical"`` the
+#: posterior-weighted empirical margins of :func:`_empirical_margin_cdfs`.
+COPULA_MARGIN_MODES: tuple[str, ...] = ("parametric", "empirical")
+
+#: Default ``copula_margins``: the parametric margins, efficient when they are
+#: validated (Genest & Werker 2002) and the only mode the standard errors of
+#: :mod:`pmcprg.pmc._oakes`, :mod:`pmcprg.pmc._godambe` and
+#: :mod:`pmcprg.pmc._lystig_hughes` are derived for.
+DEFAULT_COPULA_MARGINS: str = "parametric"
+
+_COPULA_MARGINS_KEY: str = "copula_margins"
+
+
+def _check_copula_margins(value) -> str:
+    """Validate the ``copula_margins`` config key (one of :data:`COPULA_MARGIN_MODES`)."""
+    if not isinstance(value, str) or value not in COPULA_MARGIN_MODES:
+        raise ValueError(
+            f"Unknown copula_margins {value!r}. Valid: {list(COPULA_MARGIN_MODES)}"
+        )
+    return value
+
+
+def _weighted_ecdf(y_sample: np.ndarray, w_sample: np.ndarray,
+                   y_eval: np.ndarray) -> np.ndarray:
+    """``F̂(y) = Σ_k w_k 1{y_k ≤ y} / (Σ_k w_k + 1)`` at every ``y`` of ``y_eval``.
+
+    ``≤``: a value tied with sample points gets the weight of all of them (the
+    upper end of the tie block), so tied observations share one F̂ value.
+    With ``w_k ≥ 0`` the result lies in ``[0, Σw/(Σw + 1)]`` — never 1. An
+    empty sample gives 0 everywhere. O((m + n) log m) for m sample and n
+    evaluation points (one sort, one binary search per point).
+    """
+    y_sample = np.asarray(y_sample, dtype=float)
+    y_eval = np.asarray(y_eval, dtype=float)
+    if y_sample.size == 0:
+        return np.zeros(y_eval.shape)
+    order = np.argsort(y_sample, kind="stable")
+    ys = y_sample[order]
+    cw = np.cumsum(np.asarray(w_sample, dtype=float)[order])
+    # Number of sample points ≤ y (side="right" puts ties below y).
+    idx = np.searchsorted(ys, y_eval, side="right")
+    num = np.where(idx > 0, cw[np.maximum(idx - 1, 0)], 0.0)
+    return num / (cw[-1] + 1.0)
+
+
+def _empirical_margin_cdfs(
+    current: PMCModel,
+    Y: np.ndarray,
+    xi: np.ndarray,
+    gamma: np.ndarray,
+    obs: np.ndarray | None = None,
+) -> np.ndarray:
+    """Posterior-weighted empirical margins at ``Y`` — :func:`_margin_cdfs`'s
+    nonparametric counterpart for the copula step (AUDIT_COPULES FR-7 a).
+
+    Same shape and layout as :func:`_margin_cdfs` (``(N, K)`` for state
+    margins, ``(N, K, K)`` with ``F[n, i, j] = F̂_ij(Y[n])`` for pair margins),
+    so :func:`_pair_pseudo_obs` builds the copula pseudo-observations from it
+    unchanged; clipped to [EPS, 1 − EPS] like the parametric ones.
+
+    What is estimated, and with which weights (derivation)
+    -------------------------------------------------------
+    Each F̂ is the nonparametric estimate of *the margin the parametric M-step
+    fits*, on *the sample and weights it fits it on*. That M-step maximises a
+    weighted log-likelihood ``Σ_k w_k log f(y_k)`` over a parametric family;
+    over all distributions the maximiser of the same objective (the weighted
+    nonparametric MLE) puts mass ``w_k / Σw`` on each ``y_k`` — the weighted
+    empirical distribution. So:
+
+    * **state margins** f_i (HMC-DN; PMC with ``margin_structure="state"``):
+      the parametric update fits f_i on ``{y_n, weight γ_n(i)}``
+      (:func:`_state_margin_sample`), hence ::
+
+          F̂_i(y) = Σ_n γ_n(i) 1{y_n ≤ y} / (Σ_n γ_n(i) + 1).
+
+    * **pair margins** f_ij (general PMC, A16 Eq. 12): the pair density
+      ``f_ij(y_n) f_ji(y_{n+1}) c_ij(F_ij(y_n), F_ji(y_{n+1}))`` given
+      ``(x_n, x_{n+1}) = (i, j)`` says that f_ij is the law of the *left*
+      observation ``y_n`` of a pair in state (i, j) **and** of the *right*
+      observation ``y_{n+1}`` of a pair in state (j, i) — the two places f_ij
+      enters the complete-data likelihood. The parametric update therefore
+      fits f_ij on the dual-view sample of :func:`_pair_margin_sample`, and
+      so does this function ::
+
+          F̂_ij(y) = [Σ_n ½ξ_n(i, j) 1{y_n ≤ y} + Σ_n ½ξ_n(j, i) 1{y_{n+1} ≤ y}]
+                    / (S_ij + 1),     S_ij = ½ Σ_n [ξ_n(i, j) + ξ_n(j, i)].
+
+      The copula c_ij then gets ``u_n = F̂_ij(y_n)`` and ``v_n = F̂_ji(y_{n+1})``,
+      where F̂_ji's sample contains ``y_{n+1}`` with weight ½ξ_n(i, j): the
+      right observation of the pair (i, j) *is* a draw of f_ji. The weights
+      are ξ, not γ — weighting f_ij by γ_n(i) would estimate the pooled f_i
+      for every j (the reason the parametric pair update does not use γ
+      either). Pooled over j, the dual-view weight of an interior y_n is
+      ½[Σ_j ξ_n(i, j) + Σ_j ξ_{n−1}(j, i)] = γ_n(i): the state formula again,
+      up to the two end points.
+
+    With missing observations (``obs``, strategy ``"available"``) the samples
+    keep the observed values only, exactly as the parametric update does.
+
+    The ``+ 1``
+    -----------
+    The weighted empirical CDF equals 1 at the sample maximum, where most
+    copula log-densities are infinite. As in the rank pseudo-likelihood,
+    whose margins are ``rank/(n + 1)`` (Genest, Ghoudi & Rivest 1995), the
+    denominator is ``Σw + 1``, so ``F̂ ≤ Σw/(Σw + 1) < 1``; and every
+    pseudo-observation with a positive copula weight ξ_n(i, j) is itself in
+    its margin's sample with weight ≥ ½ξ_n(i, j) (pair margins; γ_n(i) ≥
+    ξ_n(i, j) for state margins), so ``F̂ > 0`` there. The ``1`` is on the
+    scale of the parametric update's own sample: ``Σ_i Σ_n γ_n(i) = N`` and,
+    thanks to its factor ½, ``Σ_ij S_ij = N − 1`` — each observation counts
+    once over all the blocks. For one-hot weights (an SEM draw, the k-means
+    labels) F̂_i is exactly the classical rescaled empirical CDF of the
+    sub-sample, ``#{n : x_n = i, y_n ≤ y} / (n_i + 1)``; a pair margin's
+    one-hot dual-view weights are ½ or 1 per point, and its ``+ 1`` stays on
+    that same half-weight scale. Ties: ``≤`` (see :func:`_weighted_ecdf`).
+
+    Why the E-step keeps the parametric margins
+    --------------------------------------------
+    Forward–backward needs transition *densities*
+    ``f_j(y_{n+1}) c_ij(F_i(y_n), F_j(y_{n+1}))``, which integrate to one in
+    ``y_{n+1}`` only if ``F_j`` is the CDF of ``f_j``: a step function has no
+    density, and ``c(F̂, F̂)`` next to a parametric ``f`` is not a proper
+    kernel. So only the copula step changes: it becomes the second step of
+    Chen & Fan's (2006) two-step semiparametric estimator for copula-based
+    Markov models — nonparametric margins first, then the copula parameter
+    by pseudo-likelihood on rescaled empirical CDFs — weighted by posteriors
+    from the working parametric model. When the parametric margins are right,
+    F̂ and F estimate the same distribution and the two modes the same τ, the
+    parametric one more efficiently (Genest & Werker 2002). When a margin is
+    contaminated or misspecified, **only the copula step is protected**: γ,
+    ξ, and the margins fitted with ``fit_margins``, still come from the
+    parametric model.
+
+    References
+    ----------
+    * Chen, X. & Fan, Y. (2006). Estimation of copula-based semiparametric
+      time series models. *J. Econometrics* 130(2), 307–335.
+      doi:10.1016/j.jeconom.2005.03.004
+    * Genest, C., Ghoudi, K. & Rivest, L.-P. (1995). A semiparametric
+      estimation procedure of dependence parameters in multivariate families
+      of distributions. *Biometrika* 82(3), 543–552. doi:10.1093/biomet/82.3.543
+    * Genest, C. & Werker, B. J. M. (2002). Conditions for the asymptotic
+      semiparametric efficiency of an omnibus estimator of dependence
+      parameters in copula models. In *Distributions with Given Marginals
+      and Statistical Modelling*. doi:10.1007/978-94-017-0061-0_12
+    * Kim, G., Silvapulle, M. J. & Silvapulle, P. (2007). Comparison of
+      semiparametric and parametric methods for estimating copulas. *CSDA*.
+      doi:10.1016/j.csda.2006.10.009
+    """
+    y_eval = np.asarray(Y, dtype=float).reshape(len(Y))   # copula variants: d = 1
+    N, K = len(y_eval), current.K
+    if current.margin_structure == "pair":
+        f_pair = np.empty((N, K, K))
+        for ii in range(K):
+            for jj in range(K):
+                y_s, w_s = _pair_margin_sample_observed(y_eval, xi, ii, jj, obs)
+                f_pair[:, ii, jj] = _weighted_ecdf(y_s, w_s, y_eval)
+        np.clip(f_pair, EPS, ONE_MINUS_EPS, out=f_pair)
+        return f_pair
+    f_state = np.empty((N, K))
+    for kk in range(K):
+        y_s, w_s = _state_margin_sample(y_eval, gamma, kk, obs)
+        f_state[:, kk] = _weighted_ecdf(y_s, w_s, y_eval)
+    np.clip(f_state, EPS, ONE_MINUS_EPS, out=f_state)
+    return f_state
+
+
+def _record_copula_margins(raw: dict, value: str, *, section: str) -> None:
+    """Make the model's own config tables resolve to the ``copula_margins`` used.
+
+    ``section`` is ``"ice"`` (ICE reads ``[ice]``) or ``"sem"`` (SEM reads
+    ``[ice]`` then ``[sem]``). The key is written into ``raw[section]`` only
+    when the tables would otherwise resolve to another value — never on the
+    default path with the key absent, so that path's models are unchanged.
+    This is what lets the standard-error modules refuse a fit made with
+    empirical copula margins (:func:`_refuse_nonparametric_copula_margins`).
+    """
+    tables = [raw.get("ice", {})] + ([raw.get("sem", {})] if section == "sem" else [])
+    resolved = DEFAULT_COPULA_MARGINS
+    for tbl in tables:
+        resolved = tbl.get(_COPULA_MARGINS_KEY, resolved)
+    if resolved != value:
+        raw.setdefault(section, {})[_COPULA_MARGINS_KEY] = value
+
+
+def _recorded_copula_margins(model: PMCModel) -> str:
+    """``copula_margins`` a model's own tables declare: ``[ice]``, else ``[sem]``
+    (over ``[ice]``) if that one is not the default, else the default."""
+    ice_val = model.ice_config().get(_COPULA_MARGINS_KEY, DEFAULT_COPULA_MARGINS)
+    if ice_val != DEFAULT_COPULA_MARGINS:
+        return ice_val
+    sem_tbl = {**model.ice_config(), **model.sem_config()}
+    return sem_tbl.get(_COPULA_MARGINS_KEY, DEFAULT_COPULA_MARGINS)
+
+
+def _refuse_nonparametric_copula_margins(model: PMCModel, who: str) -> None:
+    """Raise if ``model`` was fitted with ``copula_margins`` other than parametric.
+
+    The standard errors of :mod:`pmcprg.pmc._oakes`, :mod:`pmcprg.pmc._godambe`
+    and :mod:`pmcprg.pmc._lystig_hughes` are derived for the parametric-margin
+    ICE fixed point (a stationary point of the expected complete-data
+    likelihood with the model's own F). With empirical copula margins the
+    copula parameter solves a rank-based estimating equation instead, whose
+    asymptotic variance carries an extra term from the estimated margins
+    (Chen & Fan 2006) that none of them computes — their number would be
+    the SE of another estimator. ICE and SEM record the option in the fitted
+    model's ``[ice]`` / ``[sem]`` table (:func:`_record_copula_margins`),
+    which is what is read here.
+    """
+    mode = _recorded_copula_margins(model)
+    if mode != DEFAULT_COPULA_MARGINS:
+        raise NotImplementedError(
+            f"{who}: the model declares copula_margins = {mode!r} in its "
+            "[ice]/[sem] table — its copulas were fitted on empirical "
+            "margins (AUDIT_COPULES FR-7 a). These standard errors assume "
+            "the parametric margins; the Chen–Fan-type correction that "
+            "empirical margins need is not implemented."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2395,6 +2679,7 @@ def _m_step_impute(
     candidates: list[str],
     selection_criterion: str,
     margin_selection_rule: str,
+    copula_margins: str = "parametric",
 ) -> None:
     """M-step of ICE strategy ``"impute"`` — multiple imputation, updates ``raw`` in place.
 
@@ -2413,7 +2698,12 @@ def _m_step_impute(
       ``scale``, shapes; mean vector and covariance matrix of a multivariate
       normal). The family is chosen once from the D score tables
       (:func:`_combine_choice`) and the average is over that family's D fits.
+    * ``copula_margins="empirical"``: the pseudo-observations of completed
+      series d come from the weighted empirical margins of that series with
+      its own posteriors γ^(d), ξ^(d) (:func:`_empirical_margin_cdfs`) — the
+      complete-data rule of :func:`_m_step`, applied per completed series.
     """
+    _check_copula_margins(copula_margins)
     D = int(Y_draws.shape[0])
     _m_step_prior(raw, current, xi)
     var = current.variant
@@ -2441,7 +2731,11 @@ def _m_step_impute(
 
     if not var.uses_copula:
         return
-    cdfs = [_margin_cdfs(current, Yd) for Yd in Y_draws]
+    if copula_margins == "parametric":
+        cdfs = [_margin_cdfs(current, Yd) for Yd in Y_draws]
+    else:
+        cdfs = [_empirical_margin_cdfs(current, Yd, xi_d, gamma_d)
+                for Yd, (gamma_d, xi_d) in zip(Y_draws, posts)]
     for blk in raw.get("copulas", []):
         ii, jj = int(blk["i"]), int(blk["j"])
         resolved = None
@@ -2594,6 +2888,65 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     * ``kmeans_seed``      (int,  default 0)     — RNG seed for the K-means
                                                   initialisation (only used
                                                   when ``init == "kmeans"``).
+    * ``copula_margins``   (str,  default ``"parametric"``) — margins of the
+                                                  copula step's pseudo-
+                                                  observations, one of
+                                                  :data:`COPULA_MARGIN_MODES`.
+                                                  ``"parametric"``: the
+                                                  model's F_i / F_ij (the
+                                                  historical behaviour).
+                                                  ``"empirical"``: their
+                                                  posterior-weighted
+                                                  empirical counterparts,
+                                                  F̂_i(y) = Σ_n γ_n(i)
+                                                  1{y_n ≤ y} / (Σ_n γ_n(i)
+                                                  + 1) for state margins and
+                                                  the ξ-weighted dual-view
+                                                  sample for pair margins
+                                                  (derivation, ties and the
+                                                  ``+1``:
+                                                  :func:`_empirical_margin_cdfs`)
+                                                  — a weighted rank pseudo-
+                                                  likelihood (Chen & Fan
+                                                  2006) against the extreme
+                                                  pseudo-observations of
+                                                  AUDIT_COPULES RB-5 / FR-7 a.
+                                                  Only the copula step
+                                                  changes (τ fit *and* family
+                                                  scores, the k-means warm
+                                                  start included); the
+                                                  E-step, the prior and the
+                                                  ``fit_margins`` update keep
+                                                  the parametric margins, so
+                                                  only the copula is
+                                                  protected. Its costs,
+                                                  measured: see
+                                                  ``pmcprg/tests/test_fr7a_empirical_copula_margins.py``.
+                                                  The fixed point is no
+                                                  longer a stationary point
+                                                  of ``trace.log_liks``' (the
+                                                  parametric model's)
+                                                  likelihood, and the
+                                                  standard errors of
+                                                  :mod:`pmcprg.pmc._oakes`,
+                                                  :mod:`pmcprg.pmc._godambe`
+                                                  and
+                                                  :mod:`pmcprg.pmc._lystig_hughes`
+                                                  do not apply (they need a
+                                                  Chen–Fan correction that is
+                                                  not implemented): a non-
+                                                  default value is recorded
+                                                  in the fitted model's
+                                                  ``[ice]`` table and those
+                                                  functions refuse such a
+                                                  model. Kept out of
+                                                  :func:`~pmcprg.pmc._estim_common.ice_estim_defaults`
+                                                  (the GUI-widget contract):
+                                                  no widget yet — set it in
+                                                  the TOML ``[ice]`` table,
+                                                  which a GUI round trip
+                                                  preserves, or in
+                                                  ``ice_cfg``.
 
     Missing observations (read only when Y has NaN rows; see :func:`ice`):
 
@@ -2615,10 +2968,12 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     from pmcprg.pmc._estim_common import (
         check_multistart_families,
         check_return_best_iterate,
+        copula_margin_defaults,
         ice_estim_defaults,
         ice_missing_defaults,
     )
-    defaults: dict = {**ice_estim_defaults(), **ice_missing_defaults()}
+    defaults: dict = {**ice_estim_defaults(), **ice_missing_defaults(),
+                      **copula_margin_defaults()}
     toml_ice = model.ice_config()
     cfg = {**defaults, **toml_ice}
     if ice_cfg:
@@ -2626,6 +2981,7 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     check_multistart_families(cfg["multistart_families"])
     check_return_best_iterate(cfg["return_best_iterate"])
     _check_missing_cfg(cfg)
+    _check_copula_margins(cfg["copula_margins"])
     return cfg
 
 
@@ -2841,6 +3197,7 @@ def _warmstart_from_kmeans(
     candidates: list[str],
     selection_criterion: str,
     margin_selection_rule: str,
+    copula_margins: str = "parametric",
 ) -> PMCModel:
     """Build a starting PMCModel from a hard K-means clustering of ``Y``.
 
@@ -2860,8 +3217,11 @@ def _warmstart_from_kmeans(
                     margin families, copula candidates.
     Y            : ``np.ndarray`` shape ``(N,)`` or ``(N, d)`` — observations.
     random_state : ``int`` — RNG seed forwarded to ``sklearn.cluster.KMeans``.
-    fit_margins, candidates, selection_criterion, margin_selection_rule :
-                    same semantics as in :func:`_parse_ice_cfg`.
+    fit_margins, candidates, selection_criterion, margin_selection_rule,
+    copula_margins :
+                    same semantics as in :func:`_parse_ice_cfg` (with
+                    ``copula_margins="empirical"`` the copulas are fitted on
+                    the empirical margins of the k-means sub-samples).
 
     Returns
     -------
@@ -2883,7 +3243,7 @@ def _warmstart_from_kmeans(
         return _warmstart_from_kmeans_missing(
             model, Y, miss, random_state=random_state, fit_margins=fit_margins,
             candidates=candidates, selection_criterion=selection_criterion,
-            margin_selection_rule=margin_selection_rule,
+            margin_selection_rule=margin_selection_rule, copula_margins=copula_margins,
         )
     K = model.K
     N = len(Y)
@@ -2906,6 +3266,7 @@ def _warmstart_from_kmeans(
         candidates=candidates,
         selection_criterion=selection_criterion,
         margin_selection_rule=margin_selection_rule,
+        copula_margins=copula_margins,
     )
     return PMCModel.from_dict(raw)
 
@@ -2920,6 +3281,7 @@ def _warmstart_from_kmeans_missing(
     candidates: list[str],
     selection_criterion: str,
     margin_selection_rule: str,
+    copula_margins: str = "parametric",
 ) -> PMCModel:
     """:func:`_warmstart_from_kmeans` for a Y with missing rows (see its docstring)."""
     K = model.K
@@ -2957,6 +3319,7 @@ def _warmstart_from_kmeans_missing(
         selection_criterion=selection_criterion,
         margin_selection_rule=margin_selection_rule,
         obs=obs,
+        copula_margins=copula_margins,
     )
     return PMCModel.from_dict(raw)
 
@@ -3073,6 +3436,7 @@ def ice(
             candidates=list(cfg["candidates"]),
             selection_criterion=str(cfg["selection_criterion"]),
             margin_selection_rule=str(cfg["margin_selection_rule"]),
+            copula_margins=str(cfg["copula_margins"]),
         )
 
     # Multistart driver is shared with SEM (see _estim_common.run_multistart).
@@ -3186,6 +3550,8 @@ def _ice_single_run(
             f"Unknown margin_selection_rule {margin_selection_rule!r}. "
             f"Valid: {sorted(MARGIN_SELECTION_RULES)}"
         )
+    copula_margins = _check_copula_margins(
+        cfg.get("copula_margins", DEFAULT_COPULA_MARGINS))
     log_prefix = f"ICE[{run_tag}]" if run_tag else "ICE"
 
     var = model.variant
@@ -3206,6 +3572,9 @@ def _ice_single_run(
 
     # Public ``raw`` already returns a deep copy — safe to mutate.
     raw = model.raw
+    # Every iterate (hence the returned model) records a non-default
+    # copula_margins in its [ice] table; a no-op on the default path.
+    _record_copula_margins(raw, copula_margins, section="ice")
 
     # Build a mutable model reference updated each iteration
     current = PMCModel.from_dict(raw)
@@ -3214,6 +3583,8 @@ def _ice_single_run(
         "%s: variant=%s  K=%d  N=%d  max_iter=%d  candidates=%s",
         log_prefix, var.value, K, N, max_iter, candidates,
     )
+    if copula_margins != DEFAULT_COPULA_MARGINS and var.uses_copula:
+        logger.info("%s: copula step on %s margins (FR-7 a).", log_prefix, copula_margins)
 
     for it in range(max_iter + 1 if return_best else max_iter):
         # ── E-step ────────────────────────────────────────────────────────
@@ -3299,6 +3670,7 @@ def _ice_single_run(
                 candidates=candidates,
                 selection_criterion=selection_criterion,
                 margin_selection_rule=margin_selection_rule,
+                copula_margins=copula_margins,
             )
         else:
             _m_step(
@@ -3308,6 +3680,7 @@ def _ice_single_run(
                 selection_criterion=selection_criterion,
                 margin_selection_rule=margin_selection_rule,
                 obs=None if miss is None else ~miss,
+                copula_margins=copula_margins,
             )
         # Rebuild the model with updated raw dict
         current = PMCModel.from_dict(raw)

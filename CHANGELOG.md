@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added — posterior-weighted empirical margins for the copula step of ICE/SEM (audit FR-7 a)
+
+- New ICE/SEM config key **`copula_margins`** (`"parametric"`, the default and
+  the unchanged historical behaviour, or `"empirical"`), settable from
+  `ice_cfg` / `sem_cfg` and from the TOML `[ice]` / `[sem]` tables; an invalid
+  value raises. With `"empirical"` the copula step's pseudo-observations —
+  the τ fit **and** the family-selection scores, in the same
+  `_select_and_fit_copula` call — are built from the posterior-weighted
+  empirical counterpart of *the margin the M-step estimates, with the weights
+  it uses*: `F̂_i(y) = Σ_n γ_n(i)·1{y_n ≤ y} / (Σ_n γ_n(i) + 1)` for state
+  margins, and for pair margins f_ij (general PMC, A16 Eq. 12) the ½ξ-weighted
+  **dual-view** sample — `y_n` with weight ½ξ_n(i,j) (left observation of a
+  pair (i, j)) and `y_{n+1}` with weight ½ξ_n(j,i) (right observation of a
+  pair (j, i)), the same sample the parametric pair update is fitted on, so
+  the copula c_ij receives `u_n = F̂_ij(y_n)`, `v_n = F̂_ji(y_{n+1})`. Ties are
+  handled with `≤` (tied values share one value), the `+1` keeps every value
+  strictly inside (0, 1), and pooling the pair weights over j returns γ.
+  The E-step keeps the parametric margins — a step function has no density
+  and `c(F̂, F̂)` beside a parametric `f` is not a proper transition kernel —
+  so the copula step alone becomes the (weighted) second stage of Chen &
+  Fan's (2006, doi:10.1016/j.jeconom.2005.03.004) two-step semiparametric
+  estimator. SEM shares it through the same M-step (one-hot weights: exactly
+  `#{n : x̃_n = i, y_n ≤ y}/(n_i + 1)`), as do the k-means warm start and both
+  missing-data strategies (`"available"`, `"impute"`).
+- **Measured** (K = 2 PMC, N(±1, 1) state margins, Gaussian copulas τ = 0.5
+  diagonal / 0 off-diagonal, N = 2000, R = 50, 1 % of the y_n moved 7σ away
+  from the other state — a true-margin CDF of 1.3e-12, RB-5's extreme
+  pseudo-observation in observation space):
+  - with **`fit_margins=True`** (the unsupervised case the audit's "IFM is not
+    robust" is about) the parametric τ̂ is biased **+0.258/+0.251** on the two
+    diagonal pairs and still drifting at `max_iter = 50`, the empirical one
+    **+0.100/+0.051** (RMSE ratio 0.62/0.73); with the outliers pushed down
+    for both states, +0.345/+0.137 against +0.128/+0.126. The mechanism is not
+    the outliers' own pseudo-observations but the ~20 % of scale they add to
+    the fitted margins, which compresses every clean point's
+    pseudo-observation; ranks do not see that scale;
+  - **efficiency cost on clean, correctly specified data**: RMSE ratio
+    empirical/parametric **0.99/1.00** with fitted margins (Gaussian copula,
+    where the rank estimator is semiparametrically efficient) and **1.64/1.46**
+    when the parametric margins are held at the truth. For a Clayton copula,
+    1.05/1.07 and 3.38/2.12.
+  - **Not covered, and measured as such**: with margins *held at the truth*
+    the option does **not** help — inside ICE the E-step re-routes a
+    contaminated pair into the blocks that tolerate it (the off-diagonal
+    pairs' τ̂ absorbs the damage, +0.15), so RB-5's coordinates never reach the
+    diagonal blocks, and the empirical margins — built from all of a state's
+    observations while a block keeps only its own pairs — put the outliers at
+    the bottom ranks and bias τ̂ up (+0.091/+0.087 against +0.018/+0.018).
+- With `"empirical"` the ICE fixed point is no longer a stationary point of
+  the (parametric) observed-data likelihood that `trace.log_liks` reports, and
+  the standard errors of `pmcprg.pmc._oakes`, `_godambe` and `_lystig_hughes`
+  do not apply: they would need a Chen–Fan-type correction for the estimated
+  margins, which is **not** implemented. ICE and SEM therefore record a
+  non-default value in the fitted model's `[ice]` / `[sem]` table, and the
+  three entry points (`ice_oakes_tau_se`, `ice_godambe_tau_se`,
+  `ice_lh_information`) raise `NotImplementedError` on such a model.
+- The default path is unchanged: with the key absent the M-step is the
+  historical one (`pmcprg/tests/test_estim_complete_data_identity.py`'s
+  bit-exact golden still passes), and a same-process comparison of "key
+  absent" against `copula_margins="parametric"` is pinned in the new
+  `pmcprg/tests/test_fr7a_empirical_copula_margins.py`. No GUI widget yet:
+  the key is deliberately kept out of `ice_estim_defaults()` /
+  `sem_estim_defaults()` (the widget contract) and travels through the TOML
+  tables, which the GUI round trip preserves.
+
+---
+
 ## [1.1.0] - 2026-09-18
 
 ### Highlights

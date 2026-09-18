@@ -147,6 +147,18 @@ References
 * Dempster, A. P., Laird, N. M. & Rubin, D. B. (1977). Maximum likelihood
   from incomplete data via the EM algorithm. *J. R. Statist. Soc. B* 39(1),
   1-38.
+
+Empirical copula margins (``copula_margins = "empirical"``, AUDIT_COPULES FR-7 a)
+-----------------------------------------------------------------------------------
+Everything here is derived for ICE's parametric copula step — pseudo-
+observations built from the model's own F. With ICE's ``copula_margins =
+"empirical"`` the copula parameter solves a posterior-weighted *rank*
+pseudo-likelihood instead (:func:`pmcprg.pmc.ice._empirical_margin_cdfs`),
+whose asymptotic variance carries an extra term from the estimated margins
+(Chen & Fan 2006, doi:10.1016/j.jeconom.2005.03.004) that is not computed
+here, so this would be the standard error of another estimator. ICE and SEM
+record a non-default value in the fitted model's ``[ice]`` / ``[sem]`` table,
+and :func:`ice_oakes_tau_se` raises ``NotImplementedError`` on such a model.
 """
 
 from __future__ import annotations
@@ -160,7 +172,12 @@ import numpy as np
 from pmcprg.copulas._base import TAU_PAD_ABS, TAU_PAD_REL
 from pmcprg.copulas._stderr import _spec_of
 from pmcprg.copulas._stderr import standard_errors as _naive_standard_errors
-from pmcprg.pmc.ice import _margin_cdfs, _pair_pseudo_obs, _resolve_candidate
+from pmcprg.pmc.ice import (
+    _margin_cdfs,
+    _pair_pseudo_obs,
+    _refuse_nonparametric_copula_margins,
+    _resolve_candidate,
+)
 from pmcprg.pmc.inference import backward, forward, joint_posteriors, precompute_weights
 from pmcprg.pmc.model import PMCModel
 
@@ -707,10 +724,13 @@ def ice_oakes_tau_se(
     ------
     NotImplementedError : a requested pair's family is not
         :data:`SUPPORTED_FAMILIES` (Frank, Joe, GH, … — every family other
-        than Gauss, Clayton, BB1, Student is out of this audit's scope).
+        than Gauss, Clayton, BB1, Student is out of this audit's scope); or
+        the model was fitted with ``copula_margins = "empirical"`` (module
+        docstring, last section).
     """
     if not model.variant.uses_copula:
         raise ValueError(f"Variant {model.variant.value} does not use copulas.")
+    _refuse_nonparametric_copula_margins(model, "ice_oakes_tau_se")
     Y = np.asarray(Y, dtype=float)
     if np.any(~np.isfinite(Y)):
         raise ValueError(
