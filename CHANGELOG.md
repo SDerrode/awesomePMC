@@ -7,7 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.1.0] - 2026-09-18
+
+### Highlights
+
+- **The registry grows from 17 to 39 copula families.** Six extreme-value
+  families with a closed-form or quadrature-based τ (Galambos, Hüsler–Reiss,
+  t-EV, Tawn types 1/2/3), BB6, the survival BB1, and **90°/270° rotations
+  for all six one-signed families** (Clayton, GH, Joe, BB1, A12, A14):
+  negative dependence is representable everywhere the audit asked for it,
+  through one generic mechanism (`pmcprg.copulas.archimedean.rotated`)
+  rather than per-family code.
+- **Four new goodness-of-fit / screening tests** (`pmcprg.diagnostics`):
+  radial symmetry (with a 20.7× faster multiplier-bootstrap option), a
+  Rosenblatt-transform test, an exchangeability test, and a **dependent
+  multiplier bootstrap** for serially dependent pseudo-observations. The
+  last one matters for this library in particular: on Markov data the
+  i.i.d. bootstrap rejects a true null in 19.8 % of replications at a
+  nominal 5 %, the dependent one in 3.2 %.
+- **Standard errors of a copula parameter *inside* ICE**, the audit's three
+  ranked options, all implemented: Oakes' (1999) observed information,
+  Godambe's (2005) IFM correction for re-estimated margins, and Lystig &
+  Hughes' (2002) exact joint information over the prior and every pair's
+  copula — the last now covering two-parameter families and re-estimated
+  margins. On overlapping states their coverage at a nominal 95 % is
+  94.8 % (Lystig–Hughes), 73.5 % (Godambe), 67.7 % (Oakes) and 58.1 %
+  (naive sandwich); the exact information with the margins *held fixed*
+  reaches only 68.7 %, so no single channel of uncertainty accounts for
+  the gap on its own.
+- **Robustness diagnostics for a fitted copula**: an MLE-vs-τ discrepancy
+  test (Hausman-style) and a density-power-divergence estimator,
+  `pmcprg.copulas._robust`.
+- Two research-library norms reinforced by this batch: every new formula
+  was re-derived and checked against an independent high-precision
+  reference rather than transcribed (three formulas given in early task
+  briefs for this release turned out to be wrong, and were caught this
+  way); every new Monte-Carlo test seeds itself deterministically
+  (`zlib.crc32`, never Python's salted `hash()`).
+
+(Detailed entries below are unchanged from the development log.)
 
 ### Fixed — documentation back in step with the 39-family registry
 
@@ -796,35 +834,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own families regardless, per the audit's own list. Reference file
   extended by pure addition (9 new entries, 0 changed bytes in the 161
   pre-existing ones).
-
-## [1.1.0] - 2026-09-17
-
-### Highlights
-
-- **Five new copula families**: three extreme-value families with a closed
-  or quadrature-based τ (Galambos, Hüsler–Reiss, t-EV) and the two
-  two-parameter Tawn variants (types 1/2, asymmetry ψ) — bringing the
-  registry to 34 entries.
-- **90°/270° rotations for all six one-signed families** (Clayton, GH, Joe,
-  BB1, A12, A14): negative dependence is now representable everywhere the
-  audit asked for it, through one generic mechanism
-  (`pmcprg.copulas.archimedean.rotated`) rather than per-family code.
-- **Three new goodness-of-fit / screening tests**: radial symmetry (with a
-  20.7× faster multiplier-bootstrap option), a Rosenblatt-transform test,
-  and an exchangeability test — `pmcprg.diagnostics`.
-- **Standard errors of a copula parameter *inside* ICE**, the audit's
-  three ranked options, all implemented: Oakes' (1999) observed
-  information, Godambe's (2005) IFM correction for re-estimated margins,
-  and Lystig & Hughes' (2002) exact joint information over the prior and
-  every pair's copula.
-- Two research-library norms reinforced by this batch: every new formula
-  was re-derived and checked against an independent high-precision
-  reference rather than transcribed (three formulas given in early task
-  briefs for this release turned out to be wrong, and were caught this
-  way); every new Monte-Carlo test seeds itself deterministically
-  (`zlib.crc32`, never Python's salted `hash()`).
-
-(Detailed entries below are unchanged from the development log.)
 
 ### Added — 90°/270° rotations of A12 and A14, closing FR-8 for all six families (FR-8, last round)
 
@@ -4269,7 +4278,6 @@ and they are indexed by ``i`` only.
 
 - Initial project scaffold: `pyproject.toml`, `README.md`, `CHANGELOG.md`, `.gitignore`, `prg/__init__.py`
 
-[Unreleased]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.4.0...HEAD
 [0.4.0]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.5...v0.4.0
 [0.3.5]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.4...v0.3.5
 [0.3.4]: https://gitlab.ec-lyon.fr/sderrode/copulasformm/-/compare/v0.3.3...v0.3.4
