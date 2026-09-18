@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — two audit-flagged bugs, both reproduced before the fix
+
+- **The GUI's copula-block dialog could hand back a pair the constructor
+  refuses.** `_CopulaDialog.get_block` returned τ and each extra parameter
+  straight from their spinboxes, each independently bounded — but some
+  families (BB1: `δ < 1/(1 − τ)`, BB6/BB7/BB8, Tawn) constrain the two
+  *jointly*, a constraint no single spinbox range can express. Reproduced:
+  `CopulaBB1(tau_k=0.5, delta=10.0)` raises `CopulaParameterError` (needs
+  `τ > 1 − 1/δ = 0.9`), yet both values are individually in-range and the
+  dialog handed them back unchanged. Now routed through the family's own
+  `constructible_params` — the same hook `pmcprg.pmc.ice._copula_placeholder`
+  already uses for the identical reason: τ is the value the user chose and
+  stays, only a refused extra moves, to the nearest value the constructor
+  accepts at that τ (`0.5 → 1.9999` in the reproduction above). A pre-existing
+  test (`test_copula_dialog_bb1_exposes_delta`) turned out to itself encode
+  an invalid pair (τ = 0.5, δ = 2.5, refused) without anyone noticing —
+  `get_block` never validated anything, so the round trip "worked" — fixed
+  to a genuinely admissible pair.
+- **`submodel_lr_test` could not test Tawn 3 against its own Tawn 1/2
+  sub-models.** Every previously-registered nesting (BB1 → Clayton, BB6 →
+  Joe, …) has a **one**-parameter sub-model, fitted by a 1-D profile over τ
+  alone. Tawn 1/2 are themselves **two**-parameter families (their own
+  `psi`), so profiling only τ would silently leave `psi` at the
+  constructor's default instead of its own MLE, understating the sub-model's
+  likelihood and biasing the statistic upward — which is why the pair was
+  never registered rather than shipped wrong. Now dispatched on
+  `len(PARAMETERS_SET_NAME)`: a one-parameter sub-model keeps the existing
+  profile, a two-parameter one is fitted by the same joint MLE
+  (`_fit_two_parameter_mle`) the full model uses. `("CopulaTawn3",
+  "CopulaTawn1")` and `("CopulaTawn3", "CopulaTawn2")` added to
+  `_SUBMODEL_NESTING` (`psi_u = 1` / `psi_v = 1`, each the upper end of
+  Tawn 3's registered range — verified against the family's own module
+  docstring, not assumed). Size and power measured (Monte Carlo, n = 400):
+  rejection at nominal 5 %/10 % under H0 within the existing tests' noise
+  band; power against a genuine Tawn 3 alternative (ψ_u = 0.5, ψ_v = 0.9)
+  clears 50 % by a wide margin.
+
 ### Added — posterior-weighted empirical margins for the copula step of ICE/SEM (audit FR-7 a)
 
 - New ICE/SEM config key **`copula_margins`** (`"parametric"`, the default and

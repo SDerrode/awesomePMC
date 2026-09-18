@@ -1207,6 +1207,25 @@ _SUBMODEL_NESTING: dict[tuple[str, str], str] = {
         "= 0 leaves Joe's own generator; "
         "pmcprg.copulas.archimedean.bb8 module docstring)."
     ),
+    # FR-9, Tawn-3 round. The first nesting where the *sub-model itself* has
+    # a free extra parameter (Tawn1/2's own psi), not just tau: fitting it
+    # needs the joint MLE (_fit_two_parameter_mle), not the one-parameter
+    # profile every entry above uses — see submodel_lr_test's dispatch on
+    # len(PARAMETERS_SET_NAME). psi_u = 1 and psi_v = 1 are each the upper
+    # end of Tawn3's registered psi_* in (0, 1] range, so the null is the
+    # usual one-sided one (pmcprg.copulas.extreme_value.tawn module
+    # docstring, "Sub-models": "psi_u = 1 -> type 1 at psi = psi_v; psi_v = 1
+    # -> type 2 at psi = psi_u").
+    ("CopulaTawn3", "CopulaTawn1"): (
+        "psi_u = 1 is the upper end of Tawn3's registered psi_u in (0, 1] "
+        "range (Tawn type 1 at psi = psi_v; "
+        "pmcprg.copulas.extreme_value.tawn module docstring)."
+    ),
+    ("CopulaTawn3", "CopulaTawn2"): (
+        "psi_v = 1 is the upper end of Tawn3's registered psi_v in (0, 1] "
+        "range (Tawn type 2 at psi = psi_u; "
+        "pmcprg.copulas.extreme_value.tawn module docstring)."
+    ),
 }
 
 
@@ -1247,41 +1266,48 @@ def _fit_one_parameter_profile(cls, uv: np.ndarray, weights) -> tuple[float, flo
 
 
 def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTest:
-    """Likelihood-ratio test of a two-parameter family's one-parameter sub-model.
+    """Likelihood-ratio test of a family's sub-model, one boundary parameter away.
 
     ``H0``: ``sub_family`` (the extra parameter at its sub-model value);
     ``H1``: ``full_family``. The (weighted) pseudo-likelihoods
     ``ℓ = Σ w log c(û, v̂; ·)`` are maximised separately over each model —
-    the full family by the same joint 2-D MLE as
-    :meth:`CopulaVirt.fit(method='mle')` on a two-parameter family
-    (:func:`pmcprg.copulas._fit._fit_two_parameter_mle`), the sub-model by
-    the 1-D profile of :func:`independence_lr_test` — and compared:
-    ``LR = 2 max(ℓ_full − ℓ_sub, 0)``.
+    the full family by the same joint MLE as
+    :meth:`CopulaVirt.fit(method='mle')` on a multi-parameter family
+    (:func:`pmcprg.copulas._fit._fit_two_parameter_mle`, which despite its
+    name fits any number of extras) — and compared:
+    ``LR = 2 max(ℓ_full − ℓ_sub, 0)``. The sub-model is fitted the same way,
+    dispatched on how many parameters it has: the 1-D profile of
+    :func:`independence_lr_test` when it is a plain one-parameter family
+    (every nesting below except the last two), the same joint MLE as the
+    full model when it is itself a two-parameter family — Tawn 1/2's own
+    ``psi`` (Tawn-3 round, FR-9): profiling τ alone there would leave ``psi``
+    at the constructor's default instead of its own MLE, understating
+    ``ℓ_sub`` and biasing the statistic upward.
 
     Implemented nestings (module docstring, "Two-parameter sub-model tests",
     verifies each against the family's own module docstring): BB1 → Clayton,
     BB1 → Gumbel (``CopulaGH``), Student → Gauss (``CopulaGaussian``), Tawn
     type 1 or 2 → Gumbel (``CopulaGH``), BB6 → Joe, BB6 → Gumbel
-    (``CopulaGH``), BB7 → Clayton, BB7 → Joe. Every one is a **boundary** of the
-    full family's admissible extra-parameter range, so ``LR → ½χ²₀ + ½χ²₁``
-    (Self & Liang 1987), unlike the plain ``χ²₁`` an interior sub-model would
-    give.
+    (``CopulaGH``), BB7 → Clayton, BB7 → Joe, BB8 → Joe, Tawn 3 → Tawn type 1
+    or 2. Every one is a **boundary** of the full family's admissible
+    extra-parameter range, so ``LR → ½χ²₀ + ½χ²₁`` (Self & Liang 1987),
+    unlike the plain ``χ²₁`` an interior sub-model would give.
 
     Parameters
     ----------
-    full_family : the two-parameter ``CopulaVirt`` subclass (or an instance)
-                  — H1.
-    sub_family  : the one-parameter ``CopulaVirt`` subclass (or an instance)
-                  — H0. Must be one of the nestings ``full_family`` registers
-                  above.
+    full_family : the multi-parameter ``CopulaVirt`` subclass (or an
+                  instance) — H1.
+    sub_family  : the ``CopulaVirt`` subclass (or an instance) nested inside
+                  it — H0, one or two parameters. Must be one of the
+                  nestings ``full_family`` registers above.
     uv          : (n, 2) pseudo-observations in (0, 1)².
     weights     : optional (n,) non-negative frequency weights.
 
     Raises
     ------
     ValueError for a ``(full_family, sub_family)`` pair this module does not
-    implement, or when either pseudo-likelihood is not finite at any
-    evaluated parameter value.
+    implement, for a ``sub_family`` with more than two parameters, or when
+    either pseudo-likelihood is not finite at any evaluated parameter value.
     """
     from scipy.stats import chi2, kendalltau
 
@@ -1300,6 +1326,7 @@ def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTes
     w_arg = w if weighted else None
 
     full_entry = _registry_entry(full_cls)
+    sub_entry = _registry_entry(sub_cls)
     tau0, _ = kendalltau(uv[:, 0], uv[:, 1])
     tau_start = float(tau0) if np.isfinite(tau0) else 0.0
     pfit = _fit_two_parameter_mle(full_cls, full_entry, uv, w_arg, tau_start)
@@ -1312,7 +1339,32 @@ def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTes
         raise ValueError(f"{full_cls.__name__}: the pseudo-likelihood is not finite at any "
                          "evaluated (θ, δ)/(τ, extra) point.")
 
-    tau_sub, ll_sub = _fit_one_parameter_profile(sub_cls, uv, w_arg)
+    # The sub-model itself can be a *two*-parameter family (Tawn1/2's own
+    # psi, FR-9's Tawn-3 round): a one-parameter profile over tau alone
+    # would silently leave psi at whatever default the constructor picks,
+    # understating ll_sub and biasing the statistic upward. Dispatch on the
+    # registry the same way _two_parameter_spec/_fit_two_parameter_mle do —
+    # by how many parameters the sub-model actually has — and reuse the
+    # identical joint MLE the full model above is fitted with, not a
+    # bespoke optimiser.
+    n_sub_params = len(sub_entry.value.PARAMETERS_SET_NAME)
+    if n_sub_params == 1:
+        tau_sub, ll_sub = _fit_one_parameter_profile(sub_cls, uv, w_arg)
+        sub_params = {"tau_k": float(tau_sub)}
+    elif n_sub_params == 2:
+        sfit = _fit_two_parameter_mle(sub_cls, sub_entry, uv, w_arg, tau_start)
+        if not sfit.converged:
+            logger.warning("%s vs %s submodel LR test: the sub-model's joint MLE did not "
+                           "converge (%s); using the best point found %s.",
+                           full_cls.__name__, sub_cls.__name__, sfit.message, sfit.params)
+        ll_sub = float(sfit.log_likelihood)
+        sub_params = dict(sfit.params)
+    else:
+        raise ValueError(f"{sub_cls.__name__} has {n_sub_params} parameters; "
+                         "submodel_lr_test only fits a one- or two-parameter sub-model.")
+    if not np.isfinite(ll_sub):
+        raise ValueError(f"{sub_cls.__name__}: the pseudo-likelihood is not finite at any "
+                         "evaluated point.")
 
     stat = max(2.0 * (ll_full - ll_sub), 0.0)
     p_value = 1.0 if stat <= 0.0 else 0.5 * float(chi2.sf(stat, 1))
@@ -1321,7 +1373,7 @@ def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTes
         family=full_cls.__name__, submodel=sub_cls.__name__,
         statistic=float(stat), p_value=float(p_value),
         null_distribution="0.5*chi2(0) + 0.5*chi2(1)", boundary=True, boundary_note=note,
-        full_params=dict(pfit.params), sub_params={"tau_k": float(tau_sub)},
+        full_params=dict(pfit.params), sub_params=sub_params,
         log_likelihood_full=ll_full, log_likelihood_sub=float(ll_sub),
         n_obs=int(uv.shape[0]), n_eff=float(w.sum()),
     )

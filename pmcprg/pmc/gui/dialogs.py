@@ -430,4 +430,17 @@ class _CopulaDialog(QDialog):
             for ekey in _EXTRA_PARAM_DEFAULTS.get(cls_name, {}):
                 _, spin = self._extra_widgets[ekey]
                 out[ekey] = spin.value()
+            # A user can independently move τ and an extra parameter into a
+            # pair the constructor refuses (e.g. BB1's δ ≥ 1/(1 − τ)) — each
+            # spinbox is bounded on its own, but the two are *jointly*
+            # constrained. Repair through the family's own hook, the same
+            # one ICE's placeholder block uses (`pmcprg.pmc.ice._copula_placeholder`):
+            # τ is the value the user chose and stays; only a refused extra
+            # moves, to the nearest value the constructor accepts at that τ.
+            params = {"tau_k": out["tau"],
+                      **{k: v for k, v in out.items()
+                         if k in _EXTRA_PARAM_DEFAULTS.get(cls_name, {})}}
+            repaired = entry.klass.constructible_params(params)
+            if repaired is not params:
+                out.update((k, val) for k, val in repaired.items() if k != "tau_k")
         return out

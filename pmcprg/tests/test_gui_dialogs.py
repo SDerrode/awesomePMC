@@ -299,15 +299,21 @@ def test_copula_dialog_clamps_input_tau_to_family_range(qapp):
 
 
 def test_copula_dialog_bb1_exposes_delta(qapp):
-    """BB1 has a δ extra parameter — it must round-trip via get_block."""
+    """BB1 has a δ extra parameter — it must round-trip via get_block.
+
+    δ = 1.5 at τ = 0.5 is admissible (δ < 1/(1 − τ) = 2.0): the round trip
+    is exact. See ``test_copula_dialog_repairs_a_jointly_refused_pair`` for
+    the case where τ and δ are independently in-range but jointly refused
+    (δ = 2.5 here would be exactly that — `constructible_params` now moves
+    it, so it is no longer a fixed point of the round trip)."""
     from pmcprg.pmc.gui.dialogs import _CopulaDialog
 
-    blk = {"i": 0, "j": 1, "name": "BB1", "tau": 0.5, "delta": 2.5}
+    blk = {"i": 0, "j": 1, "name": "BB1", "tau": 0.5, "delta": 1.5}
     dlg = _CopulaDialog(blk)
     out = dlg.get_block()
     assert out["name"] == "BB1"
     assert "delta" in out
-    assert abs(out["delta"] - 2.5) < 1e-3
+    assert abs(out["delta"] - 1.5) < 1e-3
 
 
 def test_copula_dialog_student_exposes_df(qapp):
@@ -352,6 +358,32 @@ def test_copula_dialog_exposes_both_weights_of_tawn3(qapp):
     for key in ("delta", "df", "nu", "psi"):
         lbl, _ = dlg._extra_widgets[key]
         assert not lbl.isVisibleTo(dlg), f"{key} must be hidden for Tawn3"
+
+
+def test_copula_dialog_repairs_a_jointly_refused_pair(qapp):
+    """τ and an extra parameter each have their own spinbox range, but BB1's
+    ``δ < 1/(1 − τ)`` is a *joint* constraint no single box can express: a
+    user can independently move both into a pair the constructor refuses.
+    ``get_block`` must repair it through the family's own
+    ``constructible_params`` (the hook ``pmcprg.pmc.ice._copula_placeholder``
+    already uses for the same reason), not hand back a block that crashes
+    downstream."""
+    from pmcprg.copulas import CopulaBB1
+    from pmcprg.exceptions import CopulaParameterError
+    from pmcprg.pmc.gui.dialogs import _CopulaDialog
+
+    # τ = 0.5, δ = 10.0: refused (θ = 2/(δ(1−τ)) − 2 ≤ 0 needs τ > 1 − 1/δ = 0.9).
+    with pytest.raises(CopulaParameterError):
+        CopulaBB1(tau_k=0.5, delta=10.0)
+
+    dlg = _CopulaDialog({"i": 0, "j": 0, "name": "BB1", "tau": 0.5, "delta": 1.5})
+    lbl, spin = dlg._extra_widgets["delta"]
+    spin.setValue(10.0)
+    out = dlg.get_block()
+
+    assert out["tau"] == pytest.approx(0.5, abs=1e-4)   # τ is the user's value, untouched
+    assert out["delta"] < 10.0                           # δ moved inside the admissible set
+    CopulaBB1(tau_k=out["tau"], delta=out["delta"])       # must not raise
 
 
 def test_copula_dialog_switches_between_one_and_two_extra_families(qapp):

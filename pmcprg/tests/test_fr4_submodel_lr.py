@@ -46,6 +46,7 @@ from pmcprg.copulas import (
     CopulaStudent,
     CopulaTawn1,
     CopulaTawn2,
+    CopulaTawn3,
     SubmodelLRTest,
     submodel_lr_test,
 )
@@ -100,6 +101,19 @@ def test_tawn_at_psi_1_is_gumbel(tawn_cls):
     tawn = tawn_cls(tau_k=tau, psi=1.0)
     gh = CopulaGH(tau_k=tau)
     assert np.max(np.abs(tawn.logpdf_array(uv) - gh.logpdf_array(uv))) < 1e-10
+
+
+def test_tawn3_at_psi_1_is_tawn1_or_tawn2():
+    """psi_u = 1 -> type 1 at psi = psi_v; psi_v = 1 -> type 2 at psi = psi_u
+    (pmcprg.copulas.extreme_value.tawn module docstring, "Sub-models")."""
+    tau, psi = 0.4, 0.6
+    uv = np.random.default_rng(_seed("tawn3-tawn12-grid")).uniform(0.01, 0.99, size=(50, 2))
+    t1 = CopulaTawn1(tau_k=tau, psi=psi)
+    t2 = CopulaTawn2(tau_k=tau, psi=psi)
+    t3_as_t1 = CopulaTawn3(tau_k=tau, psi_u=1.0, psi_v=psi)
+    t3_as_t2 = CopulaTawn3(tau_k=tau, psi_u=psi, psi_v=1.0)
+    assert np.max(np.abs(t3_as_t1.logpdf_array(uv) - t1.logpdf_array(uv))) < 1e-10
+    assert np.max(np.abs(t3_as_t2.logpdf_array(uv) - t2.logpdf_array(uv))) < 1e-10
 
 
 def test_student_at_large_df_approaches_gaussian():
@@ -160,6 +174,34 @@ def test_submodel_lr_test_result_shape(full_cls, sub_cls):
     assert t.p_value == pytest.approx(expected_p)
 
 
+@pytest.mark.parametrize("sub_cls,fixed", [(CopulaTawn1, "psi_u"), (CopulaTawn2, "psi_v")])
+def test_submodel_lr_test_result_shape_two_parameter_submodel(sub_cls, fixed):
+    """Tawn3 -> Tawn1/2 (FR-9): the sub-model itself has a free ``psi``, so
+    ``sub_params`` carries it — unlike every other registered nesting, whose
+    sub-model is a plain one-parameter family (``{"tau_k"}`` only, the
+    parametrised test above)."""
+    tau, psi = 0.4, 0.6
+    sub = sub_cls(tau_k=tau, psi=psi)
+    data = sub.sample(400, seed=_seed("shape2", sub_cls.__name__))
+    uv = _pseudo(data)
+    t = submodel_lr_test(CopulaTawn3, sub_cls, uv)
+    assert isinstance(t, SubmodelLRTest)
+    assert t.submodel == sub_cls.__name__
+    assert t.statistic >= 0.0
+    assert set(t.full_params) == {"tau_k", "psi_u", "psi_v"}
+    # Not abs=1e-6: psi_u/psi_v are weakly identified at moderate tau (module
+    # docstring, "Identification"), so the boundary MLE at n=400 lands near
+    # but not at 1.0 (0.96 measured at seed "shape2"/CopulaTawn1) — the
+    # test's real assertion is the one below (statistic ~ 0, H0 not rejected).
+    assert t.full_params[fixed] > 0.85
+    assert set(t.sub_params) == {"tau_k", "psi"}
+    assert abs(t.sub_params["psi"] - psi) < 0.15
+    assert t.log_likelihood_full >= t.log_likelihood_sub - 1e-6
+    assert t.n_obs == 400
+    expected_p = 1.0 if t.statistic <= 0.0 else 0.5 * float(chi2.sf(t.statistic, 1))
+    assert t.p_value == pytest.approx(expected_p)
+
+
 def test_submodel_lr_test_accepts_an_instance_and_weights():
     tau = 0.4
     clay = CopulaClayton(tau_k=tau)
@@ -192,6 +234,13 @@ _MC_CASES = {
                           power_kwargs=dict(df=5.0), power_tau=0.4),
     "tawn1-gumbel": dict(full=CopulaTawn1, sub=CopulaGH, tau=0.4,
                         power_kwargs=dict(psi=0.5), power_tau=0.4),
+    # FR-9, Tawn-3 round: the sub-model itself has a free psi, unlike every
+    # case above (sub_kwargs sets it under H0, rather than the sub class's
+    # default psi = 1.0 — itself the Gumbel boundary, an uninteresting case
+    # to test level/power at).
+    "tawn3-tawn1": dict(full=CopulaTawn3, sub=CopulaTawn1, tau=0.4,
+                        sub_kwargs=dict(psi=0.6),
+                        power_kwargs=dict(psi_u=0.5, psi_v=0.9), power_tau=0.4),
 }
 _N_MC = 400
 _N_OBS = 400
@@ -213,7 +262,7 @@ def _rejection_rate(full_cls, sub_cls, gen_copula, n_obs, n_rep, seed_tag, alpha
 def test_submodel_lr_level_near_nominal(case):
     """Empirical rejection under H0 (data simulated from the sub-model itself)."""
     info = _MC_CASES[case]
-    gen = info["sub"](tau_k=info["tau"])
+    gen = info["sub"](tau_k=info["tau"], **info.get("sub_kwargs", {}))
     alpha = np.array([0.05, 0.10])
     rate = _rejection_rate(info["full"], info["sub"], gen, _N_OBS, _N_MC, f"level-{case}", alpha)
     # Binomial MC noise at n = 400: sd(0.05) ~= 0.011, sd(0.10) ~= 0.015 — a
