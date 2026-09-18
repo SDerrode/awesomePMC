@@ -146,6 +146,8 @@ from __future__ import annotations
 
 import logging
 import math
+import platform
+import sys
 
 import numpy as np
 import pytest
@@ -476,6 +478,15 @@ _PILOT_GOLDEN = {
     ),
 }
 
+#: The golden values were written on macOS/arm64 and hold there to the last
+#: bit. Elsewhere libm and NumPy's SIMD kernels round differently: on Linux
+#: (aarch64, x86-64) the log-likelihood still agrees to 3·10⁻¹⁵ and the score
+#: to 2·10⁻⁸, but the conditioning of the information matrix carries that to
+#: 6·10⁻⁶ on the Newton step and 3·10⁻⁶ on the SEs. Off macOS/arm64 the test
+#: therefore compares to tolerances above those measured drifts yet an order
+#: below the 3–5 % that separates the joint SE from the partial one.
+_BIT_EXACT = sys.platform == "darwin" and platform.machine() == "arm64"
+
 
 @pytest.mark.parametrize("family, taus", [
     ("Gauss", (0.6, 0.2, -0.1, 0.5)),
@@ -491,11 +502,18 @@ def test_pilot_path_is_bit_identical(family, taus):
                              "candidates": [family], "fit_margins": False})
     info = ice_lh_information(fitted, Y)
     want = _PILOT_GOLDEN[family]
-    assert info.log_lik == want["log_lik"]
-    np.testing.assert_array_equal(info.grad, np.array(want["grad"]))
-    np.testing.assert_array_equal(info.newton_step, np.array(want["newton_step"]))
-    assert info.se_tau == want["se_tau"]
-    assert info.se_tau_partial == want["se_tau_partial"]
+    if _BIT_EXACT:
+        assert info.log_lik == want["log_lik"]
+        np.testing.assert_array_equal(info.grad, np.array(want["grad"]))
+        np.testing.assert_array_equal(info.newton_step, np.array(want["newton_step"]))
+        assert info.se_tau == want["se_tau"]
+        assert info.se_tau_partial == want["se_tau_partial"]
+    else:
+        assert info.log_lik == pytest.approx(want["log_lik"], rel=1e-12)
+        np.testing.assert_allclose(info.grad, want["grad"], rtol=1e-5)
+        np.testing.assert_allclose(info.newton_step, want["newton_step"], rtol=1e-3)
+        assert info.se_tau == pytest.approx(want["se_tau"], rel=1e-3)
+        assert info.se_tau_partial == pytest.approx(want["se_tau_partial"], rel=1e-3)
 
 
 # ---------------------------------------------------------------------------

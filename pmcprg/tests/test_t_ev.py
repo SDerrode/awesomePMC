@@ -99,7 +99,10 @@ def test_t_ev_does_not_take_the_student_df_branch():
             cop = CopulaTEV(**params)
             assert cop.params == params
             lam = 1.0 / (1.0 + math.exp(-y))
-            assert cop.tail_dependence()[1] == pytest.approx(lam, rel=1e-9)
+            # λ_U → (τ, ν) → λ_U goes through SciPy's Student-t quantile and
+            # cdf: 1.1·10⁻⁹ relative at λ_U ≈ 0.047 with the lowest supported
+            # dependency versions (CI min-versions job), < 10⁻⁹ with current ones
+            assert cop.tail_dependence()[1] == pytest.approx(lam, rel=1e-8)
             assert 0.5 * lam <= params["tau_k"] <= lam
 
 

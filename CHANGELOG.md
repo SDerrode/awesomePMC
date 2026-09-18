@@ -47,6 +47,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (Detailed entries below are unchanged from the development log.)
 
+### Fixed — five tests that held only on the platform that wrote them
+
+- The GitHub CI (Linux x86-64) failed 19 test cases that pass on
+  macOS/arm64, all of one kind: numbers compared to the last bit, or to a
+  tolerance tighter than libm differences allow. None was a library bug. Each
+  drift was measured (CI logs, and a Linux aarch64 container) before any
+  tolerance was chosen.
+- **`test_pilot_path_is_bit_identical`** (`test_fr4_ice_lystig_hughes.py`)
+  and **`test_existing_families_fit_to_the_same_bits`** (`test_tawn3.py`)
+  stay bit-exact on macOS/arm64, where their goldens were written. Elsewhere
+  Lystig–Hughes compares within measured bounds (log-likelihood 10⁻¹², SEs
+  10⁻³ against a drift of 3·10⁻⁶ from the information matrix's
+  conditioning). Tawn-3 compares *maxima*, not maximisers: the golden
+  parameters' log-likelihood on the fit's own pseudo-observations, to 10⁻³.
+  Student's `df` moves by 2 % on its nearly flat likelihood (seed 23) while
+  the maximum moves by 1.6·10⁻⁴, in the Linux fit's favour.
+- **`test_fr4_ice_oakes_bb1_student.py`**: the scalar and matrix Oakes paths
+  reach τ(ψ ± h) through `expit` and `tanh` respectively, and a one-ulp
+  disagreement is multiplied by 1/h² = 10⁸ in the second difference —
+  10⁻¹⁵ apart on macOS, 2.6·10⁻⁸ on x86-64 Linux. Tolerance 10⁻⁹ → 10⁻⁶.
+- **`test_fr4_submodel_lr.py`**: two LR statistics of ≈ 2·10⁻¹⁰ (BB1's δ̂ at
+  its boundary on Clayton data) were compared with pytest's default absolute
+  floor of 10⁻¹²; now `abs=1e-8`.
+- **`test_t_ev.py`**: a λ_U round trip through SciPy's Student-t quantile and
+  cdf reached 1.1·10⁻⁹ with the lowest supported dependencies, against
+  `rel=1e-9`; now `1e-8`.
+
 ### Fixed — documentation back in step with the 39-family registry
 
 - **`README.md`** advertised "17 copula families" in three places and its

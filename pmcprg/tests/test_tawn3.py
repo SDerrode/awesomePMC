@@ -33,6 +33,8 @@ Every seed below is an integer literal or ``zlib.crc32`` of a repr — never
 from __future__ import annotations
 
 import math
+import platform
+import sys
 import zlib
 
 import numpy as np
@@ -461,6 +463,17 @@ _PRE_GENERALISATION_FITS = [
      {"nu": "0x1.9000000000000p+6", "tau_k": "0x1.972106500bc34p-1"}),
 ]
 
+#: The doubles above were written on macOS/arm64 and are compared bit for bit
+#: only there. Elsewhere libm and NumPy's SIMD kernels round differently and
+#: the optimiser stops elsewhere: ~10⁻⁸ relative on most parameters, but 2 %
+#: on Student's ``df`` at seed 23, where the likelihood is nearly flat in ν
+#: (measured on Linux aarch64). The invariant that survives is the *maximum*,
+#: not the maximiser: evaluated on the same pseudo-observations, the golden
+#: parameters' log-likelihood matches the fit's to ≤ 8·10⁻¹¹ for 13 of the 15
+#: cases, 4.9·10⁻⁹ and 1.6·10⁻⁴ for Student at seeds 22 and 23 (the latter in
+#: the Linux fit's favour: the macOS optimiser stopped short on the plateau).
+_BIT_EXACT = sys.platform == "darwin" and platform.machine() == "arm64"
+
 
 @pytest.mark.slow
 @pytest.mark.parametrize("cls_name,kw,seed,expected", _PRE_GENERALISATION_FITS,
@@ -470,7 +483,12 @@ def test_existing_families_fit_to_the_same_bits(cls_name, kw, seed, expected):
     uv = cls(**kw).sample(n=1200, seed=seed)
     got = cls.fit(uv, method="mle")
     assert got.converged
-    assert {k: float(v).hex() for k, v in got.copula.params.items()} == expected
+    if _BIT_EXACT:
+        assert {k: float(v).hex() for k, v in got.copula.params.items()} == expected
+    else:
+        ref = cls(**{k: float.fromhex(v) for k, v in expected.items()})
+        ll_ref = float(np.sum(ref.logpdf_array(got.uv)))
+        assert got.log_likelihood == pytest.approx(ll_ref, abs=1e-3)
 
 
 # --------------------------------------------------------------------------

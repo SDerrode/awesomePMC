@@ -168,9 +168,13 @@ def test_submodel_lr_test_accepts_an_instance_and_weights():
     w = np.ones(300)
     t_inst = submodel_lr_test(CopulaBB1(tau_k=0.6, delta=2.0), clay, uv)
     t_cls = submodel_lr_test(CopulaBB1, CopulaClayton, uv)
-    assert t_inst.statistic == pytest.approx(t_cls.statistic)
+    # On Clayton data BB1's δ̂ sits at its boundary δ = 1 and the statistic is
+    # ≈ 2·10⁻¹⁰: the residue of two optimisations of the same objective, which
+    # differ by 1.0·10⁻¹² on x86-64 Linux. Only an absolute tolerance means
+    # anything here; 10⁻⁸ is still eight orders below any critical value.
+    assert t_inst.statistic == pytest.approx(t_cls.statistic, abs=1e-8)
     t_w = submodel_lr_test(CopulaBB1, CopulaClayton, uv, weights=w)
-    assert t_w.statistic == pytest.approx(t_cls.statistic)
+    assert t_w.statistic == pytest.approx(t_cls.statistic, abs=1e-8)
     assert t_w.n_eff == pytest.approx(300.0)
 
 

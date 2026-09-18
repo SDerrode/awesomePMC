@@ -145,6 +145,18 @@ def _fit_student(N=600, seed=0, max_iter=20, **kwargs):
 # Sanity check: the matrix code on a scalar family matches the scalar path
 # ---------------------------------------------------------------------------
 
+#: The two paths reach the same τ(ψ ± h) through different routines — the
+#: scalar one through ``a + (b − a)·expit ψ`` (``math.exp``), the matrix one
+#: through ``_stderr``'s coordinate (``math.tanh`` for Gauss) — and both then
+#: take a second difference with h = 10⁻⁴. A one-ulp disagreement between the
+#: routines is thus multiplied by 1/h² = 10⁸: the paths agree to 10⁻¹⁵ on
+#: macOS/arm64 (also under 1-ulp perturbations of Y) but only to 2.6·10⁻⁸ on
+#: x86-64 Linux, whose libm rounds the two differently. A structural
+#: mismatch (a missing term, a wrong Jacobian) would move the result by the
+#: size of that term, far above this tolerance.
+_PATH_RTOL = 1e-6
+
+
 def test_matrix_code_on_one_parameter_family_matches_scalar_path():
     """:func:`_oakes_one_pair_multi`, run on Gauss (ψ has size 1), must
     reproduce :func:`_oakes_one_pair_scalar`'s ``se_tau``/``info_psi`` — the
@@ -156,11 +168,11 @@ def test_matrix_code_on_one_parameter_family_matches_scalar_path():
     multi = _oakes_one_pair_multi(fitted, Y, 0, 0, h_psi=H_PSI)
 
     assert multi.info_psi.shape == (1, 1)
-    assert float(multi.info_psi[0, 0]) == pytest.approx(scalar.info_psi, rel=1e-9)
-    assert float(multi.info_complete[0, 0]) == pytest.approx(scalar.info_complete, rel=1e-9)
-    assert float(multi.info_missing[0, 0]) == pytest.approx(scalar.info_missing, rel=1e-9)
-    assert multi.se["tau_k"] == pytest.approx(scalar.se_tau, rel=1e-9)
-    assert multi.se_naive["tau_k"] == pytest.approx(scalar.se_tau_naive, rel=1e-9)
+    assert float(multi.info_psi[0, 0]) == pytest.approx(scalar.info_psi, rel=_PATH_RTOL)
+    assert float(multi.info_complete[0, 0]) == pytest.approx(scalar.info_complete, rel=_PATH_RTOL)
+    assert float(multi.info_missing[0, 0]) == pytest.approx(scalar.info_missing, rel=_PATH_RTOL)
+    assert multi.se["tau_k"] == pytest.approx(scalar.se_tau, rel=_PATH_RTOL)
+    assert multi.se_naive["tau_k"] == pytest.approx(scalar.se_tau_naive, rel=_PATH_RTOL)
 
 
 def test_matrix_code_on_clayton_matches_scalar_path():
@@ -187,7 +199,7 @@ def test_matrix_code_on_clayton_matches_scalar_path():
                               "candidates": ["Clayton"], "fit_margins": False})
     scalar = _scalar(fitted, Y, 0, 0, h_psi=H_PSI)
     multi = _oakes_one_pair_multi(fitted, Y, 0, 0, h_psi=H_PSI)
-    assert multi.se["tau_k"] == pytest.approx(scalar.se_tau, rel=1e-9)
+    assert multi.se["tau_k"] == pytest.approx(scalar.se_tau, rel=_PATH_RTOL)
 
 
 # ---------------------------------------------------------------------------
