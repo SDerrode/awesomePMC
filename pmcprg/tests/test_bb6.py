@@ -452,9 +452,13 @@ def test_log_g_small_branch_is_continuous():
     ``exp(ln S)`` underflows — ``ln S = −1068`` occurs at τ = 0.95, δ = 1."""
     # Either side of the ln S = −20 switch the two branches must agree: the
     # first neglected term of the series is S²/24 ≤ 2·10⁻¹⁹ there.
+    # abs=1e-13, not 1e-15: at the lS = -20 switch itself, math.exp(lS)'s last
+    # bit depends on the CPU's SIMD/FMA codepath — GitHub Actions runners are
+    # not a fixed microarchitecture, and a 5e-15 cross-run drift at exactly
+    # this point has been observed in CI (measured, not assumed).
     for lS in (-30.0, -20.000001, -20.0, -19.999999, -19.0):
         got = float(_bb6_log_g(np.array([lS]))[0])
-        assert got == pytest.approx(lS - 0.5 * math.exp(lS), abs=1e-15)
+        assert got == pytest.approx(lS - 0.5 * math.exp(lS), abs=1e-13)
     # far below the switch, where exp(ln S) underflows to 0.0
     assert float(_bb6_log_g(np.array([-1068.3]))[0]) == pytest.approx(-1068.3, rel=1e-15)
     # far above it, where G = 1 to rounding

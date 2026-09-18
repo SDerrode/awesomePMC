@@ -332,7 +332,11 @@ _TAU_MPMATH = [
 
 @pytest.mark.parametrize("nu,sp,tau", _TAU_MPMATH)
 def test_tau_quadrature_matches_mpmath(nu, sp, tau):
-    assert _tev_tau_quad(_s_of_sp(sp, nu), nu) == pytest.approx(tau, rel=1e-14, abs=0.0)
+    # rel=1e-12, not 1e-14: the deepest-tail case (nu=100, sp=5, tau~1.19e-21)
+    # measured a 1.2e-14 relative drift across GitHub Actions runners — the
+    # quadrature's own exp/log chain at that magnitude is sensitive to the
+    # CPU's SIMD/FMA codepath, not a platform this package controls.
+    assert _tev_tau_quad(_s_of_sp(sp, nu), nu) == pytest.approx(tau, rel=1e-12, abs=0.0)
 
 
 def test_tau_is_decreasing_in_s_and_bracketed_by_lambda_u():
