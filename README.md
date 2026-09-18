@@ -10,7 +10,7 @@
 classification of non-Gaussian time series and images.**
 
 `awesomePMC` implements **pairwise Markov chains** (PMC) — up to the general PMC
-of Derrode & Pieczynski (2013), whose observation margins fᵢⱼ are indexed by the
+of Derrode & Pieczynski (2013), whose observation margins f_ij are indexed by the
 pair of consecutive hidden states — and the **hidden Markov chains** they
 contain, with the dependence between consecutive observations modelled by
 bivariate **copulas**. A model is a plain TOML file: simulate it, classify a
@@ -32,11 +32,50 @@ Reference implementation of:
 
 ---
 
+## Scientific lineage
+
+`awesomePMC` builds on the **pairwise Markov chain** model introduced by
+Wojciech Pieczynski — a strict generalisation of the hidden Markov chain that
+drops the assumption that the *hidden* process alone is Markov, and lets the
+observation depend on a *pair* of consecutive hidden states:
+
+> W. Pieczynski. **Pairwise Markov chains.** *IEEE Transactions on Pattern
+> Analysis and Machine Intelligence* 25(5) (2003), 634–639.
+> [doi:10.1109/TPAMI.2003.1195998](https://doi.org/10.1109/TPAMI.2003.1195998)
+
+The two papers this library implements (above) are by **Stéphane Derrode and
+Wojciech Pieczynski**, and stand on further work led by Pieczynski and
+collaborators:
+
+- **Copulas in Markov chains**, first proposed for the noise of a pairwise
+  Markov chain by N. Brunel and W. Pieczynski: [doi:10.1109/SSP.2003.1289350](https://doi.org/10.1109/SSP.2003.1289350)
+  (2003) and, in full, [doi:10.1016/j.sigpro.2005.01.018](https://doi.org/10.1016/j.sigpro.2005.01.018)
+  (*Signal Processing* 85 (2005), 2304–2315).
+- **Iterative Conditional Estimation (ICE)**, the unsupervised estimator this
+  package's `ice()` implements: W. Pieczynski, *Statistical image
+  segmentation*, *Machine Graphics and Vision* 1(1/2) (1992), 261–268 (no DOI);
+  Y. Delignon, A. Marzouki & W. Pieczynski, [doi:10.1109/83.624951](https://doi.org/10.1109/83.624951)
+  (1997).
+- **Segmentation with pairwise Markov chains**: S. Derrode & W. Pieczynski,
+  [doi:10.1109/TSP.2004.832015](https://doi.org/10.1109/TSP.2004.832015)
+  (*IEEE Transactions on Signal Processing* 52(9) (2004), 2477–2489).
+
+`sem()` implements the complementary stochastic estimator, SEM, from Celeux &
+Diebolt (1985) — see [`REFERENCES.md`](https://github.com/SDerrode/awesomePMC/blob/main/REFERENCES.md)
+for the full list, and [Citation and references](#citation-and-references)
+below for how to cite this work.
+
+*awesomePMC is built on Wojciech Pieczynski's introduction of pairwise Markov
+chains and of Iterative Conditional Estimation, and on the two papers above
+that he co-authored with Stéphane Derrode — the model and the estimator this
+package packages for reuse.*
+
+
 ## Why awesomePMC?
 
 - **The general pairwise Markov chain.** Five variants, from the classical
   hidden Markov chain (HMC-IN) to the PMC of A16 Eqs. 12–14 with *pair margins*
-  fᵢⱼ — the law of yₙ given (xₙ, xₙ₊₁) = (i, j), under which X is not a Markov
+  f_ij — the law of yₙ given (xₙ, xₙ₊₁) = (i, j), under which X is not a Markov
   chain — or *state margins* fᵢ. Margins are any `scipy.stats` family, or
   multivariate Gaussian (d > 1) for the copula-free variants.
 - **39 copula families** — elliptical (Gaussian, Student-t), Archimedean
@@ -402,11 +441,11 @@ Five variants of the jointly Markovian pair process (X, Y) are supported, from
 the simplest to the most general. Every model has one of two **margin
 structures** (`[model].margin_structure`):
 
-- **`"state"`** — K densities fᵢ, one per state (fᵢⱼ = fᵢ). By the Proposition
+- **`"state"`** — K densities fᵢ, one per state (f_ij = fᵢ). By the Proposition
   of A16 §2.1, this is exactly the case where X is a Markov chain: a PMC with
   state margins is a stationary reversible HMC-DN, and a PMC-IN with state
   margins an HMC-IN. Every HMC-* variant has state margins.
-- **`"pair"`** — K² densities fᵢⱼ, the law of yₙ given (xₙ, xₙ₊₁) = (i, j): the
+- **`"pair"`** — K² densities f_ij, the law of yₙ given (xₙ, xₙ₊₁) = (i, j): the
   **general PMC** of A16 Eqs. 12–14, where X is *not* Markov. Allowed for PMC
   and PMC-IN only.
 
@@ -414,13 +453,13 @@ structures** (`[model].margin_structure`):
 |---------|-------|--------------------|------|--------|
 | **HMC-IN** | Transition matrix A | fⱼ(yₙ) | — | No |
 | **HMC-IN2** | Transition matrix A | fⱼ(yₙ) | — | No |
-| **HMC-DN** | Transition matrix A | fⱼ(yₙ) · cᵢⱼ(Fᵢ(yₙ₋₁), Fⱼ(yₙ)) | — | Yes — cᵢⱼ |
-| **PMC-IN** | Joint distribution p | fᵢ(yₙ) · fⱼ(yₙ₊₁) | fᵢⱼ(yₙ) · fⱼᵢ(yₙ₊₁) | No |
-| **PMC** | Joint distribution p | fᵢ(yₙ) · fⱼ(yₙ₊₁) · cᵢⱼ(Fᵢ(yₙ), Fⱼ(yₙ₊₁)) | fᵢⱼ(yₙ) · fⱼᵢ(yₙ₊₁) · cᵢⱼ(Fᵢⱼ(yₙ), Fⱼᵢ(yₙ₊₁)) | Yes — cᵢⱼ |
+| **HMC-DN** | Transition matrix A | fⱼ(yₙ) · c_ij(Fᵢ(yₙ₋₁), Fⱼ(yₙ)) | — | Yes — c_ij |
+| **PMC-IN** | Joint distribution p | fᵢ(yₙ) · fⱼ(yₙ₊₁) | f_ij(yₙ) · f_ji(yₙ₊₁) | No |
+| **PMC** | Joint distribution p | fᵢ(yₙ) · fⱼ(yₙ₊₁) · c_ij(Fᵢ(yₙ), Fⱼ(yₙ₊₁)) | f_ij(yₙ) · f_ji(yₙ₊₁) · c_ij(F_ij(yₙ), F_ji(yₙ₊₁)) | Yes — c_ij |
 
 Stationarity and reversibility only make the right margin of the pair (i, j)
-the left margin of (j, i) — the index inversion fⱼᵢ of A16 Eq. 12; they do
-**not** make fᵢⱼ independent of j. Versions 0.5.0–0.8.x collapsed K² margins to
+the left margin of (j, i) — the index inversion f_ji of A16 Eq. 12; they do
+**not** make f_ij independent of j. Versions 0.5.0–0.8.x collapsed K² margins to
 fᵢ on that mistaken ground.
 
 ### TOML model files
@@ -552,16 +591,16 @@ init        = "model"    # "model" (default) | "kmeans"
 > `pmcprg.pmc._estim_common.degenerate_states`.
 
 > **K²-format and older files.** Blocks indexed by `(i, j)` are kept as pair
-> margins fᵢⱼ on PMC and PMC-IN (an `INFO` line says so once per process), and
-> ICE/SEM estimate each fᵢⱼ separately. Older files that relied on the collapse
+> margins f_ij on PMC and PMC-IN (an `INFO` line says so once per process), and
+> ICE/SEM estimate each f_ij separately. Older files that relied on the collapse
 > to K state margins must add `margin_structure = "state"` under `[model]` (the
 > `(i, 0)` block is then kept as fᵢ). HMC-* variants refuse pair margins.
 >
-> **Estimating pair margins.** ICE and SEM fit fᵢⱼ by weighted maximum
+> **Estimating pair margins.** ICE and SEM fit f_ij by weighted maximum
 > likelihood on both views of the pair density: yₙ with weight ξₙ(i, j) and
 > yₙ₊₁ with weight ξₙ(j, i) (each halved, so the total weight stays N − 1). It
 > is an ICE-style estimator, not an exact EM M-step. Copula pseudo-observations
-> for cᵢⱼ are (Fᵢⱼ(yₙ), Fⱼᵢ(yₙ₊₁)) with weight ξₙ(i, j).
+> for c_ij are (F_ij(yₙ), F_ji(yₙ₊₁)) with weight ξₙ(i, j).
 
 Nine example models are provided in
 [`pmcprg/pmc/models/`](https://github.com/SDerrode/awesomePMC/tree/main/pmcprg/pmc/models):
@@ -576,7 +615,7 @@ Nine example models are provided in
 | `sp2016_gice_k2.toml` | PMC with non-Gaussian state margins, i.e. an SR HMC-DN (GICE fixture, SP-2016 §5.1) |
 | `pmc_in_gauss_k2.toml` | PMC-IN |
 | `pmc_gauss_k2.toml` | PMC with state margins (an SR HMC-DN, A16 §2.1 Proposition) |
-| `pmc_pair_gauss_k2.toml` | General PMC with pair margins fᵢⱼ (CSDA-2013 Table 1 Gaussian margins, Clayton τ = 0.7) |
+| `pmc_pair_gauss_k2.toml` | General PMC with pair margins f_ij (CSDA-2013 Table 1 Gaussian margins, Clayton τ = 0.7) |
 
 ### Python API
 
@@ -921,13 +960,13 @@ maps every feature to its paper.
 }
 ```
 
-The general PMC is defined by A16 Eqs. 12–14 (pair margins fᵢⱼ):
+The general PMC is defined by A16 Eqs. 12–14 (pair margins f_ij):
 
-- **A16, Eq. 12**: f(yₙ, yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j) = fᵢⱼ(yₙ) · fⱼᵢ(yₙ₊₁) · cᵢⱼ(Fᵢⱼ(yₙ), Fⱼᵢ(yₙ₊₁))
-- **A16, Eq. 13**: p(Xₙ₊₁ = j | Xₙ = i, Yₙ = y) ∝ p(i, j) · fᵢⱼ(y)
-- **A16, Eq. 14**: p(Yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j, Yₙ = y) = fⱼᵢ(yₙ₊₁) · cᵢⱼ(Fᵢⱼ(y), Fⱼᵢ(yₙ₊₁))
+- **A16, Eq. 12**: f(yₙ, yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j) = f_ij(yₙ) · f_ji(yₙ₊₁) · c_ij(F_ij(yₙ), F_ji(yₙ₊₁))
+- **A16, Eq. 13**: p(Xₙ₊₁ = j | Xₙ = i, Yₙ = y) ∝ p(i, j) · f_ij(y)
+- **A16, Eq. 14**: p(Yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j, Yₙ = y) = f_ji(yₙ₊₁) · c_ij(F_ij(y), F_ji(yₙ₊₁))
 
-With state margins (fᵢⱼ = fᵢ) Eq. 13 no longer depends on y, X is a Markov
+With state margins (f_ij = fᵢ) Eq. 13 no longer depends on y, X is a Markov
 chain (A16 §2.1, Proposition) and the model is a stationary reversible HMC-DN —
 see [Model variants](#model-variants) above.
 

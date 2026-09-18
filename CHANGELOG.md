@@ -47,6 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (Detailed entries below are unchanged from the development log.)
 
+### Added — a "Scientific lineage" section (README) and foundational references
+
+- The README's model description cited Derrode & Pieczynski (2013, 2016) but
+  not the work they build on. New **Scientific lineage** section: Pieczynski
+  (2003) introduced the pairwise Markov chain itself; Brunel & Pieczynski
+  (2003, 2005) first combined it with copulas; Pieczynski (1992) and
+  Delignon, Marzouki & Pieczynski (1997) introduced ICE; Derrode & Pieczynski
+  (2004) applied pairwise Markov chains to segmentation. All five DOIs
+  resolved against Crossref.
+- **`CITATION.cff`**: the two 2003/2005 foundational papers added to
+  `references` (informational — citing them is not asked for, only A16/A23
+  are).
+
 ### Fixed — five tests that held only on the platform that wrote them
 
 - The GitHub CI (Linux x86-64) failed 19 test cases that pass on

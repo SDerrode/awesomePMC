@@ -75,3 +75,31 @@ references:
     end: 17
     year: 2016
     doi: 10.1016/j.sigpro.2016.03.008
+  # Foundational work this package builds on (not required for citation,
+  # listed for scientific lineage — see the README's "Scientific lineage").
+  - type: article
+    title: Pairwise Markov chains
+    authors:
+      - family-names: Pieczynski
+        given-names: Wojciech
+    journal: IEEE Transactions on Pattern Analysis and Machine Intelligence
+    volume: 25
+    issue: 5
+    start: 634
+    end: 639
+    year: 2003
+    doi: 10.1109/TPAMI.2003.1195998
+  - type: article
+    title: Unsupervised signal restoration using hidden Markov chains with copulas
+    authors:
+      - family-names: Brunel
+        given-names: Nicolas
+      - family-names: Pieczynski
+        given-names: Wojciech
+    journal: Signal Processing
+    volume: 85
+    issue: 12
+    start: 2304
+    end: 2315
+    year: 2005
+    doi: 10.1016/j.sigpro.2005.01.018
