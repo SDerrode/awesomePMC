@@ -6,8 +6,9 @@ Why this exists
 Every diagnostic that looks at a fitted pairwise Markov chain starts by
 pushing the observations through the fitted margin CDFs, and every one of
 them used to write ``margin(k).cdf_vec(Y)`` for the K states. That is only
-right for **state** margins (``f_ij = f_i``). A general PMC (A16 Eqs. 12–14)
-attaches a density to the *pair* of states,
+right for **state** margins (``f_ij = f_i``). A general PMC
+(DerrodePieczynski_CSDA2013 Eqs. 12–14) attaches a density to the *pair* of
+states,
 
     f(y_n, y_{n+1} | x_n = i, x_{n+1} = j)
         = f_ij(y_n) · f_ji(y_{n+1}) · c_ij(F_ij(y_n), F_ji(y_{n+1})),
@@ -43,7 +44,8 @@ What is built
   x_{n+1}) = (j, i)}``.
 * :func:`state_law` — the law of ``y_n`` given ``x_n = i`` alone, which a
   per-state sample ``{y_n : x_n = i}`` follows: ``f_i`` for state margins, and
-  for pair margins A16 Eq. 12's left margin summed over ``x_{n+1}``,
+  for pair margins DerrodePieczynski_CSDA2013 Eq. 12's left margin summed over
+  ``x_{n+1}``,
 
       g_i(y) = Σ_j p(x_{n+1} = j | x_n = i) f_ij(y) = Σ_j (p_ij / p_i) f_ij(y),
       p_i = Σ_j p_ij
@@ -64,8 +66,9 @@ References
 ----------
 * Derrode, S. & Pieczynski, W. (2013). Unsupervised data classification using
   pairwise Markov chains with automatic copulas selection. *Comput. Statist.
-  Data Anal.* 63, 81–98 (A16) — Eq. 12 (pair density and index inversion),
-  Eqs. 13–14 (transition), §2.1 Proposition (state margins ⇔ X Markov).
+  Data Anal.* 63, 81–98 (DerrodePieczynski_CSDA2013) — Eq. 12 (pair density
+  and index inversion), Eqs. 13–14 (transition), §2.1 Proposition (state
+  margins ⇔ X Markov).
 * Genest, C., Rémillard, B. & Beaudoin, D. (2009). Goodness-of-fit tests for
   copulas: A review and a power study. *Insurance Math. Econom.* 44(2),
   199–213 — pseudo-observations as the input of copula GoF statistics.
@@ -178,7 +181,8 @@ def margin_cdfs(model, Y, *, clip=CDF_CLIP, broadcast: bool = False) -> np.ndarr
 
 
 def copula_pseudo_obs(F, xi, i: int, j: int, sel=None):
-    """Weighted pseudo-observations of the copula ``c_ij`` (A16 Eq. 12).
+    """Weighted pseudo-observations of the copula ``c_ij``
+    (DerrodePieczynski_CSDA2013 Eq. 12).
 
     Parameters
     ----------
@@ -209,15 +213,15 @@ def copula_pseudo_obs(F, xi, i: int, j: int, sel=None):
 def margin_pit_dual(F, xi, i: int, j: int):
     """Weighted probability integral transform of the pair margin ``f_ij``.
 
-    Dual view (A16 Eq. 12): ``f_ij`` is the left margin of the pair ``(i, j)``
-    and the right margin of the pair ``(j, i)``, so it accounts for
+    Dual view (DerrodePieczynski_CSDA2013 Eq. 12): ``f_ij`` is the left margin of the
+    pair ``(i, j)`` and the right margin of the pair ``(j, i)``, so it accounts for
 
     * ``u = F_ij(y_n)``     with weight ``ξ_n(i, j)``, ``n = 0 … N−2``;
     * ``u = F_ij(y_{n+1})`` with weight ``ξ_n(j, i)``, ``n = 0 … N−2``.
 
     Under the model, ``P(x_n=i, x_{n+1}=j, y_n ∈ dy) = p_ij f_ij(y) dy`` and
-    ``P(x_n=j, x_{n+1}=i, y_{n+1} ∈ dy) = p_ji f_ij(y) dy`` (A16 Eqs. 12–13,
-    symmetric ``p``), so the ξ-weighted empirical CDF of ``u`` is uniform in
+    ``P(x_n=j, x_{n+1}=i, y_{n+1} ∈ dy) = p_ji f_ij(y) dy`` (DerrodePieczynski_CSDA2013
+    Eqs. 12–13, symmetric ``p``), so the ξ-weighted empirical CDF of ``u`` is uniform in
     expectation when ``f_ij`` is right. Returned as one
     sample of length ``2(N−1)``, left view first. Summed over all pairs the
     weights total ``2(N−1)``: every observation is counted once as a left

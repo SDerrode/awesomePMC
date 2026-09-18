@@ -30,7 +30,7 @@ DEFAULT_DATA = "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/data/ti
 
 #: Copula families selected at every M-step (1-parameter, no Product).
 COPULA_CANDIDATES = ["Gauss", "Clayton", "GH", "Frank"]
-#: GICE margin families (A23 §5 set).
+#: GICE margin families (DerrodePieczynski_SP2016 §5 set).
 GICE_CANDIDATES = ["norm", "gamma", "invgamma", "betaprime"]
 #: Family rule of the GICE margins: BIC, so that 4-parameter families must earn
 #: their extra parameters (the library default "mle" always favours them).

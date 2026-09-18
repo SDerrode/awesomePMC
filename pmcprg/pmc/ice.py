@@ -37,14 +37,15 @@ Iterate until convergence:
     3. (Optional, ``fit_margins``) Margin re-estimation by weighted MLE, the
        declared family kept (or selected among ``candidates`` — GICE):
        * state margins f_i : y_n with weight γ_n(i);
-       * pair margins f_ij (general PMC, A16 Eqs. 12–14) — "dual view":
-         y_n with weight ξ_n(i,j) and y_{n+1} with weight ξ_n(j,i), since the
-         right margin of the pair (j,i) is f_ij. For a Gaussian margin,
-         μ̂_{ij} = Σ w y / Σ w and σ̂²_{ij} = Σ w (y − μ̂)² / Σ w over that
-         sample. An ICE-style estimator, not an exact EM M-step (see
-         ``_pair_margin_sample``).
+       * pair margins f_ij (general PMC, DerrodePieczynski_CSDA2013
+         Eqs. 12–14) — "dual view": y_n with weight ξ_n(i,j) and
+         y_{n+1} with weight ξ_n(j,i), since the right margin of the
+         pair (j,i) is f_ij. For a Gaussian margin,
+         μ̂_{ij} = Σ w y / Σ w and σ̂²_{ij} = Σ w (y − μ̂)² / Σ w
+         over that sample. An ICE-style estimator, not an exact EM
+         M-step (see ``_pair_margin_sample``).
 
-Relation to the papers' ICE (A16 §4.2, A23 §3)
+Relation to the papers' ICE (DerrodePieczynski_CSDA2013 §4.2, DerrodePieczynski_SP2016 §3)
 -----------------------------------------------
 This is a *responsibility-weighted* variant of ICE, not the scheme of
 Derrode & Pieczynski (2013, §4.2, Eqs. 21–24) and (2016, §3 steps (b)–(c),
@@ -83,7 +84,7 @@ ICE configuration (TOML [ice] section or dict)
 
 References
 ----------
-ICE itself (the references A23 gives for the method):
+ICE itself (the references DerrodePieczynski_SP2016 gives for the method):
 
 * Pieczynski, W. (1992). Statistical image segmentation. *Machine Graphics
   and Vision* 1(1/2), 261–268.
@@ -96,12 +97,12 @@ ICE itself (the references A23 gives for the method):
 
 The two papers this package reproduces:
 
-* A16 — Derrode, S. & Pieczynski, W. (2013). Unsupervised data
-  classification using pairwise Markov chains with automatic copulas
-  selection. *CSDA* 63, 81–98.
-* A23 — Derrode, S. & Pieczynski, W. (2016). Unsupervised classification
-  using hidden Markov chain with unknown noise copulas and margins.
-  *Signal Processing* 128, 8–17.
+* DerrodePieczynski_CSDA2013 — Derrode, S. & Pieczynski, W. (2013).
+  Unsupervised data classification using pairwise Markov chains with
+  automatic copulas selection. *CSDA* 63, 81–98.
+* DerrodePieczynski_SP2016 — Derrode, S. & Pieczynski, W. (2016).
+  Unsupervised classification using hidden Markov chain with unknown
+  noise copulas and margins. *Signal Processing* 128, 8–17.
 """
 
 import copy as _copy
@@ -784,11 +785,13 @@ def _fit_copula_params(
 #   * ``xvcic`` → cross-validated out-of-fold weighted log-likelihood
 #
 # Provenance (audit K-16):
-#   * ``huard`` is A16 Eq. 20 (Derrode & Pieczynski 2013, CSDA) — the
-#     criterion the paper actually used for copula selection.
-#   * ``mle``   is the "PLM" rule of A23 Example 3.3, Eq. (11) (Derrode &
-#     Pieczynski 2016, Signal Processing); A23 reports Huard's criterion
-#     "less efficient than PLM" in its experiments.
+#   * ``huard`` is DerrodePieczynski_CSDA2013 Eq. 20 (Derrode & Pieczynski
+#     2013, CSDA) — the criterion the paper actually used for copula
+#     selection.
+#   * ``mle``   is the "PLM" rule of DerrodePieczynski_SP2016 Example 3.3,
+#     Eq. (11) (Derrode & Pieczynski 2016, Signal Processing);
+#     DerrodePieczynski_SP2016 reports Huard's criterion "less efficient
+#     than PLM" in its experiments.
 #   * ``aic``, ``bic``, ``cvm``, ``xvcic``, ``huard_common``, ``huard_global``
 #     are package additions with no counterpart in either paper.
 #
@@ -1545,11 +1548,12 @@ def _fit_margin_weighted_numerical(
 #   * "aic"        — −AIC = 2 logL − 2k
 #   * "bic"        — −BIC = 2 logL − k log n
 #
-# Provenance (audit K-16): "kolmogorov" is A23 Example 3.1, Eq. (10)
-# (Derrode & Pieczynski 2016, Signal Processing) — the rule the paper used
-# for margin selection. The margin "mle", "aic" and "bic" rules are package
-# additions (the paper's PLM rule, A23 Example 3.3 Eq. (11), is stated for
-# copula selection).
+# Provenance (audit K-16): "kolmogorov" is DerrodePieczynski_SP2016
+# Example 3.1, Eq. (10) (Derrode & Pieczynski 2016, Signal Processing) —
+# the rule the paper used for margin selection. The margin "mle", "aic"
+# and "bic" rules are package additions (the paper's PLM rule,
+# DerrodePieczynski_SP2016 Example 3.3 Eq. (11), is stated for copula
+# selection).
 
 MARGIN_SELECTION_RULES = ("mle", "kolmogorov", "aic", "bic")
 DEFAULT_MARGIN_SELECTION_RULE = "mle"
@@ -1854,11 +1858,12 @@ def _pair_margin_sample(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Dual-view weighted sample of the pair margin f_ij (general PMC).
 
-    In an SR-PMC the pair ``(y_n, y_{n+1})`` given ``(x_n, x_{n+1}) = (i, j)``
-    has density ``f_ij(y_n) f_ji(y_{n+1}) c_ij(F_ij(y_n), F_ji(y_{n+1}))``
-    (A16 Eq. 12): ``y_n`` is the *left* observation of the pair ``(x_n,
-    x_{n+1})`` and ``y_{n+1}`` its *right* observation, and the right margin
-    of the pair ``(j, i)`` is ``f_ij``. The margin f_ij is therefore fitted by
+    In an SR-PMC the pair ``(y_n, y_{n+1})`` given
+    ``(x_n, x_{n+1}) = (i, j)`` has density ``f_ij(y_n) f_ji(y_{n+1})
+    c_ij(F_ij(y_n), F_ji(y_{n+1}))`` (DerrodePieczynski_CSDA2013 Eq. 12):
+    ``y_n`` is the *left* observation of the pair ``(x_n, x_{n+1})`` and
+    ``y_{n+1}`` its *right* observation, and the right margin of the pair
+    ``(j, i)`` is ``f_ij``. The margin f_ij is therefore fitted by
     weighted maximum likelihood on
 
         { y_n     with weight ½ ξ_n(i, j) }  ∪  { y_{n+1} with weight ½ ξ_n(j, i) },
@@ -1877,7 +1882,7 @@ def _pair_margin_sample(
     It is the conditional (ICE-style) estimator: the complete-data estimator
     of f_ij on the pairs, with the unknown pair memberships replaced by their
     posterior weights. It is **not** an exact EM M-step. With pair margins
-    the transition of the complete chain is (A16 Eqs. 13–14)
+    the transition of the complete chain is (DerrodePieczynski_CSDA2013 Eqs. 13–14)
 
         p(x_{n+1} = j, y_{n+1} | x_n = i, y_n)
             = p_ij f_ij(y_n) / Σ_k p_ik f_ik(y_n) · f_ji(y_{n+1}) c_ij(·, ·),
@@ -1911,9 +1916,10 @@ def _m_step_pair_margins(
     """Margin part of the M-step for pair margins f_ij — updates blocks in place.
 
     Every K²-format block ``{"i", "j", ...}`` is re-estimated on its own
-    dual-view sample (:func:`_pair_margin_sample`, A16 Eqs. 12–14), so the
-    K² densities stay distinct, and GICE (a ``candidates`` list) selects the
-    family per pair, not per state. A block with negligible weight is kept.
+    dual-view sample (:func:`_pair_margin_sample`,
+    DerrodePieczynski_CSDA2013 Eqs. 12–14), so the K² densities stay
+    distinct, and GICE (a ``candidates`` list) selects the family per pair,
+    not per state. A block with negligible weight is kept.
 
     ``obs`` (N,) bool — observed rows (missing observations, strategy
     ``"available"``): the dual-view sample keeps only the observed endpoints,
@@ -1990,8 +1996,9 @@ def _m_step(
        GICE family selection via :func:`_select_margin_family`, per block:
 
        * state margins f_i — weights ``γ_n(i)`` on ``y_n``;
-       * pair margins f_ij (general PMC, A16 Eqs. 12–14) — the dual-view
-         sample of :func:`_pair_margin_sample`: ``y_n`` with weight
+       * pair margins f_ij (general PMC, DerrodePieczynski_CSDA2013
+         Eqs. 12–14) — the dual-view sample of
+         :func:`_pair_margin_sample`: ``y_n`` with weight
          ``ξ_n(i, j)`` and ``y_{n+1}`` with weight ``ξ_n(j, i)``.
     3. **Copulas** (only for variants that use them): per-pair (i, j)
        weighted family selection + τ fit via :func:`_select_and_fit_copula`.
@@ -2025,14 +2032,17 @@ def _m_step(
     #               = Σ_j ξ[k, i, j]      (k = 0…N-2; "first-view" sum)
     #               = Σ_j ξ[k-1, j, i]    (k = 1…N-1; "second-view" sum)
     #
-    #      i.e. the pair dual view below pooled over j (up to the two end
-    #      points): K MLE per M-step. By the Proposition of A16 §2.1 this is
-    #      the structure where X is Markov.
+    #      i.e. the pair dual view below pooled over j (up to the
+    #      two end points): K MLE per M-step. By the Proposition of
+    #      DerrodePieczynski_CSDA2013 §2.1 this is the structure
+    #      where X is Markov.
     #
-    #    * "pair" — K² densities f_ij (general PMC, A16 Eqs. 12–14): the
-    #      dual-view weighted MLE of :func:`_pair_margin_sample`, which does
-    #      not tie f_ij to f_ik. (Weighting every block by γ_n(i), as the
-    #      state branch does, would give f_ij = f_ik after one M-step.)
+    #    * "pair" — K² densities f_ij (general PMC,
+    #      DerrodePieczynski_CSDA2013 Eqs. 12–14): the dual-view
+    #      weighted MLE of :func:`_pair_margin_sample`, which does
+    #      not tie f_ij to f_ik. (Weighting every block by γ_n(i),
+    #      as the state branch does, would give f_ij = f_ik after
+    #      one M-step.)
     if fit_margins:
         margins_raw = raw.get("margins", [])
         if current.margin_structure == "pair":
@@ -2054,7 +2064,7 @@ def _m_step(
         copulas_raw = raw.get("copulas", [])
 
         # Marginal CDFs of the *current* model (the one that produced ξ).
-        # Pseudo-observations of the copula c_ij (A16 Eq. 12):
+        # Pseudo-observations of the copula c_ij (DerrodePieczynski_CSDA2013 Eq. 12):
         #     u_n = F_ij(Y_n),  v_n = F_ji(Y_{n+1}),  weight ξ_n(i, j).
         both = None
         if obs is not None:
@@ -2256,7 +2266,8 @@ def _empirical_margin_cdfs(
 
           F̂_i(y) = Σ_n γ_n(i) 1{y_n ≤ y} / (Σ_n γ_n(i) + 1).
 
-    * **pair margins** f_ij (general PMC, A16 Eq. 12): the pair density
+    * **pair margins** f_ij (general PMC, DerrodePieczynski_CSDA2013 Eq. 12):
+      the pair density
       ``f_ij(y_n) f_ji(y_{n+1}) c_ij(F_ij(y_n), F_ji(y_{n+1}))`` given
       ``(x_n, x_{n+1}) = (i, j)`` says that f_ij is the law of the *left*
       observation ``y_n`` of a pair in state (i, j) **and** of the *right*
@@ -2692,8 +2703,9 @@ def _m_step_impute(
       (forward–backward, γ^(d), ξ^(d) = P(x | y^(d))), then the complete-data
       ICE estimator of every margin and copula block (weighted MLE, family
       scores per candidate).
-    * Parameters: the D estimates are averaged, as A16 Eq. 24 averages the
-      estimates of L posterior draws: τ (and a two-parameter family's extra
+    * Parameters: the D estimates are averaged, as DerrodePieczynski_CSDA2013
+      Eq. 24 averages the estimates of L posterior draws: τ (and a
+      two-parameter family's extra
       parameter) on its natural scale, margin parameters on theirs (``loc``,
       ``scale``, shapes; mean vector and covariance matrix of a multivariate
       normal). The family is chosen once from the D score tables
@@ -3151,9 +3163,10 @@ def _align_kmeans_labels(
     ICE then starts far from any sensible basin. The assignment maximises
     Σ_n log g_{k(c_n)}(y_n) over bijections clusters → states (Hungarian
     algorithm), where g_k is the law of y_n given x_n = k under ``model``:
-    f_k for state margins, the mixture Σ_j (p_kj / p_k) f_kj for pair margins
-    (A16 Eq. 12). Declared margins identical across states leave every
-    assignment equal and the numbering unchanged.
+    f_k for state margins, the mixture Σ_j (p_kj / p_k) f_kj for pair
+    margins (DerrodePieczynski_CSDA2013 Eq. 12). Declared margins
+    identical across states leave every assignment equal and the numbering
+    unchanged.
     """
     from scipy.optimize import linear_sum_assignment
 
@@ -3208,8 +3221,8 @@ def _warmstart_from_kmeans(
     single supervised-style M-step on the K-means clustering of ``Y``.
     The margin structure is preserved too: a pair model keeps its K²
     blocks, each fitted on its dual-view sub-sample of the labelled pairs
-    (:func:`_pair_margin_sample`, A16 Eqs. 12–14); a pair that never occurs
-    in the labelling keeps its declared margin.
+    (:func:`_pair_margin_sample`, DerrodePieczynski_CSDA2013 Eqs. 12–14);
+    a pair that never occurs in the labelling keeps its declared margin.
 
     Parameters
     ----------
@@ -3398,9 +3411,10 @@ def ice(
       whose two endpoints are observed, weight ξ_n(i, j). See :func:`_m_step`.
     * ``"impute"`` — multiple imputation: ``missing_draws`` completions
       (x, y_mis) ~ P(· | y_obs, θ^q) per iteration (seed ``missing_seed``),
-      the complete-data ICE estimator on each completed series, parameter
-      estimates averaged (A16 Eq. 24 with L = ``missing_draws``), prior from
-      the exact ξ. See :func:`_m_step_impute`.
+      the complete-data ICE estimator on each completed series,
+      parameter estimates averaged (DerrodePieczynski_CSDA2013
+      Eq. 24 with L = ``missing_draws``), prior from the exact ξ.
+      See :func:`_m_step_impute`.
 
     ``init = "kmeans"`` clusters the observed rows only
     (:func:`_warmstart_from_kmeans`); GICE margin selection runs on the

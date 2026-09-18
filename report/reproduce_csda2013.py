@@ -30,18 +30,20 @@ Usage
     python report/reproduce_csda2013.py --full --jobs 8
 
     # The paper's general PMC: the four pair-indexed margins f_ij of Table 1
-    # (A16 Eqs. 12–14) for simulation and supervised restoration.
+    # (DerrodePieczynski_CSDA2013 Eqs. 12–14) for simulation and supervised
+    # restoration.
     python report/reproduce_csda2013.py --exp1 --exp2 --margins pair
 
 Margin structure (``--margins``)
 --------------------------------
 ``state`` (default, every recorded result): Table 1 is collapsed to one margin
-per state, ``f_ij = f_i0``. By the Proposition of A16 §2.1 this model is an SR
-HMC-DN — the hidden chain is Markov and the transition no longer depends on
-``y_n``.
+per state, ``f_ij = f_i0``. By the Proposition of DerrodePieczynski_CSDA2013
+§2.1 this model is an SR HMC-DN — the hidden chain is Markov and the
+transition no longer depends on ``y_n``.
 
 ``pair``: the four Table 1 margins ``f_00, f_01, f_10, f_11`` are kept, which
-is the general PMC the paper simulates and restores (A16 Eqs. 12–14):
+is the general PMC the paper simulates and restores
+(DerrodePieczynski_CSDA2013 Eqs. 12–14):
 ``p(x_{n+1} = j | x_n = i, y_n) ∝ p_ij f_ij(y_n)`` and ``y_{n+1}`` drawn from
 ``f_ji`` coupled to ``F_ij(y_n)`` by ``c_ij``. Gaussian margins use Table 1's
 ``(μ, σ)`` with σ the standard deviation, as the state mode does. Gamma margins
@@ -136,7 +138,8 @@ PI_HIGH = ["c0", "c1", "c2", "c3", "c6", "c7", "c8"]    # τ#2 = 0.70
 
 # Gaussian margins f_{ij} (paper notation). ``--margins state`` (the default,
 # behind every recorded result) collapses them to one Gaussian per state taking
-# the j=0 anchor, f_ij = f_i0 — an SR HMC-DN by the Proposition of A16 §2.1.
+# the j=0 anchor, f_ij = f_i0 — an SR HMC-DN by the Proposition of
+# DerrodePieczynski_CSDA2013 §2.1.
 # ``--margins pair`` keeps the four of them (GAUSSIAN_MARGINS_PAIR below).
 GAUSSIAN_MARGINS_K2: list[dict] = [
     {"i": 0, "dist": "norm", "params": {"loc": 0.0, "scale": 1.0}},   # f_0 = f_{00}
@@ -157,8 +160,9 @@ GAMMA_MARGINS_K2: list[dict] = [
     {"i": 1, "dist": "gamma", "params": _gamma_match_moments(1.1, 1.4, 3.0)},
 ]
 
-# Pair-indexed margins f_ij of CSDA Table 1 — the general PMC of A16
-# Eqs. 12–14, used by ``--margins pair``. Keys (i, j) with the paper's classes
+# Pair-indexed margins f_ij of CSDA Table 1 — the general PMC of
+# DerrodePieczynski_CSDA2013 Eqs. 12–14, used by ``--margins pair``. Keys
+# (i, j) with the paper's classes
 # {1, 2} numbered {0, 1}. (μ, s) as printed: Table 1 writes the Gaussian
 # margins N(μ, s); how s is read is set by ``--table1-sigma`` (below).
 TABLE1_MEAN_SIGMA: dict[tuple[int, int], tuple[float, float]] = {
@@ -520,11 +524,11 @@ def _require_pair_ice() -> None:
     """Refuse Exp. 3 on pair margins unless ICE can handle them.
 
     Exp. 3 runs ICE on a model whose margins are the four pair margins f_ij
-    of Table 1 (A16 Eqs. 12–14). ICE implementations that predate pair
-    margins either call ``margin(i)`` — which a pair model refuses — or would
-    hand back a state model. A one-iteration ICE on a small pair-margin
-    series tells the two apart before hours of runs are dispatched; the
-    answer is cached for the process.
+    of Table 1 (DerrodePieczynski_CSDA2013 Eqs. 12–14). ICE implementations
+    that predate pair margins either call ``margin(i)`` — which a pair model
+    refuses — or would hand back a state model. A one-iteration ICE on a
+    small pair-margin series tells the two apart before hours of runs are
+    dispatched; the answer is cached for the process.
 
     Raises
     ------
@@ -556,9 +560,9 @@ def _require_pair_ice() -> None:
     if _PAIR_ICE_STATUS:
         raise RuntimeError(
             "Exp. 3 with --margins pair needs ICE on pair-indexed margins f_ij "
-            "(A16 Eqs. 12–14), which pmcprg.pmc.ice does not provide in this "
-            f"build ({_PAIR_ICE_STATUS}). Run --exp1/--exp2 with --margins "
-            "pair, or Exp. 3 with --margins state."
+            "(DerrodePieczynski_CSDA2013 Eqs. 12–14), which pmcprg.pmc.ice "
+            f"does not provide in this build ({_PAIR_ICE_STATUS}). Run "
+            "--exp1/--exp2 with --margins pair, or Exp. 3 with --margins state."
         )
 
 
@@ -728,8 +732,8 @@ def run_exp1(
     """Run §3.2 — Tables 2 and 3 of CSDA 2013.
 
     ``margins`` selects the margin structure — ``"state"`` (f_ij = f_i0, the
-    recorded results) or ``"pair"`` (the four Table 1 margins, A16
-    Eqs. 12–14) — for simulation and restoration alike.
+    recorded results) or ``"pair"`` (the four Table 1 margins,
+    DerrodePieczynski_CSDA2013 Eqs. 12–14) — for simulation and restoration alike.
     """
     sets = MARGIN_SETS[_check_margins(margins)]
     results_dir, _ = _out_dirs(margins)
@@ -825,7 +829,7 @@ def run_exp2(
 ) -> dict[str, dict]:
     """Run §3.3 — Tables 4 and 5 (PMM). ``margins``: see :func:`run_exp1`.
 
-    With pair margins a PMM pair follows A16 Eq. 12,
+    With pair margins a PMM pair follows DerrodePieczynski_CSDA2013 Eq. 12,
     ``p_ij f_ij(y_1) f_ji(y_2) c_ij(F_ij(y_1), F_ji(y_2))``.
     """
     sets = MARGIN_SETS[_check_margins(margins)]
@@ -1566,8 +1570,9 @@ def main(argv=None) -> int:
     parser.add_argument("--margins", choices=MARGIN_STRUCTURES, default="state",
                         help="Margin structure. 'state' (default, the recorded "
                              "results): Table 1 collapsed to f_ij = f_i0, an SR "
-                             "HMC-DN (A16 §2.1 Proposition). 'pair': the four "
-                             "Table 1 margins f_ij of the general PMC (A16 "
+                             "HMC-DN (DerrodePieczynski_CSDA2013 §2.1 "
+                             "Proposition). 'pair': the four Table 1 margins "
+                             "f_ij of the general PMC (DerrodePieczynski_CSDA2013 "
                              "Eqs. 12–14) for simulation and restoration; "
                              "outputs go to results/margins_pair and "
                              "tables/margins_pair. Exp. 3 in pair mode needs "
@@ -1629,8 +1634,11 @@ def main(argv=None) -> int:
             return 2
     key = margin_key(args.margins, args.table1_sigma)
     if key != "state":
-        logger.info("Margin structure: %s, Table 1 s read as %s (A16 Eqs. 12–14)",
-                    *_key_parts(key))
+        logger.info(
+            "Margin structure: %s, Table 1 s read as %s "
+            "(DerrodePieczynski_CSDA2013 Eqs. 12–14)",
+            *_key_parts(key),
+        )
 
     # Parallel pool — created once and shared across the three experiments
     # so we pay the (~few-hundred-ms) worker spin-up cost only once.

@@ -1,6 +1,6 @@
 # CSDA 2013 reproduction
 
-Reproduces the experiments of Derrode & Pieczynski (**A16** —
+Reproduces the experiments of Derrode & Pieczynski (**DerrodePieczynski_CSDA2013** —
 [doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)),
 *"Unsupervised data classification using pairwise Markov chains with
 automatic copulas selection"* (Comput. Stat. Data Anal. 63, 2013),
@@ -8,7 +8,7 @@ sections 3.2, 3.3, 4.3, using the `awesomePMC` package. The
 radar-image segmentation of section 5 is intentionally **not**
 reproduced.
 
-The companion paper **A23** (Signal Process. 128, 2016 — GICE for
+The companion paper **DerrodePieczynski_SP2016** (Signal Process. 128, 2016 — GICE for
 margin family selection) is exercised through the unit-test suite
 (`pmcprg/tests/test_gice_margins.py`) on the bundled fixture
 `pmcprg/pmc/models/sp2016_gice_k2.toml`. See
@@ -18,9 +18,10 @@ map and BibTeX entries for both references.
 ## What the reproduction established
 
 * **The model of the paper is the general PMC** with margins `f_ij` indexed by
-  the pair of states (A16 Eqs. 12–14). One margin per state (`--margins state`,
-  the package's model in versions 0.5–0.8) is, by A16's §2.1 Proposition, a
-  hidden Markov chain; its error rates were 7–19 points above the paper's.
+  the pair of states (DerrodePieczynski_CSDA2013 Eqs. 12–14). One margin per
+  state (`--margins state`, the package's model in versions 0.5–0.8) is, by
+  DerrodePieczynski_CSDA2013's §2.1 Proposition, a hidden Markov chain; its
+  error rates were 7–19 points above the paper's.
 * **Table 1's Gaussian margins are `N(μ, variance)`**: only that reading makes
   the printed Gamma parameters consistent (`--table1-sigma`, default
   `variance` with `--margins pair`).

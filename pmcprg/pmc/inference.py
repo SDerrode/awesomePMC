@@ -16,22 +16,25 @@ sample_posterior(model, Y, rng) -> X_sample
 
 Model
 -----
-Z = (X, Y) is a pairwise Markov chain (A16 §2.1, Eq. 4); forward–backward
-runs on its transition p(z_{n+1} | z_n) = W[n, i, j] (A16 Eqs. 16–18), with
-margins f_ij = ``model.margin(i, j)`` of the observation y_n given
-(x_n, x_{n+1}) = (i, j) (A16 Eq. 12):
+Z = (X, Y) is a pairwise Markov chain
+(DerrodePieczynski_CSDA2013 §2.1, Eq. 4); forward–backward runs on its
+transition p(z_{n+1} | z_n) = W[n, i, j]
+(DerrodePieczynski_CSDA2013 Eqs. 16–18), with margins f_ij =
+``model.margin(i, j)`` of the observation y_n given
+(x_n, x_{n+1}) = (i, j) (DerrodePieczynski_CSDA2013 Eq. 12):
 
   HMC-IN, HMC-IN2 : W[n, i, j] = A[i,j] · f_j(y_{n+1})
   HMC-DN          : W[n, i, j] = A[i,j] · f_j(y_{n+1}) · c_ij(F_i(y_n), F_j(y_{n+1}))
   PMC-IN          : W[n, i, j] = p[i,j] f_ij(y_n) / Σ_k p[i,k] f_ik(y_n) · f_ji(y_{n+1})
   PMC             : the PMC-IN weight · c_ij(F_ij(y_n), F_ji(y_{n+1}))
 
-the PMC-* weights being A16 Eq. 13 (transition of x) times Eq. 14 (density
-of y_{n+1}). With pair margins (``model.margin_structure == "pair"``, general
-PMC) the (N, K, K) tensor f_pdf[n, i, j] = f_ij(y_n) holds K² distinct
-densities; with state margins f_ij = f_i and it is broadcast from K vectors —
-the ratio p[i,j] f_i(y_n) / Σ_k p[i,k] f_i(y_n) then no longer depends on
-y_n: X is Markov (Proposition of A16 §2.1).
+the PMC-* weights being DerrodePieczynski_CSDA2013 Eq. 13 (transition of x)
+times Eq. 14 (density of y_{n+1}). With pair margins
+(``model.margin_structure == "pair"``, general PMC) the (N, K, K) tensor
+f_pdf[n, i, j] = f_ij(y_n) holds K² distinct densities; with state margins
+f_ij = f_i and it is broadcast from K vectors — the ratio
+p[i,j] f_i(y_n) / Σ_k p[i,k] f_i(y_n) then no longer depends on y_n: X is
+Markov (Proposition of DerrodePieczynski_CSDA2013 §2.1).
 
 Algorithm
 ---------
@@ -39,7 +42,7 @@ Devijver (1985) normalization (Baum-Welch revisited):
 
   Initialization — α_1 = p(x_1, y_1)
     state margins : α_1(j) = Σ_i  p[i,j] · f_j(y_1)
-    pair margins  : α_1(i) = Σ_j  p[i,j] · f_ij(y_1)     (A16 §3.1)
+    pair margins  : α_1(i) = Σ_j  p[i,j] · f_ij(y_1)     (DerrodePieczynski_CSDA2013 §3.1)
     C_1     = Σ_j  α_1(j)
     α̂_1(j) = α_1(j) / C_1
 
@@ -208,7 +211,7 @@ def precompute_weights(
     evaluations; for pair margins (general PMC) the K² densities
     ``model.margin(i, j)`` are evaluated. In both cases the PMC-* weight is
     p[i,j] f_ij(y_n) / Σ_k p[i,k] f_ik(y_n) · f_ji(y_{n+1}) [· c_ij(F_ij(y_n),
-    F_ji(y_{n+1}))] (A16 Eqs. 13–14); its relation to
+    F_ji(y_{n+1}))] (DerrodePieczynski_CSDA2013 Eqs. 13–14); its relation to
     :meth:`PMCModel.weight` is documented there.
 
     Parameters
@@ -248,7 +251,7 @@ def precompute_weights(
     # ── Margin PDFs (and CDFs for copula variants) ────────────────────────
     # f_pdf[n, i, j] = f_ij(Y[n]), f_cdf[n, i, j] = F_ij(Y[n]).
     if model.margin_structure == "pair":
-        # General PMC: K² distinct densities f_ij (A16 Eq. 12).
+        # General PMC: K² distinct densities f_ij (DerrodePieczynski_CSDA2013 Eq. 12).
         f_pdf = np.empty((N, K, K))
         f_cdf = np.empty((N, K, K)) if var.uses_copula else None
         for ii in range(K):
@@ -395,7 +398,8 @@ def _log_transition_weights(
     * Pair margins (general PMC): f_ij(y_n) depends on j, so nothing
       cancels — ``log W = log p[i,j] + log f_ij(y_n) − log Σ_k p[i,k] f_ik(y_n)
       + log f_ji(y_{n+1}) [+ log c_ij(F_ij(y_n), F_ji(y_{n+1}))]`` and
-      ``log α_1[i] = log Σ_j p[i,j] f_ij(y_1)`` (A16 Eqs. 13–14, §3.1).
+      ``log α_1[i] = log Σ_j p[i,j] f_ij(y_1)``
+      (DerrodePieczynski_CSDA2013 Eqs. 13–14, §3.1).
 
     Missing rows of Y (exact-shortcut variants only, as in
     :func:`precompute_weights`): ``log f = 0`` there.
@@ -582,7 +586,7 @@ def forward(
     # ── Initialization: α_1 = p(x_1, y_1) ────────────────────────────────
     if model.margin_structure == "pair":
         # α_1(i) = Σ_j p[i,j] · f_ij(Y[0]): y_1 follows the mixture of the
-        # left margins of the pairs (x_1, j) (A16 §3.1).
+        # left margins of the pairs (x_1, j) (DerrodePieczynski_CSDA2013 §3.1).
         alpha_1 = np.einsum("ij,ij->i", p, f_pdf[0])
     else:
         # State margins: α_1(j) = Σ_i p[i,j] · f_j(Y[0]).
@@ -804,7 +808,7 @@ def sample_posterior(
     Implements **Forward-Filter Backward-Sample (FFBS)** — the standard
     posterior sampler for state-space models (Carter & Kohn 1994;
     Frühwirth-Schnatter 1994; and, for the discrete-state case used here,
-    Chib 1996). A16 Eq. 23 samples *forward* instead, along
+    Chib 1996). DerrodePieczynski_CSDA2013 Eq. 23 samples *forward* instead, along
     ``p(x_{n+1} | x_n, y_{1:N})`` — the same posterior law, drawn in the
     other direction.
 
@@ -815,10 +819,11 @@ def sample_posterior(
 
            P(X_n=i | X̃_{n+1}, Y_{1:N}) ∝ α̂_n(i) · W[n, i, X̃_{n+1}]
 
-       Z = (X, Y) being Markov (A16 Eq. 4), ``X_n`` and ``Y_{n+2:N}`` are
-       independent given ``Z_{n+1} = (X_{n+1}, Y_{n+1})``, which makes this
-       sampler exact for pair margins (general PMC, X alone not Markov) as
-       well as for state margins.
+       Z = (X, Y) being Markov (DerrodePieczynski_CSDA2013 Eq. 4), ``X_n``
+       and ``Y_{n+2:N}`` are independent given
+       ``Z_{n+1} = (X_{n+1}, Y_{n+1})``, which makes this sampler exact for
+       pair margins (general PMC, X alone not Markov) as well as for state
+       margins.
 
     Used by SEM (Stochastic EM) to obtain the hard pseudo-labels on
     which the M-step is then run.

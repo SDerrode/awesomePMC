@@ -9,7 +9,8 @@ simulate(model, N=None, seed=None) -> (X, Y)
 Algorithm
 ---------
 State margins (``model.margin_structure == "state"``, f_ij = f_i) — the
-hidden chain X is Markov (Proposition of A16 §2.1), so for every variant:
+hidden chain X is Markov (Proposition of DerrodePieczynski_CSDA2013 §2.1),
+so for every variant:
   1. Sample the latent chain  X_0, X_1, ..., X_N  (X_0 is a virtual "warm-up" state,
      not returned).  The chain is driven by the row-stochastic matrix A[i,j].
   2. Sample observations  Y_1, ..., Y_N  according to the variant-specific conditional:
@@ -23,7 +24,7 @@ hidden chain X is Markov (Proposition of A16 §2.1), so for every variant:
 
 Pair margins (``model.margin_structure == "pair"``, general PMC, PMC and
 PMC-IN only) — X is not Markov, and the pairs z_n = (x_n, y_n) are drawn
-alternately, as in A16 §3.1 (Eqs. 13–14):
+alternately, as in DerrodePieczynski_CSDA2013 §3.1 (Eqs. 13–14):
 
      x_1 ~ π,  π_i = Σ_j p[i,j];   y_1 | x_1 = i  ~  Σ_j A[i,j] f_ij
      x_{n+1} | x_n = i, y_n               ∝  p[i, x_{n+1}] · f_{i,x_{n+1}}(y_n)      (Eq. 13)
@@ -34,7 +35,8 @@ drawn through an auxiliary state j ~ A[x_1, ·], and y_{n+1} by conditional
 inversion of c_ij at u = F_ij(y_n), then F_ji^{-1}.
 
 In both cases the right margin of the pair (i, j) is ``model.margin(j, i)``
-= f_ji (the index inversion of A16 Eq. 12), which is f_j for state margins.
+= f_ji (the index inversion of DerrodePieczynski_CSDA2013 Eq. 12), which is
+f_j for state margins.
 
 Returns
 -------
@@ -69,9 +71,9 @@ def _sample_copula_conditional(
     """
     Draw  y_next  from  p(y_next | y_prev, X_n=i, X_{n+1}=j).
 
-    Uses the copula h-function (Rosenblatt inversion), with the left margin
-    F_ij for y_prev and the right margin F_ji for y_next (A16 Eq. 14; F_i and
-    F_j for state margins):
+    Uses the copula h-function (Rosenblatt inversion), with the left
+    margin F_ij for y_prev and the right margin F_ji for y_next
+    (DerrodePieczynski_CSDA2013 Eq. 14; F_i and F_j for state margins):
 
         u  = F_ij(y_prev)
         w  ~ Uniform(0, 1)
@@ -79,10 +81,11 @@ def _sample_copula_conditional(
         y_next = F_ji^{-1}(v)
 
     This is conditional-inverse sampling — Rosenblatt, M. (1952). Remarks
-    on a multivariate transformation. *Ann. Math. Statist.* 23(3), 470–472;
-    Nelsen, R. B. (2006). *An Introduction to Copulas*, 2nd ed., Springer,
-    §2.9. A16 Appendix B draws the same conditional by rejection sampling
-    instead — same law, different mechanism.
+    on a multivariate transformation. *Ann. Math. Statist.* 23(3),
+    470–472; Nelsen, R. B. (2006). *An Introduction to Copulas*, 2nd ed.,
+    Springer, §2.9. DerrodePieczynski_CSDA2013 Appendix B draws the same
+    conditional by rejection sampling instead — same law, different
+    mechanism.
     """
     cop = model.copula(i, j)
     u   = float(np.clip(model.margin(i, j).cdf(y_prev), EPS, ONE_MINUS_EPS))
@@ -128,7 +131,7 @@ def _simulate_pair(
     pi: np.ndarray,
     A: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """General PMC with pair margins f_ij — A16 §3.1, Eqs. 13–14.
+    """General PMC with pair margins f_ij — DerrodePieczynski_CSDA2013 §3.1, Eqs. 13–14.
 
     ``pi`` and ``A`` are the renormalised π_i = Σ_j p[i,j] and
     A[i,j] = p[i,j] / π_i of :func:`simulate`.
@@ -221,7 +224,8 @@ def simulate(
     A = np.divide(A, row_sums, out=np.zeros_like(A), where=row_sums > 0)
 
     if model.margin_structure == "pair":
-        # General PMC (A16 Eqs. 13–14): X is not Markov, pairs are drawn in turn.
+        # General PMC (DerrodePieczynski_CSDA2013 Eqs. 13–14): X is not
+        # Markov, pairs are drawn in turn.
         X_out, Y = _simulate_pair(model, N, rng, pi, A)
         logger.debug(
             "simulate: variant=%s (pair margins)  K=%d  N=%d  seed=%s",

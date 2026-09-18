@@ -120,6 +120,29 @@ def _c_bb6(u, v, th, de):
     return _ONE - _pw(_ONE - (-s).exp(), _ONE / th)
 
 
+def _c_bb7(u, v, th, de):
+    """BB7 CDF (FR-9, ``pmcprg.copulas.archimedean.bb7``), written from the
+    generator φ(t) = [1 − (1 − t)^θ]^{−δ} − 1 and its inverse, not from the
+    module's log-space kernel: with a = 1 − ū^θ, b = 1 − v̄^θ and
+    T = a^{−δ} + b^{−δ} − 1, C = 1 − (1 − T^{−1/δ})^{1/θ}. The file's ``δ``
+    slot carries BB7's own δ (its ``delta7``)."""
+    a = _ONE - _pw(_ONE - u, th)
+    b = _ONE - _pw(_ONE - v, th)
+    t = _pw(a, -de) + _pw(b, -de) - _ONE
+    return _ONE - _pw(_ONE - _pw(t, -_ONE / de), _ONE / th)
+
+
+def _c_bb8(u, v, th, de):
+    """BB8 CDF (FR-9, ``pmcprg.copulas.archimedean.bb8``), written from the
+    generator φ(t) = −ln([1 − (1 − δt)^θ]/[1 − (1 − δ)^θ]) and its inverse, not
+    from the module's log-space kernel: with η = 1 − (1 − δ)^θ and
+    A = (1 − (1 − δu)^θ)(1 − (1 − δv)^θ)/η, C = (1 − (1 − A)^{1/θ})/δ. The
+    file's ``δ`` slot carries BB8's own δ (its ``delta8``)."""
+    eta = _ONE - _pw(_ONE - de, th)
+    a = (_ONE - _pw(_ONE - de * u, th)) * (_ONE - _pw(_ONE - de * v, th)) / eta
+    return (_ONE - _pw(_ONE - a, _ONE / th)) / de
+
+
 def _survival(base):
     return lambda u, v, th, de: u + v - _ONE + base(_ONE - u, _ONE - v, th, de)
 
@@ -238,6 +261,11 @@ _REF_C = {
     "SBB190": _rotated_90(_survival(_c_bb1)), "SBB1270": _rotated_270(_survival(_c_bb1)),
     # FR-9, BB6 round: the outer power of Joe (Joe at δ = 1, Gumbel at θ = 1).
     "BB6": _c_bb6,
+    # FR-9, BB7 round: the Joe-Clayton copula (Clayton at θ = 1, Joe as δ → 0).
+    "BB7": _c_bb7,
+    # FR-9, BB8 round: Joe at δ = 1, independence at θ = 1 (not Frank — see
+    # the module docstring), no tail dependence at all for δ < 1.
+    "BB8": _c_bb8,
 }
 
 
@@ -339,6 +367,17 @@ _TAIL_TAUS = {
     # **Joe** one, both entered as ordinary cases so the reference file itself
     # checks the two limits; 0.4 and 0.9 are interior (θ and δ both active).
     "BB6": (0.4, 0.5, 0.7, 0.9),
+    # BB7 (FR-9): τ = 0.4 with θ = 1 is the **Clayton** sub-model (δ = 4/3
+    # exactly) and τ = 0.7 with θ = 5 is the Joe end (θ_Joe(0.7) = 5.45, so
+    # the recovered δ is tiny), both entered as ordinary cases so the
+    # reference file itself checks the two limits; 0.5 and 0.9 are interior.
+    "BB7": (0.4, 0.5, 0.7, 0.9),
+    # BB8 (FR-9): τ = 0.7 with δ = 1 is the **Joe** sub-model exactly (the
+    # generator's denominator is 1 there), entered as an ordinary case so the
+    # reference file itself pins that limit; 0.3, 0.5 and 0.95 are interior,
+    # with δ spanning its whole (0, 1] — 0.05 is near the independence end,
+    # where BB8 needs a large θ to reach τ at all.
+    "BB8": (0.3, 0.5, 0.7, 0.95),
 }
 _INDEP_TAUS = {
     "Clayton": (1e-12, 1e-8, 1e-4), "SClayton": (1e-12, 1e-8, 1e-4),
@@ -373,6 +412,20 @@ _TEV_NU = {0.3: 1.0, 0.7: 50.0, 0.95: 4.0, 1e-12: 10.0, 1e-8: 100.0, 1e-4: 2.0}
 # τ = 0.9 (δ_max = 10). The file's ``delta`` slot carries it.
 _BB6_DELTA = {0.4: 1.6, 0.5: 2.0, 0.7: 1.0, 0.9: 3.0}
 
+# θ of the BB7 cases (FR-9), per τ: BB7's *stored* extra is θ, not δ (see its
+# module docstring — τ is not monotone in θ at fixed δ), and θ must satisfy
+# τ_Joe(θ) < τ. 1.0 at τ = 0.4 *is* the Clayton sub-model (δ = 4/3 exactly);
+# 1.5 is interior at τ = 0.5; 5.0 at τ = 0.7 is just below θ_Joe(0.7) = 5.45,
+# i.e. the Joe end with a very small recovered δ; 3.0 is interior at τ = 0.9
+# (θ_Joe = 24.4). The file's ``delta`` slot carries the *recovered* δ, which
+# is what the reference CDF below needs.
+_BB7_THETA = {0.4: 1.0, 0.5: 1.5, 0.7: 5.0, 0.9: 3.0}
+# δ of the BB8 cases (FR-9), per τ: δ ∈ (0, 1] with **no** joint constraint
+# with τ, unlike BB6's — so the four values simply span the range. 1.0 at
+# τ = 0.7 is the Joe sub-model; 0.05 at τ = 0.95 is the far end, where θ runs
+# to ≈ 10⁴. The file's ``delta`` slot carries it.
+_BB8_DELTA = {0.3: 0.5, 0.5: 0.2, 0.7: 1.0, 0.95: 0.05}
+
 _G = (1e-12, 1e-6, 0.3, 0.5, 1 - 1e-6, 1 - 1e-12)
 _UV = np.array([(u, v) for u in _G for v in _G])
 
@@ -390,16 +443,23 @@ def _build(short, tau, df=4.0, delta=1.5):
         kw["nu"] = _TEV_NU.get(tau, 4.0)
     if "delta6" in names:
         kw["delta6"] = _BB6_DELTA.get(tau, 1.0)
+    if "theta7" in names:
+        kw["theta7"] = _BB7_THETA.get(tau, 1.0)
+    if "delta8" in names:
+        kw["delta8"] = _BB8_DELTA.get(tau, 1.0)
     return _ENTRY[short].klass(**kw)
 
 
 def _second_param(cop):
-    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, t-EV's ν, BB6's δ (stored
-    as ``delta6``, deliberately not ``delta`` — see the BB6 module docstring),
-    else ``None``."""
+    """The file's ``delta`` slot: BB1's δ, Tawn's ψ, t-EV's ν, BB6's δ, BB7's δ
+    and BB8's δ (stored as ``delta6``/``delta7``/``delta8``, deliberately not
+    ``delta`` — see those module docstrings), else ``None``."""
     return getattr(cop, "delta",
                    getattr(cop, "psi",
-                           getattr(cop, "nu", getattr(cop, "delta6", None))))
+                           getattr(cop, "nu",
+                                   getattr(cop, "delta6",
+                                           getattr(cop, "delta7",
+                                                   getattr(cop, "delta8", None))))))
 
 
 _CASES = [pytest.param(s, t, id=f"{s}-tau{t:+.2g}")

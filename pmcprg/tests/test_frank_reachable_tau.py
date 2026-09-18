@@ -78,7 +78,10 @@ def test_frank_constructible_range_is_the_reachable_range():
 # every ν. Tawn3 shares the two-parameter types' bound, inheriting it from
 # their common base (FR-9, round 5, test_tawn3.py): the Gumbel corner
 # ψ_u = ψ_v = 1 is the largest τ the weights reach, so the cap is the same
-# 1 − 1e-6.
+# 1 − 1e-6. BB8 declares its own since FR-9's BB8 round (test_bb8.py) — its τ
+# is a quadrature inverted by Brent on θ ∈ [1 + ε, 1e7], and the largest τ that
+# cap reaches is the δ = 1 (Joe) one, 1 − 2e-7; it is the first *Archimedean*
+# family here to need the mechanism, for the extreme-value families' reason.
 @pytest.mark.parametrize("entry", [e for e in CopulaEnum if e.value.AVAILABLE and e is not FRANK
                                    and e is not CopulaEnum.PLACKETT
                                    and e is not CopulaEnum.GALAMBOS
@@ -86,7 +89,8 @@ def test_frank_constructible_range_is_the_reachable_range():
                                    and e is not CopulaEnum.TAWN1
                                    and e is not CopulaEnum.TAWN2
                                    and e is not CopulaEnum.TAWN3
-                                   and e is not CopulaEnum.TEV],
+                                   and e is not CopulaEnum.TEV
+                                   and e is not CopulaEnum.BB8],
                          ids=lambda e: e.value.SHORT_NAME)
 def test_other_families_are_unchanged(entry):
     assert entry.klass.reachable_tau_abs is None

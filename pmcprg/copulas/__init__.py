@@ -17,6 +17,7 @@ from pmcprg.copulas._stderr   import (IndependenceLRTest, MleTauDiscrepancyTest,
                                    mle_tau_discrepancy_test, standard_errors, submodel_lr_test)
 from pmcprg.copulas._robust   import (DPD_ALPHAS, DPDAlphaSelection, DPDFit, dpd_fit,
                                    dpd_objective, integral_c_power, select_alpha)
+from pmcprg.copulas._nonparametric import EmpiricalBetaCopula
 
 # --- CopulaEnum-driven auto-import ---------------------------------------
 # Every member with a MODULE set is imported and exposed in this namespace
@@ -57,6 +58,9 @@ __all__ = [
     'dpd_objective',
     'integral_c_power',
     'select_alpha',
+    # Nonparametric comparison tool (audit FR-9) — standalone, NOT a
+    # CopulaEnum family: no fit(), not selectable by ICE.
+    'EmpiricalBetaCopula',
     # Copula families (source: CopulaEnum)
     *(m.CLASS_NAME for m in CopulaEnum if m.MODULE),
 ]

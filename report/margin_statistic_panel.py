@@ -24,8 +24,9 @@ Labels are fixed to a posterior draw — the scheme the GUI uses, and the one
 the companion study exists to validate — so exactly one factor varies here.
 
 Candidates, all on the per-margin sample of a posterior draw — the per-state
-sample ``{y_n : x_n = k}`` for state margins, and for the pair margins f_ij of a
-general PMC (A16 Eqs. 12–14) the dual view ``{y_n : (x_n, x_{n+1}) = (i, j)} ∪
+sample ``{y_n : x_n = k}`` for state margins, and for the pair margins f_ij
+of a general PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14) the dual view
+``{y_n : (x_n, x_{n+1}) = (i, j)} ∪
 {y_{n+1} : (x_n, x_{n+1}) = (j, i)}`` (:func:`pmcprg.diagnostics.margin_sample`):
 
 ``mks``     the incumbent: ``pmcprg.diagnostics.mks_1samp``, max deviation of

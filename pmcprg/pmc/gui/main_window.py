@@ -1820,7 +1820,8 @@ class PMCMainWindow(QMainWindow):
                 raise RuntimeError(
                     f"{algorithm.upper()} failed on a general PMC with "
                     f"pair-indexed margins f_ij (margin_structure = 'pair', "
-                    f"A16 Eqs. 12–14): {type(exc).__name__}: {exc}"
+                    f"DerrodePieczynski_CSDA2013 Eqs. 12–14): "
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
         return PMCMainWindow._do_estimate_impl(
             mdl, Y, est_cfg, algorithm, progress_cb=progress_cb)
@@ -1937,7 +1938,8 @@ class PMCMainWindow(QMainWindow):
         if is_pair(self._model):
             self._log_append(
                 "  pair margins: state k is tested against the law of y_n "
-                "given x_n = k, g_k = Σ_j A[k,j] f_kj (A16 Eq. 12)"
+                "given x_n = k, g_k = Σ_j A[k,j] f_kj "
+                "(DerrodePieczynski_CSDA2013 Eq. 12)"
             )
         for r in rows:
             if "p" not in r:
@@ -2112,7 +2114,8 @@ class PMCMainWindow(QMainWindow):
         n_comp = 4
         # The sample of state k is the law of y_n given x_n = k: f_k on a
         # state model, the mixture g_k = Σ_j A[k, j] f_kj on a pair model
-        # (A16 Eq. 12 summed over x_{n+1}) — ``margin(k)`` raises there.
+        # (DerrodePieczynski_CSDA2013 Eq. 12 summed over x_{n+1}) — ``margin(k)``
+        # raises there.
         laws = [state_law(mdl, k) for k in range(K)]
         # The components need a scalar probability integral transform.
         scalar = getattr(mdl, "d", 1) in (1, None) and Y.ndim == 1
@@ -2254,7 +2257,8 @@ class PMCMainWindow(QMainWindow):
         xi = joint_posteriors(alpha_hat, W, backward(mdl, Y, W=W))
 
         # u = F_ij(Y_n), v = F_ji(Y_{n+1}): the left and right margins of the
-        # pair (i, j), A16 Eq. 12 (F_i and F_j on a state model).
+        # pair (i, j), DerrodePieczynski_CSDA2013 Eq. 12 (F_i and F_j on a
+        # state model).
         F = margin_cdfs(mdl, Y, lo=1e-12, hi=1.0 - 1e-12)
 
         blocks = mdl.copula_blocks()
@@ -2336,8 +2340,8 @@ class PMCMainWindow(QMainWindow):
         Exactly what the ICE M-step fits, so the test and the estimator
         cannot drift apart: pseudo-observations ``u = F_ij(Y_n)``,
         ``v = F_ji(Y_{n+1})`` — the left and right margins of the pair (i, j),
-        A16 Eq. 12, which reduce to ``F_i(Y_n)`` and ``F_j(Y_{n+1})`` for
-        state margins — weighted by the pair posterior
+        DerrodePieczynski_CSDA2013 Eq. 12, which reduce to ``F_i(Y_n)`` and
+        ``F_j(Y_{n+1})`` for state margins — weighted by the pair posterior
         ``ξ_n(i, j) = P(X_n=i, X_{n+1}=j | Y)``, fed to the ξ-weighted
         Cramér-von Mises statistic that already backs the ``cvm`` selection
         criterion.
@@ -2862,7 +2866,7 @@ def _kendall_reference(cop, m_mc: int = _GOF_KENDALL_MC,
     it for all B replicates — recomputing it per replicate would triple the
     cost of the test for nothing.
 
-    A closed form is not available for every one of the 39 families, but it
+    A closed form is not available for every one of the 40 families, but it
     is for two large groups. The Archimedean ones:
     ``K_θ(t) = t − φ(t) / φ'(t)`` with ``φ`` the generator (Genest & Rivest
     1993). And — since FR-9 added them — the extreme-value ones, for which

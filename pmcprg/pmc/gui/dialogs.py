@@ -69,7 +69,7 @@ class _MarginDialog(QDialog):
         super().__init__(parent)
         # A block keyed by ``i`` alone is a state margin f_i (law of y_n given
         # x_n = i); one keyed by ``i`` and ``j`` is a pair margin f_ij (law of
-        # y_n given x_n = i, x_{n+1} = j — A16 Eq. 12).
+        # y_n given x_n = i, x_{n+1} = j — DerrodePieczynski_CSDA2013 Eq. 12).
         if "j" in blk:
             title = (f"Edit margin f_ij  (i={blk.get('i', '?')}, "
                      f"j={blk['j']})")

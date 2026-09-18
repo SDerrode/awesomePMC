@@ -85,7 +85,7 @@ def _brute_force_log_lik(mdl: PMCModel, Y: np.ndarray) -> float:
 
 
 def _brute_force_log_lik_pair(mdl: PMCModel, Y: np.ndarray) -> float:
-    """log p(Y_{1:N}) for pair margins f_ij, from A16 Eqs. 12–14:
+    """log p(Y_{1:N}) for pair margins f_ij, from DerrodePieczynski_CSDA2013 Eqs. 12–14:
 
         p(x_1, y_1)                   = Σ_j p[x_1, j] · f_{x_1 j}(y_1)
         p(x_{n+1} | x_n = i, y_n)     = p[i, x_{n+1}] f_{i x_{n+1}}(y_n) / Σ_k p[i, k] f_ik(y_n)
@@ -159,8 +159,9 @@ def test_pmc_in_reduces_to_hmc_in2():
     ]
 
     # K² blocks are pair margins by default, which an HMC-* variant refuses
-    # (A16 §2.1 Proposition): collapse them explicitly. The PMC-IN model keeps
-    # them as (tied) pair margins, so the check also crosses the two paths.
+    # (DerrodePieczynski_CSDA2013 §2.1 Proposition): collapse them explicitly.
+    # The PMC-IN model keeps them as (tied) pair margins, so the check also
+    # crosses the two paths.
     mdl_hmc = PMCModel.from_dict({
         "model":   {"name": "hmc-in2-eq", "variant": "HMC-IN2", "K": 2,
                     "N_default": 200, "margin_structure": "state"},

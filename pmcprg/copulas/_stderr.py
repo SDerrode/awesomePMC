@@ -96,8 +96,9 @@ Two-parameter sub-model tests
 :func:`submodel_lr_test` is the analogous likelihood-ratio test of a
 **two**-parameter family's one-parameter sub-model — H0: the extra
 parameter sits at the sub-model's value, H1: the full two-parameter family
-— for the four nestings this package registers: BB1 ⊃ {Clayton, Gumbel},
-Student ⊃ Gauss, Tawn (types 1 and 2) ⊃ Gumbel, and BB6 ⊃ {Joe, Gumbel}.
+— for the nestings this package registers: BB1 ⊃ {Clayton, Gumbel},
+Student ⊃ Gauss, Tawn (types 1 and 2) ⊃ Gumbel, BB6 ⊃ {Joe, Gumbel} and
+BB7 ⊃ {Clayton, Joe} and BB8 ⊃ Joe.
 Each was verified against the family's own module docstring, not assumed:
 
 * **BB1 → Clayton** (δ = 1) and **BB1 → Gumbel** (θ → 0, i.e. the floor
@@ -125,6 +126,18 @@ Each was verified against the family's own module docstring, not assumed:
   the FR-9 commit message that introduced Tawn: ``CopulaTawn1(psi=1.0)``
   reproduces ``CopulaGH``'s log-density to machine precision at matched τ —
   see ``pmcprg/tests/test_fr4_submodel_lr.py``.)
+* **BB7 → Clayton** (θ = 1) and **BB7 → Joe** (δ → 0), FR-9's BB7 round:
+  ``pmcprg.copulas.archimedean.bb7``'s module docstring derives both by hand
+  from the generator ``φ = [1 − (1 − t)^θ]^{−δ} − 1`` — θ = 1 leaves
+  ``t^{−δ} − 1``, Clayton's own generator, and ``φ/δ → −ln(1 − (1 − t)^θ)``,
+  Joe's, as δ → 0 — and checks each at 120 digits (4.8·10⁻¹²² and an error
+  exactly linear in δ). BB7 stores **θ**, not δ (τ is not monotone in θ at
+  fixed δ — that module's "Parametrisation"), so in its own coordinates
+  θ = 1 is the *attained* lower end of θ ≥ 1 and the Joe limit is the
+  **open** upper end θ → θ_Joe(τ), where the recovered δ → 0; the
+  constructor's floor δ = 10⁻¹⁴ stands in for it as Student's ν = 100 does
+  for ν → ∞ (λ_L = 2^{−10¹⁴} is already 0 to machine precision there). Both
+  are **boundary** sub-models.
 * **BB6 → Joe** (δ = 1) and **BB6 → Gumbel** (θ = 1), FR-9's BB6 round:
   ``pmcprg.copulas.archimedean.bb6``'s module docstring derives both by
   hand from the generator ``φ = (−ln(1 − (1 − t)^θ))^δ`` — δ = 1 leaves
@@ -133,6 +146,17 @@ Each was verified against the family's own module docstring, not assumed:
   **boundary** sub-models, and unlike Student's ν → ∞ both are attained, so
   no fitting-box end has to stand in for them (the joint fit's θ floor
   1 + 10⁻¹⁰ is only the resolution at which it reaches θ = 1).
+* **BB8 → Joe** (δ = 1), FR-9's BB8 round, and **only** that one:
+  ``pmcprg.copulas.archimedean.bb8``'s module docstring shows that
+  ``(1 − δ)^θ = 0`` at δ = 1 makes the generator's denominator 1 and leaves
+  Joe's generator *exactly* (no limit), δ = 1 being the **upper end** of
+  δ ∈ (0, 1] — a boundary sub-model like Tawn's ψ = 1. BB8's other edge,
+  θ = 1, gives ``φ = −ln t``: the independence copula for every δ, which has
+  no free parameter to profile and belongs to
+  :func:`independence_lr_test`. And despite the family's "Joe–Frank"
+  nickname, Frank is *not* a sub-model at all — only the joint limit
+  θ → ∞, δ → 0 at fixed θδ, which no parameter value realises (checked
+  numerically in that module, not inferred from the name).
 
 All these sub-models are therefore boundary cases of the *same* kind
 :func:`independence_lr_test` already handles for one parameter: the
@@ -1148,6 +1172,41 @@ _SUBMODEL_NESTING: dict[tuple[str, str], str] = {
         "stands in for it; the Gumbel-Hougaard limit; "
         "pmcprg.copulas.archimedean.bb6 module docstring)."
     ),
+    # FR-9, BB7 round. Both of BB7's sub-models are boundaries of its
+    # admissible set {theta >= 1, delta > 0} too, but of two different kinds:
+    # theta = 1 is attained (Clayton), delta = 0 is an *open* end (Joe is a
+    # limit no parameter realises), which the fitting box's lower end stands
+    # in for exactly as Student's nu = 100 stands in for nu -> infinity.
+    # Either way the constrained MLE sits on the boundary, so the null stays
+    # one-sided.
+    ("CopulaBB7", "CopulaClayton"): (
+        "theta7 = 1 is the lower end of BB7's registered theta7 >= 1 range "
+        "(the floor theta = 1 + 1e-10 of the joint fit's ln(theta - 1) box "
+        "stands in for it; the Clayton limit; "
+        "pmcprg.copulas.archimedean.bb7 module docstring)."
+    ),
+    ("CopulaBB7", "CopulaJoe"): (
+        "theta7 -> theta_Joe(tau) is the open upper end of BB7's admissible "
+        "theta7 range, where its recovered delta -> 0; the constructor's own "
+        "floor delta = 1e-14, at which lambda_L = 2^-1e14 is 0 to machine "
+        "precision, stands in for it (the Joe limit; "
+        "pmcprg.copulas.archimedean.bb7 module docstring)."
+    ),
+    # FR-9, BB8 round. BB8 has exactly ONE two-parameter nesting, not two:
+    # delta8 = 1 leaves Joe's generator outright, while theta = 1 leaves
+    # -ln(t) — the *independence* copula, whatever delta8 is — which has no
+    # free parameter to profile and is independence_lr_test's business, not
+    # this function's. The "Joe-Frank" nickname notwithstanding, Frank is not
+    # a sub-model either: it is the joint limit theta -> infinity with
+    # theta*delta8 fixed, a path no single parameter value sits on
+    # (pmcprg.copulas.archimedean.bb8 module docstring, verified numerically
+    # there and in test_bb8.py, not taken from the name).
+    ("CopulaBB8", "CopulaJoe"): (
+        "delta8 = 1 is the upper end of BB8's registered delta8 in (0, 1] "
+        "range (the Joe limit, exact and not asymptotic: (1 - delta8)^theta "
+        "= 0 leaves Joe's own generator; "
+        "pmcprg.copulas.archimedean.bb8 module docstring)."
+    ),
 }
 
 
@@ -1203,7 +1262,7 @@ def submodel_lr_test(full_family, sub_family, uv, weights=None) -> SubmodelLRTes
     verifies each against the family's own module docstring): BB1 → Clayton,
     BB1 → Gumbel (``CopulaGH``), Student → Gauss (``CopulaGaussian``), Tawn
     type 1 or 2 → Gumbel (``CopulaGH``), BB6 → Joe, BB6 → Gumbel
-    (``CopulaGH``). Every one is a **boundary** of the
+    (``CopulaGH``), BB7 → Clayton, BB7 → Joe. Every one is a **boundary** of the
     full family's admissible extra-parameter range, so ``LR → ½χ²₀ + ½χ²₁``
     (Self & Liang 1987), unlike the plain ``χ²₁`` an interior sub-model would
     give.

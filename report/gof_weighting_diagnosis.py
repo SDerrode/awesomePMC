@@ -136,10 +136,10 @@ def xi_of(mdl: PMCModel, Y: np.ndarray) -> np.ndarray:
 def pair_cdfs(mdl: PMCModel, Y: np.ndarray) -> np.ndarray:
     """``F[n, i, j] = F_ij(y_n)``.
 
-    Pair margins of a general PMC (A16 Eqs. 12–14): the copula c_ij couples
-    F_ij(y_n) with F_ji(y_{n+1}). For state margins F_ij = F_i whatever j and
-    the array is the K state CDFs broadcast over j — the same floats the
-    K-vector version produced.
+    Pair margins of a general PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14): the
+    copula c_ij couples F_ij(y_n) with F_ji(y_{n+1}). For state margins F_ij =
+    F_i whatever j and the array is the K state CDFs broadcast over j — the
+    same floats the K-vector version produced.
     """
     return margin_cdfs(mdl, Y, clip=1e-12)
 

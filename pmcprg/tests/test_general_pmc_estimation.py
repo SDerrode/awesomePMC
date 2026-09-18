@@ -6,8 +6,8 @@ simulation / inference contract of ``test_general_pmc_core.py``.
 M-step for a pair margin f_ij (the "dual-view" update the package had before
 v0.5.0): every y_n enters as the *left* observation of pair (x_n, x_{n+1}) and
 every y_{n+1} as the *right* observation of pair (x_n, x_{n+1}); the right
-margin of pair (j, i) is f_ij (A16, Eq. 12). So f_ij is fitted by weighted
-maximum likelihood on
+margin of pair (j, i) is f_ij (DerrodePieczynski_CSDA2013, Eq. 12). So f_ij is
+fitted by weighted maximum likelihood on
 
     { y_n     with weight ξ_n(i, j) }  ∪  { y_{n+1} with weight ξ_n(j, i) },
 

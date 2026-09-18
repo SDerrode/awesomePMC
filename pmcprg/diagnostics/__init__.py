@@ -59,10 +59,11 @@ exchangeability_test              fourth item) — C(u,v) = C(v,u)? A
 margin_cdfs, copula_pseudo_obs, : pseudo-observations and margin samples of a
 margin_pit_dual, margin_keys,     fitted chain, for state margins f_i and for
 margin_of, margin_sample          the pair margins f_ij of a general PMC
-    (A16 Eqs. 12-14): c_ij is tested on (F_ij(y_n), F_ji(y_{n+1})) weighted by
-    xi_n(i, j); f_ij on F_ij(y_n) weighted by xi_n(i, j) and on F_ij(y_{n+1})
-    weighted by xi_n(j, i). These need a model exposing K, margin_structure
-    and margin(i, j) — duck-typed, the model class is not imported.
+    (DerrodePieczynski_CSDA2013 Eqs. 12-14): c_ij is tested on (F_ij(y_n),
+    F_ji(y_{n+1})) weighted by xi_n(i, j); f_ij on F_ij(y_n) weighted by
+    xi_n(i, j) and on F_ij(y_{n+1}) weighted by xi_n(j, i). These need a
+    model exposing K, margin_structure and margin(i, j) — duck-typed, the
+    model class is not imported.
 draw_multipliers, auto_block_length, : serially dependent multipliers for the
 multiplier_weights,                    bootstrap of a copula functional on a
 multiplier_autocorrelation             Markov chain (audit FR-5). Consecutive

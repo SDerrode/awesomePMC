@@ -1,16 +1,17 @@
 # References
 
-Every reference the code, the reports and the methodological note rely on,
-with the identifier that resolves to it and the place in the package that
-uses it. Each DOI was resolved against Crossref (or DataCite for the dataset)
-on 2026-09-13 (audit B-8 / K-16); entries marked *no DOI* were confirmed to
-have none. The two papers the package implements are **A16** and **A23**;
-please cite both — see [`CITATION.cff`](CITATION.cff).
+Every reference the code, the reports and the methodological note rely on, with
+the identifier that resolves to it and the place in the package that uses it.
+Each DOI was resolved against Crossref (or DataCite for the dataset) on
+2026-09-13 (audit B-8 / K-16); entries marked *no DOI* were confirmed to have
+none. The two papers the package implements are **DerrodePieczynski_CSDA2013**
+and **DerrodePieczynski_SP2016**; please cite both — see
+[`CITATION.cff`](CITATION.cff).
 
 ## The model and its estimators
 
-- **A16** — Derrode, S. & Pieczynski, W. (2013). Unsupervised data classification using pairwise Markov chains with automatic copulas selection. *Computational Statistics & Data Analysis* 63, 81–98. doi:10.1016/j.csda.2013.01.027 — the PMC family (§2), forward–backward/MPM (§3), ICE with copula selection and the Huard criterion (§4, Eq. 20); `pmcprg/pmc/model.py`, `inference.py`, `ice.py`, `report/`.
-- **A23** — Derrode, S. & Pieczynski, W. (2016). Unsupervised classification using hidden Markov chain with unknown noise copulas and margins. *Signal Processing* 128, 8–17. doi:10.1016/j.sigpro.2016.03.008 — GICE, margin-family selection (§3, Eqs. 10–11); `pmcprg/pmc/ice.py` (margin rules).
+- **DerrodePieczynski_CSDA2013** — Derrode, S. & Pieczynski, W. (2013). Unsupervised data classification using pairwise Markov chains with automatic copulas selection. *Computational Statistics & Data Analysis* 63, 81–98. doi:10.1016/j.csda.2013.01.027 — the PMC family (§2), forward–backward/MPM (§3), ICE with copula selection and the Huard criterion (§4, Eq. 20); `pmcprg/pmc/model.py`, `inference.py`, `ice.py`, `report/`.
+- **DerrodePieczynski_SP2016** — Derrode, S. & Pieczynski, W. (2016). Unsupervised classification using hidden Markov chain with unknown noise copulas and margins. *Signal Processing* 128, 8–17. doi:10.1016/j.sigpro.2016.03.008 — GICE, margin-family selection (§3, Eqs. 10–11); `pmcprg/pmc/ice.py` (margin rules).
 - Derrode, S. & Pieczynski, W. (2004). Signal and image segmentation using pairwise Markov chains. *IEEE Transactions on Signal Processing* 52(9), 2477–2489. doi:10.1109/TSP.2004.832015 — PMC segmentation, Hilbert–Peano scan; `pmcprg/pmc/peano.py`.
 - Pieczynski, W. (1992). Statistical image segmentation. *Machine Graphics and Vision* 1(1/2), 261–268. *No DOI.* — ICE; `pmcprg/pmc/ice.py`.
 - Delignon, Y., Marzouki, A. & Pieczynski, W. (1997). Estimation of generalized mixtures and its application in image segmentation. *IEEE Transactions on Image Processing* 6(10), 1364–1375. doi:10.1109/83.624951 — generalised mixtures / ICE; `pmcprg/pmc/ice.py`.
@@ -30,7 +31,8 @@ please cite both — see [`CITATION.cff`](CITATION.cff).
 
 - Sklar, A. (1959). Fonctions de répartition à n dimensions et leurs marges. *Publications de l'Institut de Statistique de l'Université de Paris* 8, 229–231. *No DOI.* — `pmcprg/copulas/bivariate.py`.
 - Nelsen, R. B. (2006). *An Introduction to Copulas*, 2nd ed. Springer, New York. doi:10.1007/0-387-28678-0 — Table 4.1 (Archimedean families (4.2.n)); ch. 2 (survival copulas, random variate generation), ch. 3 (quadratic and cubic sections, Plackett distributions), ch. 5 (τ and ρ_S); every module of `pmcprg/copulas/`.
-- Joe, H. (1997). *Multivariate Models and Dependence Concepts*. Chapman & Hall/CRC, Monographs on Statistics and Applied Probability 73. doi:10.1201/b13150 — ch. 5 (Joe family, BB1), ch. 2 (tail dependence).
+- Joe, H. (1993). Parametric families of multivariate distributions with given margins. *Journal of Multivariate Analysis* 46(2), 262–282. doi:10.1006/jmva.1993.1061 — the BB construction the two-parameter families come from; `archimedean/bb7.py`, `archimedean/bb8.py`. *The DOI often copied for this article, `10.1006/jmva.93.1061`, does not resolve: the one above is what Crossref returns for it (verified 2026-09-18).*
+- Joe, H. (1997). *Multivariate Models and Dependence Concepts*. Chapman & Hall/CRC, Monographs on Statistics and Applied Probability 73. doi:10.1201/b13150 — ch. 5 (Joe family, BB1, BB6, BB7, BB8), ch. 2 (tail dependence). *Crossref titles this edition "Multivariate Models and Multivariate Dependence Concepts" (verified 2026-09-18); the spine reads as above.*
 - Joe, H. (2014). *Dependence Modeling with Copulas*. Chapman & Hall/CRC. doi:10.1201/b17116.
 - Genest, C. & MacKay, J. (1986). The joy of copulas: bivariate distributions with uniform marginals. *The American Statistician* 40(4), 280–283. doi:10.1080/00031305.1986.10475414 — τ = 1 + 4∫φ/φ′ for Archimedean generators.
 - Clayton, D. G. (1978). A model for association in bivariate life tables and its application in epidemiological studies of familial tendency in chronic disease incidence. *Biometrika* 65(1), 141–151. doi:10.1093/biomet/65.1.141 — `pmcprg/copulas/archimedean/clayton.py`.
@@ -44,7 +46,9 @@ please cite both — see [`CITATION.cff`](CITATION.cff).
 - Demarta, S. & McNeil, A. J. (2005). The t copula and related copulas. *International Statistical Review* 73(1), 111–129. doi:10.1111/j.1751-5823.2005.tb00254.x — Student tail dependence; `elliptical/student.py`.
 - Aas, K., Czado, C., Frigessi, A. & Bakken, H. (2009). Pair-copula constructions of multiple dependence. *Insurance: Mathematics and Economics* 44(2), 182–198. doi:10.1016/j.insmatheco.2007.02.001 — h-functions of the elliptical copulas; `elliptical/`.
 - Rosenblatt, M. (1952). Remarks on a multivariate transformation. *The Annals of Mathematical Statistics* 23(3), 470–472. doi:10.1214/aoms/1177729394 — conditional-inverse sampling; `pmcprg/pmc/simulate.py`, `pmcprg/copulas/_base.py`.
+- Patton, A. J. (2006). Modelling asymmetric exchange rate dependence. *International Economic Review* 47(2), 527–556. doi:10.1111/j.1468-2354.2006.00387.x — the "symmetrised Joe-Clayton" reparametrisation of BB7 by its two tail-dependence coefficients (λ_U = 2 − 2^{1/θ}, λ_L = 2^{−1/δ}); `archimedean/bb7.py`.
 - Caillault, C. & Guégan, D. (2005). Empirical estimation of tail dependence using copulas: application to Asian markets. *Quantitative Finance* 5(5), 489–501. doi:10.1080/14697680500147853 — empirical λ̂_L, λ̂_U; `pmcprg/copulas/_fit.py`.
+- Segers, J., Sibuya, M. & Tsukahara, H. (2017). The empirical beta copula. *Journal of Multivariate Analysis* 155, 35–51. doi:10.1016/j.jmva.2016.11.010 — verified against Crossref by bibliographic query. `pmcprg/copulas/_nonparametric.py` (audit FR-9, nonparametric comparison tool, not a registered family).
 
 ### Numerical evaluation
 
@@ -62,7 +66,7 @@ please cite both — see [`CITATION.cff`](CITATION.cff).
 - Kojadinovic, I. & Yan, J. (2010). Comparison of three semiparametric methods for estimating dependence parameters in copula models. *Insurance: Mathematics and Economics* 47(1), 52–63. doi:10.1016/j.insmatheco.2010.03.008 — the same variance estimated with the empirical copula; τ inversion against pseudo-likelihood.
 - Self, S. G. & Liang, K.-Y. (1987). Asymptotic properties of maximum likelihood estimators and likelihood ratio tests under nonstandard conditions. *Journal of the American Statistical Association* 82(398), 605–610. doi:10.1080/01621459.1987.10478472 — ½χ²₀ + ½χ²₁ at the boundary (`independence_lr_test`, `StandardErrors.at_boundary`).
 - Klaassen, C. A. J. & Wellner, J. A. (1997). Efficient estimation in the bivariate normal copula model: normal margins are least favourable. *Bernoulli* 3(1), 55–77. doi:10.2307/3318652 — n·Var(ρ̂) → (1 − ρ²)², the closed form `test_fr4_standard_errors.py` checks.
-- Huard, D., Évin, G. & Favre, A.-C. (2006). Bayesian copula selection. *Computational Statistics & Data Analysis* 51(2), 809–822. doi:10.1016/j.csda.2005.08.010 — the `huard` criterion (A16 Eq. 20); `pmcprg/pmc/ice.py`.
+- Huard, D., Évin, G. & Favre, A.-C. (2006). Bayesian copula selection. *Computational Statistics & Data Analysis* 51(2), 809–822. doi:10.1016/j.csda.2005.08.010 — the `huard` criterion (DerrodePieczynski_CSDA2013 Eq. 20); `pmcprg/pmc/ice.py`.
 - Akaike, H. (1974). A new look at the statistical model identification. *IEEE Transactions on Automatic Control* 19(6), 716–723. doi:10.1109/TAC.1974.1100705 — `aic`.
 - Schwarz, G. (1978). Estimating the dimension of a model. *The Annals of Statistics* 6(2), 461–464. doi:10.1214/aos/1176344136 — `bic`.
 - Grønneberg, S. & Hjort, N. L. (2014). The copula information criteria. *Scandinavian Journal of Statistics* 41(2), 436–459. doi:10.1111/sjos.12042 — why AIC on pseudo-observations needs correction; context for `xvcic`.

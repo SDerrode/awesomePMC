@@ -8,15 +8,16 @@ Each pair is drawn from the same bivariate joint as in the PMC:
 
   p(x_1, x_2, y_1, y_2) = p(x_1, x_2) · f_{x_1, x_2}(y_1, y_2)
 
-where (A16 Eq. 12)
+where (DerrodePieczynski_CSDA2013 Eq. 12)
 
   f_{i,j}(y_1, y_2) = f_ij(y_1) · f_ji(y_2) · c_ij(F_ij(y_1), F_ji(y_2)).
 
 With pair margins (``model.margin_structure == "pair"``, the general PMC of
-A16 Eqs. 12–14) the left observation of the pair ``(i, j)`` follows ``f_ij``
-and the right one ``f_ji``. With state margins both reduce to the per-state
-densities, ``f_i(y_1) · f_j(y_2) · c_ij(F_i(y_1), F_j(y_2))``, and the code
-path is the one of the SR-PMC: same random stream, same floats.
+DerrodePieczynski_CSDA2013 Eqs. 12–14) the left observation of the pair
+``(i, j)`` follows ``f_ij`` and the right one ``f_ji``. With state margins
+both reduce to the per-state densities, ``f_i(y_1) · f_j(y_2) ·
+c_ij(F_i(y_1), F_j(y_2))``, and the code path is the one of the SR-PMC: same
+random stream, same floats.
 
 This module deliberately reuses :class:`PMCModel` for parameter storage
 and density access — only the temporal structure differs.
@@ -69,10 +70,12 @@ def simulate_pmm(
     1. Sample ``(x_1, x_2)`` from the joint prior ``p(i, j)``.
     2. Sample ``y_1`` from the left margin ``f_ij`` (``f_i`` for state
        margins).
-    3. Sample ``y_2`` from the conditional ``p(y_2 | y_1, x_1=i, x_2=j)``
-       using the copula h-function (Rosenblatt inversion — Rosenblatt 1952,
-       *Ann. Math. Statist.* 23(3), 470–472; Nelsen 2006, *An Introduction
-       to Copulas*, 2nd ed., ch. 2 (random variate generation); A16 Appendix B uses rejection sampling
+    3. Sample ``y_2`` from the conditional
+       ``p(y_2 | y_1, x_1=i, x_2=j)`` using the copula h-function
+       (Rosenblatt inversion — Rosenblatt 1952, *Ann. Math.
+       Statist.* 23(3), 470–472; Nelsen 2006, *An Introduction to
+       Copulas*, 2nd ed., ch. 2 (random variate generation);
+       DerrodePieczynski_CSDA2013 Appendix B uses rejection sampling
        for the same conditional — same law):
 
            u = F_ij(y_1)
@@ -81,8 +84,9 @@ def simulate_pmm(
            y_2 = F_ji^{-1}(v)
 
     For variants without a copula (PMC-IN, HMC-IN2), ``y_2`` is sampled
-    independently from the right margin ``f_ji``. (A16 Eq. 12; with state
-    margins ``F_ij = F_i`` and ``F_ji = F_j``.)
+    independently from the right margin ``f_ji``.
+    (DerrodePieczynski_CSDA2013 Eq. 12; with state margins ``F_ij = F_i``
+    and ``F_ji = F_j``.)
 
     Parameters
     ----------
@@ -120,9 +124,10 @@ def simulate_pmm(
     for k in range(n_pairs):
         i = int(i_arr[k])
         j = int(j_arr[k])
-        # Left margin f_ij and right margin f_ji of the pair (A16 Eq. 12).
-        # For state margins ``margin(i, j) is margin(i)``: same objects, same
-        # random stream as before pair margins existed.
+        # Left margin f_ij and right margin f_ji of the pair
+        # (DerrodePieczynski_CSDA2013 Eq. 12). For state margins
+        # ``margin(i, j) is margin(i)``: same objects, same random stream
+        # as before pair margins existed.
         f_left  = model.margin(i, j)
         f_right = model.margin(j, i)
         # y_1 ~ f_ij
@@ -163,8 +168,8 @@ def classify_pmm(
         P(x_1=i, x_2=j | y_1, y_2)  ∝  p(i,j) · f_{ij}(y_1, y_2)
 
     with ``f_{ij}(y_1, y_2) = f_ij(y_1) · f_ji(y_2) · c_ij(F_ij(y_1),
-    F_ji(y_2))`` (A16 Eq. 12; ``f_i(y_1) · f_j(y_2) · c_ij(F_i(y_1),
-    F_j(y_2))`` for state margins)
+    F_ji(y_2))`` (DerrodePieczynski_CSDA2013 Eq. 12; ``f_i(y_1) · f_j(y_2) ·
+    c_ij(F_i(y_1), F_j(y_2))`` for state margins)
 
     and report the marginal MPM estimates::
 
@@ -196,7 +201,7 @@ def classify_pmm(
 
     # Pre-compute f_pdf[n, i, j] = f_ij(Y[n]) and F_ij(Y[n]) on the full
     # sequence (cheap). State margins evaluate K densities and broadcast them
-    # over j, pair margins evaluate the K² of them (A16 Eq. 12).
+    # over j, pair margins evaluate the K² of them (DerrodePieczynski_CSDA2013 Eq. 12).
     pair = getattr(model, "margin_structure", "state") == "pair"
     f_pdf = np.zeros((Y.size, K, K))
     f_cdf = np.zeros((Y.size, K, K))
@@ -217,7 +222,7 @@ def classify_pmm(
     for k in range(n_pairs):
         a, b = 2 * k, 2 * k + 1
         # y_1 = Y[a], y_2 = Y[b] — values used implicitly via f_pdf/f_cdf.
-        # Build the K×K joint pair density matrix (A16 Eq. 12):
+        # Build the K×K joint pair density matrix (DerrodePieczynski_CSDA2013 Eq. 12):
         # f_{ij}(y_1, y_2) = f_ij(y_1) · f_ji(y_2) [· c_ij(F_ij(y_1), F_ji(y_2))]
         # — the right observation's margin is f_ji, hence the transpose.
         joint = (p

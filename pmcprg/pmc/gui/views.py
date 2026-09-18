@@ -452,8 +452,9 @@ def plot_ice_margin_family(fig: Figure, trace: IceTrace):
 
     This is the SP-2016 GICE counterpart of view~B (which tracks
     copula families). One row per margin block — per state ``i`` for state
-    margins f_i, per pair ``(i, j)`` for pair margins f_ij (A16 Eq. 12); each
-    row is a horizontal ribbon coloured by the ``dist`` field of
+    margins f_i, per pair ``(i, j)`` for pair margins f_ij
+    (DerrodePieczynski_CSDA2013 Eq. 12); each row is a horizontal ribbon
+    coloured by the ``dist`` field of
     ``trace.margin_history[t][block_idx]`` across iterations. Useful when the
     user enables ``candidates`` per margin block to visualise family
     identification convergence.
@@ -783,8 +784,8 @@ def plot_margin_ks(fig: Figure, rows: list[dict], mdl: PMCModel,
     so the plot shows exactly the quantity the test summarises.
 
     On a pair model the curve of state k is the law of y_n given x_n = k,
-    g_k = Σ_j A[k, j] f_kj (A16 Eq. 12 summed over x_{n+1}), the law the
-    per-state sample follows.
+    g_k = Σ_j A[k, j] f_kj (DerrodePieczynski_CSDA2013 Eq. 12 summed over
+    x_{n+1}), the law the per-state sample follows.
     """
     if not rows:
         return
@@ -1163,9 +1164,9 @@ def plot_ice_param_compare(fig: Figure, init_mdl: PMCModel, fitted_mdl: PMCModel
     Three stacked panels:
 
     * **Margins** — one row per margin block, i.e. per state ``i`` (state
-      margins f_i) or per pair ``(i, j)`` (pair margins f_ij, A16 Eq. 12):
-      true family + params vs. fitted family + params. Family changes (GICE)
-      are flagged.
+      margins f_i) or per pair ``(i, j)`` (pair margins f_ij,
+      DerrodePieczynski_CSDA2013 Eq. 12): true family + params vs. fitted
+      family + params. Family changes (GICE) are flagged.
     * **Copulas** (only when ``variant.uses_copula``) — one row per
       ``(i, j)`` pair: true family + Kendall ``τ`` vs. fitted, with
       a ``Δτ`` column.

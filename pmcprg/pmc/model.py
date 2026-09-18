@@ -1,7 +1,7 @@
 """
 PMCModel — load, validate, and access PMC/HMC model parameters from TOML.
 
-Supported variants (A16 §2.1, Eqs. 5–9)
+Supported variants (DerrodePieczynski_CSDA2013 §2.1, Eqs. 5–9)
 ---------------------------------------
 HMC-IN   : hidden Markov chain, independent noise, p(y_n | x_n).
 HMC-IN2  : hidden Markov chain, independent noise of order 2, p(y_n | x_{n-1}, x_n).
@@ -11,16 +11,18 @@ PMC      : general pairwise Markov chain, copula-based transitions.
 
 Margin structure
 ----------------
-The package works with stationary reversible PMCs (SR-PMC, A16 §2.1–2.2),
-characterised by the joint prior p_ij = p(x_1 = i, x_2 = j) and by K²
-bivariate densities (A16 Eq. 12)
+The package works with stationary reversible PMCs (SR-PMC,
+DerrodePieczynski_CSDA2013 §2.1–2.2), characterised by the joint prior
+p_ij = p(x_1 = i, x_2 = j) and by K² bivariate densities
+(DerrodePieczynski_CSDA2013 Eq. 12)
 
     f_ij(y_1, y_2) = f_ij(y_1) · f_ji(y_2) · c_ij(F_ij(y_1), F_ji(y_2)),
 
 whose margins f_ij(y) = p(y_1 | x_1 = i, x_2 = j) are indexed by the *pair*
 of states. Reversibility only makes the right margin of the pair (i, j) the
 left margin of (j, i) — the index inversion f_ji of Eq. 12; it does not make
-f_ij independent of j. The Proposition of A16 §2.1 states that for an SR-PMC
+f_ij independent of j. The Proposition of DerrodePieczynski_CSDA2013 §2.1
+states that for an SR-PMC
 
     X is a Markov chain  ⇔  p(y_2 | x_1, x_2) = p(y_2 | x_2)
                          ⇔  p(y_n | x_{1:N}) = p(y_n | x_n) for all n.
@@ -30,11 +32,13 @@ A :class:`PMCModel` therefore has one of two margin structures
 
 * ``"state"`` — K densities f_i (f_ij = f_i). By the Proposition this is
   exactly the case where X is Markov: the transition
-  p(x_{n+1} = j | x_n = i, y_n) ∝ p_ij f_i(y_n) (A16 Eq. 13) no longer
-  depends on y_n, so a PMC with state margins is an SR HMC-DN, and a PMC-IN
-  with state margins an HMC-IN. Every HMC-* variant has state margins.
-* ``"pair"`` — K² densities f_ij: the general PMC of A16 Eqs. 12–14, where
-  X is not Markov. Allowed for the PMC and PMC-IN variants only.
+  p(x_{n+1} = j | x_n = i, y_n) ∝ p_ij f_i(y_n)
+  (DerrodePieczynski_CSDA2013 Eq. 13) no longer depends on y_n, so a PMC
+  with state margins is an SR HMC-DN, and a PMC-IN with state margins an
+  HMC-IN. Every HMC-* variant has state margins.
+* ``"pair"`` — K² densities f_ij: the general PMC of
+  DerrodePieczynski_CSDA2013 Eqs. 12–14, where X is not Markov. Allowed for
+  the PMC and PMC-IN variants only.
 
 Versions 0.5.0–0.8.x collapsed K² margins to f_ij = f_i for every variant,
 attributing the collapse to reversibility; that made the package's "PMC" an
@@ -81,9 +85,10 @@ tau  = 0.7
 
 Reference
 ---------
-A16 — Derrode, S. & Pieczynski, W. (2013). Unsupervised data classification
-using pairwise Markov chains with automatic copulas selection. *Computational
-Statistics & Data Analysis* 63, 81–98. doi:10.1016/j.csda.2013.01.027.
+DerrodePieczynski_CSDA2013 — Derrode, S. & Pieczynski, W. (2013).
+Unsupervised data classification using pairwise Markov chains with automatic
+copulas selection. *Computational Statistics & Data Analysis* 63, 81–98.
+doi:10.1016/j.csda.2013.01.027.
 """
 
 import copy
@@ -138,10 +143,11 @@ class Variant(Enum):
     def allows_pair_margins(self) -> bool:
         """True for PMC and PMC-IN, whose margins may be pair-indexed (f_ij).
 
-        For an HMC-* variant X is a Markov chain, and by the Proposition of
-        A16 §2.1 an SR-PMC has a Markov X iff p(y_2 | x_1, x_2) = p(y_2 | x_2):
-        its margins are state-indexed. Whether a given model *uses* pair
-        margins is :attr:`PMCModel.margin_structure`.
+        For an HMC-* variant X is a Markov chain, and by the
+        Proposition of DerrodePieczynski_CSDA2013 §2.1 an SR-PMC has a
+        Markov X iff p(y_2 | x_1, x_2) = p(y_2 | x_2): its margins are
+        state-indexed. Whether a given model *uses* pair margins is
+        :attr:`PMCModel.margin_structure`.
         """
         return self in (Variant.PMC_IN, Variant.PMC)
 
@@ -153,7 +159,7 @@ class Variant(Enum):
         depending on the model (:attr:`PMCModel.margin_structure`), so this
         is False. (Versions 0.5.0–0.8.x returned True for every variant,
         wrongly attributing f_ij = f_i to reversibility; the Proposition of
-        A16 §2.1 ties it to X being Markov.)
+        DerrodePieczynski_CSDA2013 §2.1 ties it to X being Markov.)
         """
         return not self.allows_pair_margins
 
@@ -180,9 +186,10 @@ def _log_pair_notice() -> None:
     _pair_notice_logged = True
     logger.info(
         "[[margins]] in K²-format (keys i, j) are pair-indexed margins f_ij "
-        "(general PMC, A16 Eqs. 12–14); versions 0.5.0–0.8 collapsed them to "
-        "f_i. Set [model].margin_structure = \"state\" to restore the collapse "
-        "(f_i = f_i0, X Markov — A16 §2.1 Proposition)."
+        "(general PMC, DerrodePieczynski_CSDA2013 Eqs. 12–14); versions "
+        "0.5.0–0.8 collapsed them to f_i. Set [model].margin_structure = "
+        "\"state\" to restore the collapse "
+        "(f_i = f_i0, X Markov — DerrodePieczynski_CSDA2013 §2.1 Proposition)."
     )
 
 
@@ -915,10 +922,11 @@ class PMCModel:
 
         The v0.5.0–0.8 behaviour, now only on request. WARNs (without
         raising) when blocks within the same ``i`` declare different
-        densities: state margins require f_ij = f_i — by the Proposition of
-        A16 §2.1, a hidden chain X that is Markov — so the collapse discards
-        the j-dependence. The entry kept is the one at ``(i, 0)``; the
-        conflicting (i, j>0) entries are listed in the warning.
+        densities: state margins require f_ij = f_i — by the
+        Proposition of DerrodePieczynski_CSDA2013 §2.1, a hidden chain
+        X that is Markov — so the collapse discards the j-dependence.
+        The entry kept is the one at ``(i, 0)``; the conflicting
+        (i, j>0) entries are listed in the warning.
         """
         by_ij = self._index_k2_blocks(margins_raw, K)
 
@@ -967,7 +975,8 @@ class PMCModel:
         Returns
         -------
         pair_margins : ``dict[(i, j), _MarginDist]`` — f_ij, the density of
-                       y_n given (x_n, x_{n+1}) = (i, j) (A16 §2.2).
+                       y_n given (x_n, x_{n+1}) = (i, j)
+                       (DerrodePieczynski_CSDA2013 §2.2).
         raw_blocks   : ``list[dict]`` — K² blocks ``{"i", "j", "dist",
                        "params"[, "candidates"]}`` sorted by (i, j).
         """
@@ -1058,9 +1067,11 @@ class PMCModel:
     def margin_structure(self) -> str:
         """``"state"`` (K margins f_i) or ``"pair"`` (K² margins f_ij).
 
-        State margins are exactly the SR-PMCs whose hidden chain X is Markov
-        (Proposition of A16 §2.1); pair margins give the general PMC of A16
-        Eqs. 12–14 (PMC and PMC-IN variants only). See the module docstring.
+        State margins are exactly the SR-PMCs whose hidden chain X is
+        Markov (Proposition of DerrodePieczynski_CSDA2013 §2.1); pair
+        margins give the general PMC of DerrodePieczynski_CSDA2013
+        Eqs. 12–14 (PMC and PMC-IN variants only). See the module
+        docstring.
         """
         return self._margin_structure
 
@@ -1076,9 +1087,9 @@ class PMCModel:
           ``margin(i, j) is margin(i)``.
         * Pair margins (``margin_structure == "pair"``): ``j`` is required.
           ``margin(i, j)`` is f_ij, the left margin of the pair (i, j) in
-          A16 Eq. 12; the right margin of that pair (the density of
-          y_{n+1}) is ``margin(j, i)`` = f_ji. ``margin(i)`` raises
-          ``ValueError``: no density is attached to a state alone.
+          DerrodePieczynski_CSDA2013 Eq. 12; the right margin of that pair
+          (the density of y_{n+1}) is ``margin(j, i)`` = f_ji. ``margin(i)``
+          raises ``ValueError``: no density is attached to a state alone.
         """
         if self._margin_structure == "pair":
             if j is None:
@@ -1143,7 +1154,7 @@ class PMCModel:
 
         The margin of the left observation y_n is ``margin(i, j)`` = f_ij and
         that of the right observation y_{n+1} is ``margin(j, i)`` = f_ji —
-        the index inversion of A16 Eq. 12. With state margins
+        the index inversion of DerrodePieczynski_CSDA2013 Eq. 12. With state margins
         (``margin_structure == "state"``) both reduce to the per-state
         densities f_i and f_j.
 
@@ -1161,10 +1172,11 @@ class PMCModel:
         ----------------------------
         For HMC-* the weight is the transition p(z_{n+1} | z_n) itself:
         ``precompute_weights(model, Y)[0][n, i, j] = weight(i, j, Y[n], Y[n+1])``.
-        For PMC-* it is the summand of the pair density of A16 Eq. 12,
+        For PMC-* it is the summand of the pair density of
+        DerrodePieczynski_CSDA2013 Eq. 12,
         p(x_n = i, x_{n+1} = j, y_n, y_{n+1}); the transition used by
         forward–backward divides it by p(x_n = i, y_n) = Σ_k p[i,k] f_ik(y_n)
-        (A16 Eqs. 13–14):
+        (DerrodePieczynski_CSDA2013 Eqs. 13–14):
 
             W[n, i, j] = weight(i, j, y_n, y_{n+1}) / Σ_k p[i,k] · f_ik(y_n).
 
@@ -1173,12 +1185,14 @@ class PMCModel:
 
         Why the margins may depend on the pair
         --------------------------------------
-        Reversibility (A16 §2.2) only gives p(y_1 | x_1, x_2) = p(y_2 | x_2, x_1),
-        whence f_ji for the right observation. It does not make f_ij
-        independent of j: by the Proposition of A16 §2.1, f_ij = f_i holds
-        exactly when the hidden chain X is Markov, in which case the PMC is an
-        SR HMC-DN (the transition p(x_{n+1} = j | x_n = i, y_n) ∝ p_ij f_i(y_n)
-        no longer depends on y_n).
+        Reversibility (DerrodePieczynski_CSDA2013 §2.2) only gives
+        p(y_1 | x_1, x_2) = p(y_2 | x_2, x_1), whence f_ji for the
+        right observation. It does not make f_ij independent of j: by
+        the Proposition of DerrodePieczynski_CSDA2013 §2.1, f_ij = f_i
+        holds exactly when the hidden chain X is Markov, in which case
+        the PMC is an SR HMC-DN (the transition
+        p(x_{n+1} = j | x_n = i, y_n) ∝ p_ij f_i(y_n) no longer
+        depends on y_n).
         """
         v = self.variant
 

@@ -19,8 +19,8 @@ a reference computed independently of that grid:
   (CSDA-2013 Table 1) — brute force over the state paths with the missing y
   integrated by adaptive ``scipy.integrate.quad`` (isolated gap) or a fine
   composite Gauss–Legendre tensor rule (block of two), on transition densities
-  written from the formulas (A16 Eqs. 12–14) with from-scratch copula
-  densities.
+  written from the formulas (DerrodePieczynski_CSDA2013 Eqs. 12–14) with
+  from-scratch copula densities.
 
 Tolerances are set from measured errors at G = 64 (default), with a margin;
 the measured tables are in the comments of each test.
@@ -393,7 +393,8 @@ def _gumbel_pdf(u, v, tau):
 
 
 def _pair_density(copula):
-    """q(j, y1 | i, y0) and μ(i, y) from A16 Eqs. 12–14, vectorised in y0, y1."""
+    """q(j, y1 | i, y0) and μ(i, y) from DerrodePieczynski_CSDA2013 Eqs. 12–14,
+    vectorised in y0, y1."""
     cpdf = {"Clayton": _clayton_pdf, "GH": _gumbel_pdf, None: None}[copula]
 
     def f(i, j, y):

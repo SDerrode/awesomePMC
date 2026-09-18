@@ -24,8 +24,9 @@ the panel script does, would triple the cost for nothing.
 
 Pseudo-observations of the pair (i, j) are ``(F_ij(y_n), F_ji(y_{n+1}))``
 weighted by ``ξ_n(i, j)`` (:func:`pmcprg.diagnostics.copula_pseudo_obs`): the pair
-margins of a general PMC (A16 Eqs. 12–14), which reduce to the state margins
-``(F_i(y_n), F_j(y_{n+1}))`` — the same floats — when ``f_ij = f_i``.
+margins of a general PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14), which reduce
+to the state margins ``(F_i(y_n), F_j(y_{n+1}))`` — the same floats — when
+``f_ij = f_i``.
 
 Usage
 -----

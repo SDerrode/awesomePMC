@@ -5,8 +5,8 @@ pmcprg.pmc.gui.tabs — the four tabs of the PMC main window.
   for SR-PMC (joint-prior) variants and live auto-mirroring of off-diagonal
   cells under those variants.
 * :class:`_MarginTab` — marginal densities, double-click to edit: K cells f_i
-  (state margins) or K×K cells f_ij, the law of y_n given
-  (x_n = i, x_{n+1} = j) (pair margins, general PMC — A16 Eqs. 12–14), with a
+  (state margins) or K×K cells f_ij, the law of y_n given (x_n = i, x_{n+1} = j)
+  (pair margins, general PMC — DerrodePieczynski_CSDA2013 Eqs. 12–14), with a
   selector switching between the two structures.
 * :class:`_CopulaTab` — K×K grid of copula families + τ (double-click to edit).
 * :class:`_IceTab`    — ICE configuration including multistart options.
@@ -428,11 +428,12 @@ class _MarginTab(_BlockGridTab):
     The grid follows :attr:`PMCModel.margin_structure`:
 
     * ``"state"`` — K cells, row ``i``: f_i, the law of y_n given x_n = i.
-      With such margins the hidden chain X is Markov (Proposition of A16
-      §2.1) and a PMC reduces to an SR HMC-DN.
+      With such margins the hidden chain X is Markov (Proposition of
+      DerrodePieczynski_CSDA2013 §2.1) and a PMC reduces to an SR HMC-DN.
     * ``"pair"`` — K×K cells, row ``i``, column ``j``: f_ij, the law of y_n
-      given (x_n = i, x_{n+1} = j) — the general PMC of A16 Eqs. 12–14. The
-      right observation of the pair (i, j) follows f_ji. PMC and PMC-IN only.
+      given (x_n = i, x_{n+1} = j) — the general PMC of DerrodePieczynski_CSDA2013
+      Eqs. 12–14. The right observation of the pair (i, j) follows f_ji. PMC and
+      PMC-IN only.
 
     The *Margin structure* selector switches between the two, for the variants
     that accept pair margins:
@@ -451,13 +452,14 @@ class _MarginTab(_BlockGridTab):
     Double-click a cell to edit.
 
     Reference: Derrode, S. & Pieczynski, W. (2013). *Computational Statistics
-    & Data Analysis* 63, 81–98 (A16).
+    & Data Analysis* 63, 81–98 (DerrodePieczynski_CSDA2013).
     """
 
     _INFO_STATE = ("Margins f_i: law of y_n given x_n = i (one per state) "
                    "— double-click to edit.")
     _INFO_PAIR  = ("Margins f_ij: law of y_n given (x_n = i, x_{n+1} = j) — "
-                   "row i, column j (general PMC, A16 Eqs. 12–14) — "
+                   "row i, column j (general PMC, "
+                   "DerrodePieczynski_CSDA2013 Eqs. 12–14) — "
                    "double-click to edit.")
     _INFO_LABEL   = _INFO_STATE
     _RAW_KEY      = "margins"
@@ -515,12 +517,13 @@ class _MarginTab(_BlockGridTab):
             self._combo_structure.blockSignals(was)
         self._combo_structure.setEnabled(self._pair_allowed)
         self._combo_structure.setToolTip(
-            "State margins f_i make the hidden chain Markov (A16 §2.1 "
-            "Proposition); pair margins f_ij give the general PMC "
-            "(A16 Eqs. 12–14)."
+            "State margins f_i make the hidden chain Markov "
+            "(DerrodePieczynski_CSDA2013 §2.1 Proposition); pair margins f_ij "
+            "give the general PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14)."
             if self._pair_allowed else
             "This variant takes state margins only: pair margins f_ij are "
-            "defined for PMC and PMC-IN (A16 §2.1 Proposition)."
+            "defined for PMC and PMC-IN "
+            "(DerrodePieczynski_CSDA2013 §2.1 Proposition)."
         )
 
     def load(self, mdl: PMCModel):

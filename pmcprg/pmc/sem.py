@@ -30,8 +30,8 @@ Given an initial model θ⁽⁰⁾ and observations Y = y_{1:N}, SEM alternates:
     Update prior, margins (optional), copula τ from the hard posteriors —
     delegated to :func:`pmcprg.pmc._estim_common.m_step` so the implementation
     stays identical to ICE's M-step body. State margins f_i are fitted on
-    {y_n : X̃_n = i}; pair margins f_ij (general PMC, A16 Eqs. 12–14) on the
-    dual-view sub-sample {y_n : (X̃_n, X̃_{n+1}) = (i, j)} ∪
+    {y_n : X̃_n = i}; pair margins f_ij (general PMC, DerrodePieczynski_CSDA2013
+    Eqs. 12–14) on the dual-view sub-sample {y_n : (X̃_n, X̃_{n+1}) = (i, j)} ∪
     {y_{n+1} : (X̃_n, X̃_{n+1}) = (j, i)}, and the copula c_ij on the
     pseudo-observations (F_ij(y_n), F_ji(y_{n+1})) of the pairs drawn in
     (i, j) — the model's F, or with ``copula_margins = "empirical"`` the
@@ -74,9 +74,10 @@ where the jitter is not: see :data:`pmcprg.pmc.ice._GAP_DRAW`.
 Relation to the papers' ICE
 ---------------------------
 SEM is the closest estimator in the package to the ICE of the papers with
-L = 1 (A16 §4.2, A23 §3): both estimate the copula and margin parameters on
-**one** posterior draw x^(q) ~ p(x | y, θ^q). It differs in taking the prior
-p_ij from the draw too, where the papers use its conditional expectation.
+L = 1 (DerrodePieczynski_CSDA2013 §4.2, DerrodePieczynski_SP2016 §3): both
+estimate the copula and margin parameters on **one** posterior draw x^(q) ~
+p(x | y, θ^q). It differs in taking the prior p_ij from the draw too, where
+the papers use its conditional expectation.
 The :mod:`pmcprg.pmc.ice` module docstring ("Relation to the papers' ICE")
 sets the two side by side.
 

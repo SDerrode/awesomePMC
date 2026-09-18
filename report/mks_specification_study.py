@@ -119,7 +119,8 @@ def build_models(config: str):
     raw = reference.raw
     # "State 0" is every margin attached to x_n = 0: the block f_0 for state
     # margins, the blocks f_0j (j = 0..K−1) for the pair margins of a general
-    # PMC (A16 Eqs. 12–14). The distributional alternatives change them all.
+    # PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14). The distributional
+    # alternatives change them all.
     blocks = raw["margins"]
     state0 = [blk for blk in blocks if int(blk["i"]) == 0]
 
@@ -153,7 +154,7 @@ def _labelled_stats(mdl, Yv, X_true, rng):
     """MKS statistic per (label scheme, margin), plus the tabulated verdict.
 
     A margin is a state k (state margins) or a pair (i, j) (pair margins of a
-    general PMC, A16 Eqs. 12–14, sample in the dual view — see
+    general PMC, DerrodePieczynski_CSDA2013 Eqs. 12–14, sample in the dual view — see
     :func:`pmcprg.diagnostics.margin_sample`).
 
     All three schemes come out of one forward-backward pass: the replicate

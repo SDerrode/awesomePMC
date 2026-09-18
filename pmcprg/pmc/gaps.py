@@ -500,9 +500,9 @@ _RENORMALISE = "block"
 def _x_transition(model: PMCModel, f: np.ndarray, *, log: bool) -> np.ndarray:
     """P(x_{n+1} = j | x_n = i, y_n) at the rows of f (M, K, K) — log if ``log``.
 
-    A_ij for the HMC variants and for state margins (p_ij / Σ_k p_ik); for pair
-    margins p_ij f_ij(y) / Σ_k p_ik f_ik(y) (A16 Eq. 13), with the linear-space
-    guard of ``precompute_weights``.
+    A_ij for the HMC variants and for state margins (p_ij / Σ_k p_ik); for
+    pair margins p_ij f_ij(y) / Σ_k p_ik f_ik(y) (DerrodePieczynski_CSDA2013
+    Eq. 13), with the linear-space guard of ``precompute_weights``.
     """
     M, K = f.shape[0], model.K
     p = model.prior_p

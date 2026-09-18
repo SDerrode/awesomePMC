@@ -4,15 +4,15 @@ pmcprg.pmc — Pairwise Markov Chain models with copula-based transitions.
 This package implements the unsupervised classification methods of two
 papers by **S. Derrode and W. Pieczynski** (see the DOIs below):
 
-* **A16** — *Unsupervised data classification using pairwise Markov chains
-  with automatic copulas selection*, Comput. Stat. Data Anal., 63 (2013),
-  81-98. doi:10.1016/j.csda.2013.01.027
+* **DerrodePieczynski_CSDA2013** — *Unsupervised data classification using
+  pairwise Markov chains with automatic copulas selection*, Comput. Stat.
+  Data Anal., 63 (2013), 81-98. doi:10.1016/j.csda.2013.01.027
   → PMC model family, SR-PMC reversibility, ICE-based copula selection
   (criteria: MLE, AIC, BIC, Huard Eq. 20, CvM).
 
-* **A23** — *Unsupervised classification using hidden Markov chain with
-  unknown noise copulas and margins*, Signal Process., 128 (2016), 8-17.
-  doi:10.1016/j.sigpro.2016.03.008
+* **DerrodePieczynski_SP2016** — *Unsupervised classification using hidden
+  Markov chain with unknown noise copulas and margins*, Signal Process.,
+  128 (2016), 8-17. doi:10.1016/j.sigpro.2016.03.008
   → GICE: automatic margin family selection from a candidate set
   (criteria: MLE, Kolmogorov Ex. 3.1, AIC, BIC).
 
@@ -29,7 +29,8 @@ sample_posterior : Forward-Filter Backward-Sample draw  X̃ ~ P(X | Y).
 impute    : posterior law of missing observations (NaN) given the observed ones.
 forecast  : h-step predictive law of (x_{N+k}, y_{N+k}) given Y.
 gap_posterior : α̂, β̂, γ, ξ and log-likelihood of a sequence with missing values.
-ice       : unsupervised ICE parameter estimation (A16 §4 + A23 §3 GICE).
+ice       : unsupervised ICE parameter estimation (DerrodePieczynski_CSDA2013 §4 +
+            DerrodePieczynski_SP2016 §3 GICE).
 sem       : unsupervised Stochastic-EM parameter estimation (sister of ICE).
 """
 

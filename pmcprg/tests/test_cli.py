@@ -184,7 +184,7 @@ def test_cli_estimate(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# General PMC — pair-indexed margins f_ij (A16 Eqs. 12–14)
+# General PMC — pair-indexed margins f_ij (DerrodePieczynski_CSDA2013 Eqs. 12–14)
 # ---------------------------------------------------------------------------
 
 PAIR_MODEL = MODELS_DIR / "pmc_pair_gauss_k2.toml"

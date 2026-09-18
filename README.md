@@ -74,12 +74,14 @@ package packages for reuse.*
 ## Why awesomePMC?
 
 - **The general pairwise Markov chain.** Five variants, from the classical
-  hidden Markov chain (HMC-IN) to the PMC of A16 Eqs. 12–14 with *pair margins*
-  f_ij — the law of yₙ given (xₙ, xₙ₊₁) = (i, j), under which X is not a Markov
-  chain — or *state margins* fᵢ. Margins are any `scipy.stats` family, or
+  hidden Markov chain (HMC-IN) to the PMC of DerrodePieczynski_CSDA2013 Eqs.
+  12–14 with *pair margins* f_ij — the law of yₙ given (xₙ, xₙ₊₁) = (i, j),
+  under which X is not a Markov chain — or *state margins* fᵢ. Margins are
+  any `scipy.stats` family, or
   multivariate Gaussian (d > 1) for the copula-free variants.
-- **39 copula families** — elliptical (Gaussian, Student-t), Archimedean
-  (Clayton, Gumbel–Hougaard, Frank, Joe, A12, A14, AMH, BB1, BB6) and their
+- **41 copula families** — elliptical (Gaussian, Student-t), Archimedean
+  (Clayton, Gumbel–Hougaard, Frank, Joe, A12, A14, AMH, BB1, BB6, BB7, BB8) and
+  their
   survival forms, extreme-value (Galambos, Hüsler–Reiss, Tawn types 1 and 2,
   the three-parameter Tawn, t-EV), explicit (Plackett, FGM, cubic section,
   independence), and the 90°/270° rotations that carry the one-sided families
@@ -89,11 +91,12 @@ package packages for reuse.*
   dependence and the tails keep their likelihood.
 - **Supervised classification**: normalised forward–backward, MPM decision,
   posterior marginals and forward-filtering backward-sampling draws.
-- **Unsupervised estimation**: ICE and SEM (stochastic EM) with, for every pair
-  of states, automatic copula-family selection among candidates (MLE, AIC, BIC,
-  Huard's Bayesian evidence of A16 Eq. 20, Cramér–von Mises, cross-validated
-  CIC `xvcic`); GICE margin-family selection of A23 (MLE, Kolmogorov, AIC, BIC);
-  k-means warm start; multistart with parameter jitter or over copula families.
+- **Unsupervised estimation**: ICE and SEM (stochastic EM) with, for every pair of
+  states, automatic copula-family selection among candidates (MLE, AIC, BIC, Huard's
+  Bayesian evidence of DerrodePieczynski_CSDA2013 Eq. 20, Cramér–von Mises,
+  cross-validated CIC `xvcic`); GICE margin-family selection of
+  DerrodePieczynski_SP2016 (MLE, Kolmogorov, AIC, BIC); k-means warm start;
+  multistart with parameter jitter or over copula families.
 - **Is a family choice significant?** Analytic standard errors of copula
   parameters, weighted Vuong and Clarke tests with a HAC variance, confidence
   sets of families not significantly worse than the best — also for the pairs
@@ -120,7 +123,7 @@ package packages for reuse.*
 
 | Sub-package | What it does |
 |---|---|
-| `pmcprg.copulas` | 39 copula families, fitting, model selection, standard errors, bivariate joint laws |
+| `pmcprg.copulas` | 41 copula families, fitting, model selection, standard errors, bivariate joint laws |
 | `pmcprg.pmc` | the 5 HMC/PMC variants: TOML models, simulation, classification, ICE/SEM, missing data, images, CLI, GUI |
 | `pmcprg.diagnostics` | multivariate KS test, parametric bootstrap, smooth tests, Vuong/Clarke tests |
 | `pmcprg.missing` | missingness patterns and metrics on masked positions |
@@ -253,11 +256,11 @@ a reading of it, not a second list:
 ```python
 from pmcprg.copulas import CopulaEnum
 
-len(CopulaEnum.available())                           # 39
+len(CopulaEnum.available())                           # 40
 [e.value.SHORT_NAME for e in CopulaEnum.available()]  # 'Prod', 'Gauss', 'Student', …
 ```
 
-**39 families**: 2 elliptical, 9 Archimedean, 4 survival (180° rotations),
+**41 families**: 2 elliptical, 11 Archimedean, 4 survival (180° rotations),
 14 rotations at 90°/270°, 6 extreme-value and 4 explicit. `ID` and
 `SHORT_NAME` are the registry's own; `SHORT_NAME` is what the `name =` key of
 a TOML model expects.
@@ -282,6 +285,27 @@ a TOML model expects.
 | 15 | `BB1` | BB1 (Joe-Clayton), free `delta` | (0, 1) | both |
 | 16 | `AMH` | Ali-Mikhail-Haq | (≈−0.18, 1/3) | none |
 | 38 | `BB6` | BB6 (Joe-Gumbel), free `delta6` | (0, 1) | upper |
+| 40 | `BB7` | BB7 (Joe-Clayton), free `theta7` ² | (0, 1) | both |
+| 41 | `BB8` | BB8 (Joe-Frank), free `delta8` ³ | (0, 1) | upper at `delta8` = 1 only |
+
+² τ is jointly constrained with θ: `BB7` needs τ > τ\_Joe(θ), i.e.
+θ < θ\_Joe(τ), the Joe copula being its δ → 0 limit. `BB1` and `BB6` carry the
+same kind of constraint on their own second parameter. `BB7` is the only
+family here that keeps **θ** rather than δ as its free parameter, and for a
+reason specific to it: τ is strictly increasing in δ at fixed θ, but *not*
+monotone in θ at fixed δ — it dips below the Clayton value once δ ≳ 3.44 — so
+(τ, δ) would be two-to-one. `BB7` nests **both** Clayton (θ = 1) and Joe
+(δ → 0), with λ_U = 2 − 2^{1/θ} and λ_L = 2^{−1/δ}: one tail coefficient per
+parameter.
+
+³ `BB8` is `Joe` at `delta8` = 1 and the independence copula at θ = 1 — *not*
+Frank, despite the usual name: Frank appears only as the joint limit θ → ∞,
+`delta8` → 0 at fixed θ·`delta8`. Its upper-tail coefficient is
+2 − 2^(1/θ) at `delta8` = 1 and **0 for every** `delta8` < 1, a genuine
+discontinuity of the family. Unlike `BB1`, `BB6` and the Tawn models, τ and
+the second parameter are *not* jointly constrained: the whole τ range is
+reached at every `delta8`. Its τ is the package's only Archimedean τ computed
+by quadrature (no elementary closed form; a ₃F₂ one exists and is unusable).
 
 #### Survival (180° rotations)
 
@@ -345,7 +369,38 @@ tail-dependence coefficients vanish for every rotation (the mass sits in the
 | 33, 34 | `A1490`, `A14270` | Archimedean 14 | (−1, −1/3) |
 | 36, 37 | `SBB190`, `SBB1270` | Survival BB1, free `delta` | (−1, 0) |
 
-With the rotations, 20 of the 39 families reach τ < 0.
+With the rotations, 20 of the 41 families reach τ < 0. `BB7` (ID 40) and
+`BB8` (ID 41) are positively dependent only: FR-8 closed on a fixed list that
+does not include the BB6/BB7/BB8 pairs, so no 90°/270° rotation is registered
+for them.
+
+### Nonparametric comparison tool (not a family)
+
+`EmpiricalBetaCopula` (Segers, Sibuya & Tsukahara 2017) is **not** a 40th
+entry of `CopulaEnum` — it has no τ, no `fit()`, and ICE's family selection
+never sees it. Given a bivariate sample it *is* the nonparametric copula that
+sample suggests: an assumption-free benchmark to check whether a fitted
+parametric family's `cdf`/`pdf` track what the data alone say.
+
+```python
+from pmcprg.copulas import EmpiricalBetaCopula
+
+data = CopulaClayton(tau_k=0.6).sample(n=300, seed=0)
+nonparam = EmpiricalBetaCopula(data)       # or .from_pseudo_obs(pseudo_obs)
+
+nonparam.cdf(0.3, 0.7)                     # C_n^beta(u, v)
+nonparam.pdf(0.3, 0.7)                     # density, exp(logpdf) internally
+nonparam.h1(0.3, 0.7), nonparam.h2(0.3, 0.7)  # conditional cdfs (h-functions)
+nonparam.sample(1000, seed=1)              # exact two-stage mixture sampler
+```
+
+Built from ranks (average-rank tie handling, matching `CopulaVirt.fit`'s own
+`rankdata(...)/(n+1)` pseudo-observations); its margins are **exactly**
+uniform when there are no ties (a deterministic identity of the incomplete
+beta function, not just "asymptotic"), and only a small, ties-only,
+shrinking-with-n discrepancy otherwise. See
+`pmcprg/copulas/_nonparametric.py` for the full derivation and
+`pmcprg/tests/test_empirical_beta_copula.py` for the numerical checks.
 
 ### Quick start
 
@@ -442,12 +497,13 @@ the simplest to the most general. Every model has one of two **margin
 structures** (`[model].margin_structure`):
 
 - **`"state"`** — K densities fᵢ, one per state (f_ij = fᵢ). By the Proposition
-  of A16 §2.1, this is exactly the case where X is a Markov chain: a PMC with
-  state margins is a stationary reversible HMC-DN, and a PMC-IN with state
-  margins an HMC-IN. Every HMC-* variant has state margins.
+  of DerrodePieczynski_CSDA2013 §2.1, this is exactly the case where X is a
+  Markov chain: a PMC with state margins is a stationary reversible HMC-DN,
+  and a PMC-IN with state margins an HMC-IN. Every HMC-* variant has state
+  margins.
 - **`"pair"`** — K² densities f_ij, the law of yₙ given (xₙ, xₙ₊₁) = (i, j): the
-  **general PMC** of A16 Eqs. 12–14, where X is *not* Markov. Allowed for PMC
-  and PMC-IN only.
+  **general PMC** of DerrodePieczynski_CSDA2013 Eqs. 12–14, where X is *not*
+  Markov. Allowed for PMC and PMC-IN only.
 
 | Variant | Prior | Observation density (state margins) | Pair margins | Copula |
 |---------|-------|--------------------|------|--------|
@@ -458,9 +514,9 @@ structures** (`[model].margin_structure`):
 | **PMC** | Joint distribution p | fᵢ(yₙ) · fⱼ(yₙ₊₁) · c_ij(Fᵢ(yₙ), Fⱼ(yₙ₊₁)) | f_ij(yₙ) · f_ji(yₙ₊₁) · c_ij(F_ij(yₙ), F_ji(yₙ₊₁)) | Yes — c_ij |
 
 Stationarity and reversibility only make the right margin of the pair (i, j)
-the left margin of (j, i) — the index inversion f_ji of A16 Eq. 12; they do
-**not** make f_ij independent of j. Versions 0.5.0–0.8.x collapsed K² margins to
-fᵢ on that mistaken ground.
+the left margin of (j, i) — the index inversion f_ji of
+DerrodePieczynski_CSDA2013 Eq. 12; they do **not** make f_ij independent of j.
+Versions 0.5.0–0.8.x collapsed K² margins to fᵢ on that mistaken ground.
 
 ### TOML model files
 
@@ -527,22 +583,22 @@ init        = "model"    # "model" (default) | "kmeans"
 ```
 
 > **ICE vs SEM.** Both estimators share the same M-step and config keys. ICE
-> (`algorithm = "ice"`, default) uses *soft* posteriors from forward-backward
-> and converges deterministically. SEM (`algorithm = "sem"`) draws a single
-> realisation `X̃ ~ P(X | Y)` at every iteration via Forward-Filter
-> Backward-Sample, then runs the same M-step on the hard labels — the
-> log-likelihood fluctuates around its stationary regime instead of
-> converging. CLI: `pmc estimate --algorithm sem --sem-seed 0 …`. GUI: the
-> **Estimator** combobox in the ICE-config tab. Note that the papers (A16 §4.2,
-> Eqs. 22–24; A23 §3) estimate copulas and margins on *one posterior draw*
-> (L = 1) and reserve the expectation for the prior — closer to SEM than to
-> this package's ICE; see the docstring of `pmcprg/pmc/ice.py`.
+> (`algorithm = "ice"`, default) uses *soft* posteriors from forward-backward and
+> converges deterministically. SEM (`algorithm = "sem"`) draws a single realisation
+> `X̃ ~ P(X | Y)` at every iteration via Forward-Filter Backward-Sample, then runs the
+> same M-step on the hard labels — the log-likelihood fluctuates around its stationary
+> regime instead of converging. CLI: `pmc estimate --algorithm sem --sem-seed 0 …`.
+> GUI: the **Estimator** combobox in the ICE-config tab. Note that the papers
+> (DerrodePieczynski_CSDA2013 §4.2, Eqs. 22–24; DerrodePieczynski_SP2016 §3) estimate
+> copulas and margins on *one posterior draw* (L = 1) and reserve the expectation for
+> the prior — closer to SEM than to this package's ICE; see the docstring of
+> `pmcprg/pmc/ice.py`.
 >
-> **Selection criteria.** At every M-step, each pair (i, j) gets the copula
-> family of `candidates` that is best under `selection_criterion`; its τ is
-> always the maximum-likelihood estimate. A margin block that declares
-> `candidates` (GICE, A23 §3) gets its family chosen by `margin_selection_rule`
-> when `fit_margins = true` — see
+> **Selection criteria.** At every M-step, each pair (i, j) gets the copula family of
+> `candidates` that is best under `selection_criterion`; its τ is always the
+> maximum-likelihood estimate. A margin block that declares `candidates` (GICE,
+> DerrodePieczynski_SP2016 §3) gets its family chosen by `margin_selection_rule` when
+> `fit_margins = true` — see
 > [`sp2016_gice_k2.toml`](https://github.com/SDerrode/awesomePMC/blob/main/pmcprg/pmc/models/sp2016_gice_k2.toml).
 >
 > **K-means warm-start.** Setting `init = "kmeans"` clusters `Y` with k-means++
@@ -614,7 +670,7 @@ Nine example models are provided in
 | `hmc_dn_gauss_k2.toml` | HMC-DN (copula-dependent HMM) |
 | `sp2016_gice_k2.toml` | PMC with non-Gaussian state margins, i.e. an SR HMC-DN (GICE fixture, SP-2016 §5.1) |
 | `pmc_in_gauss_k2.toml` | PMC-IN |
-| `pmc_gauss_k2.toml` | PMC with state margins (an SR HMC-DN, A16 §2.1 Proposition) |
+| `pmc_gauss_k2.toml` | PMC with state margins (an SR HMC-DN, DerrodePieczynski_CSDA2013 §2.1 Proposition) |
 | `pmc_pair_gauss_k2.toml` | General PMC with pair margins f_ij (CSDA-2013 Table 1 Gaussian margins, Clayton τ = 0.7) |
 
 ### Python API
@@ -869,9 +925,9 @@ approximation.
 ## Reproducibility reports
 
 - [`report/`](https://github.com/SDerrode/awesomePMC/tree/main/report) reproduces
-  the experiments of A16 §3.2 (supervised PMC, impact of the copula shape), §3.3
-  (i.i.d. PMM baseline) and §4.3 (unsupervised ICE-based copula selection), with
-  the committed CSV results, LaTeX tables and the report
+  the experiments of DerrodePieczynski_CSDA2013 §3.2 (supervised PMC, impact of the
+  copula shape), §3.3 (i.i.d. PMM baseline) and §4.3 (unsupervised ICE-based copula
+  selection), with the committed CSV results, LaTeX tables and the report
   [`csda2013_reproduction.pdf`](https://github.com/SDerrode/awesomePMC/blob/main/report/csda2013_reproduction.pdf).
   Its [README](https://github.com/SDerrode/awesomePMC/blob/main/report/README.md)
   lists what the reproduction established, the commands and the provenance of
@@ -881,8 +937,8 @@ approximation.
   models: exact marginalisation against plug-in, linear, LOCF and mean fill-ins,
   on 5 models × 5 patterns × 5 missing rates × 20 replicates.
 
-A23 (GICE, §5.1 setting) is exercised by the test suite on the bundled
-`sp2016_gice_k2.toml` model.
+DerrodePieczynski_SP2016 (GICE, §5.1 setting) is exercised by the test suite on the
+bundled `sp2016_gice_k2.toml` model.
 
 ---
 
@@ -891,7 +947,7 @@ A23 (GICE, §5.1 setting) is exercised by the test suite on the bundled
 ```text
 awesomePMC/
 ├── pmcprg/                 import package
-│   ├── copulas/            39 copula families (archimedean/, elliptical/,
+│   ├── copulas/            41 copula families (archimedean/, elliptical/,
 │   │                       explicit/, extreme_value/), fitting, standard
 │   │                       errors, bivariate joint laws
 │   ├── diagnostics/        multivariate KS, parametric bootstrap, smooth tests,
@@ -921,25 +977,26 @@ awesomePMC/
 
 ## Citation and references
 
-Please cite **both** A16 and A23 if you use this package in published work.
-Machine-readable citation metadata is in
+Please cite **both** DerrodePieczynski_CSDA2013 and DerrodePieczynski_SP2016 if you
+use this package in published work. Machine-readable citation metadata is in
 [`CITATION.cff`](https://github.com/SDerrode/awesomePMC/blob/main/CITATION.cff)
-(GitHub's *Cite this repository* button reads it). Every reference the code and
-the reports rely on is listed with its DOI and the module that uses it in
+(GitHub's *Cite this repository* button reads it). Every reference the code and the
+reports rely on is listed with its DOI and the module that uses it in
 [`REFERENCES.md`](https://github.com/SDerrode/awesomePMC/blob/main/REFERENCES.md).
 
-The `pmcprg.pmc` sub-package implements the unsupervised classification
-methods of two papers by **S. Derrode and W. Pieczynski**. The CSDA paper (A16)
-underpins the PMC model family and ICE-based copula selection; the Signal
-Processing paper (A23) adds GICE — automatic margin family selection — on top
-of ICE. [`pmcprg/pmc/README.md`](https://github.com/SDerrode/awesomePMC/blob/main/pmcprg/pmc/README.md)
+The `pmcprg.pmc` sub-package implements the unsupervised classification methods
+of two papers by **S. Derrode and W. Pieczynski**. The CSDA paper
+(DerrodePieczynski_CSDA2013) underpins the PMC model family and ICE-based
+copula selection; the Signal Processing paper (DerrodePieczynski_SP2016) adds
+GICE — automatic margin family selection — on top of ICE.
+[`pmcprg/pmc/README.md`](https://github.com/SDerrode/awesomePMC/blob/main/pmcprg/pmc/README.md)
 maps every feature to its paper.
 
-- **A16** — Derrode S., Pieczynski W. *Unsupervised data classification using pairwise Markov chains with automatic copulas selection*. Computational Statistics & Data Analysis 63 (2013), pp. 81–98. [doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)
-- **A23** — Derrode S., Pieczynski W. *Unsupervised classification using hidden Markov chain with unknown noise copulas and margins*. Signal Processing 128 (2016), pp. 8–17. [doi:10.1016/j.sigpro.2016.03.008](https://doi.org/10.1016/j.sigpro.2016.03.008)
+- **DerrodePieczynski_CSDA2013** — Derrode S., Pieczynski W. *Unsupervised data classification using pairwise Markov chains with automatic copulas selection*. Computational Statistics & Data Analysis 63 (2013), pp. 81–98. [doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)
+- **DerrodePieczynski_SP2016** — Derrode S., Pieczynski W. *Unsupervised classification using hidden Markov chain with unknown noise copulas and margins*. Signal Processing 128 (2016), pp. 8–17. [doi:10.1016/j.sigpro.2016.03.008](https://doi.org/10.1016/j.sigpro.2016.03.008)
 
 ```bibtex
-@ARTICLE{A16,
+@ARTICLE{DerrodePieczynski_CSDA2013,
   author    = {S. Derrode and W. Pieczynski},
   title     = {Unsupervised data classification using pairwise {M}arkov chains with automatic copulas selection},
   journal   = {Comput. Stat. Data Anal.},
@@ -949,7 +1006,7 @@ maps every feature to its paper.
   doi       = {10.1016/j.csda.2013.01.027},
 }
 
-@ARTICLE{A23,
+@ARTICLE{DerrodePieczynski_SP2016,
   author    = {S. Derrode and W. Pieczynski},
   title     = {Unsupervised classification using hidden {M}arkov chain with unknown noise copulas and margins},
   journal   = {Signal Process.},
@@ -960,19 +1017,19 @@ maps every feature to its paper.
 }
 ```
 
-The general PMC is defined by A16 Eqs. 12–14 (pair margins f_ij):
+The general PMC is defined by DerrodePieczynski_CSDA2013 Eqs. 12–14 (pair margins f_ij):
 
-- **A16, Eq. 12**: f(yₙ, yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j) = f_ij(yₙ) · f_ji(yₙ₊₁) · c_ij(F_ij(yₙ), F_ji(yₙ₊₁))
-- **A16, Eq. 13**: p(Xₙ₊₁ = j | Xₙ = i, Yₙ = y) ∝ p(i, j) · f_ij(y)
-- **A16, Eq. 14**: p(Yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j, Yₙ = y) = f_ji(yₙ₊₁) · c_ij(F_ij(y), F_ji(yₙ₊₁))
+- **DerrodePieczynski_CSDA2013, Eq. 12**: f(yₙ, yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j) = f_ij(yₙ) · f_ji(yₙ₊₁) · c_ij(F_ij(yₙ), F_ji(yₙ₊₁))
+- **DerrodePieczynski_CSDA2013, Eq. 13**: p(Xₙ₊₁ = j | Xₙ = i, Yₙ = y) ∝ p(i, j) · f_ij(y)
+- **DerrodePieczynski_CSDA2013, Eq. 14**: p(Yₙ₊₁ | Xₙ = i, Xₙ₊₁ = j, Yₙ = y) = f_ji(yₙ₊₁) · c_ij(F_ij(y), F_ji(yₙ₊₁))
 
 With state margins (f_ij = fᵢ) Eq. 13 no longer depends on y, X is a Markov
-chain (A16 §2.1, Proposition) and the model is a stationary reversible HMC-DN —
-see [Model variants](#model-variants) above.
+chain (DerrodePieczynski_CSDA2013 §2.1, Proposition) and the model is a
+stationary reversible HMC-DN — see [Model variants](#model-variants) above.
 
 Methodological building blocks used by the package:
 
-- Huard D., Évin G., Favre A.-C. *Bayesian copula selection*. Computational Statistics & Data Analysis 51(2) (2006), pp. 809–822 — the `huard` selection criterion (A16, Eq. 20). [doi:10.1016/j.csda.2005.08.010](https://doi.org/10.1016/j.csda.2005.08.010)
+- Huard D., Évin G., Favre A.-C. *Bayesian copula selection*. Computational Statistics & Data Analysis 51(2) (2006), pp. 809–822 — the `huard` selection criterion (DerrodePieczynski_CSDA2013, Eq. 20). [doi:10.1016/j.csda.2005.08.010](https://doi.org/10.1016/j.csda.2005.08.010)
 - Naaman M. *On the tight constant in the multivariate Dvoretzky–Kiefer–Wolfowitz inequality*. Statistics & Probability Letters 173 (2021), 109088 — the multivariate KS test in `pmcprg.diagnostics`. [doi:10.1016/j.spl.2021.109088](https://doi.org/10.1016/j.spl.2021.109088)
 - Anguita D. et al. *A Public Domain Dataset for Human Activity Recognition Using Smartphones*. ESANN 2013, pp. 437–442 (the paper has no DOI) — the UCI HAR benchmark used in `examples/`. Dataset DOI (UCI, Reyes-Ortiz & Anguita 2013): [doi:10.24432/C54S4K](https://doi.org/10.24432/C54S4K)
 

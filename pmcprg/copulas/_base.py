@@ -32,7 +32,9 @@ _COPULA_KLASS_CACHE: dict = {}
 # ICE-driven fitting (``pmcprg.pmc.ice.EXTRA_PARAM_BOUNDS``) derives its
 # class-keyed view from this dict + the registry — so the two cannot drift
 # (audit A-2). Currently: BB1 ``delta``, Student ``df``, Tawn types 1/2
-# ``psi`` (FR-9), t-EV ``nu`` (FR-9), BB6 ``delta6`` (FR-9),
+# ``psi`` (FR-9), t-EV ``nu`` (FR-9), BB6 ``delta6`` (FR-9), BB7 ``theta7``
+# (FR-9 — θ and not δ, see that module's "Parametrisation"), BB8 ``delta8``
+# (FR-9),
 # three-parameter Tawn ``psi_u``/``psi_v`` (FR-9 — the first family with
 # *two* extra parameters; every consumer of this dict iterates it, so
 # nothing here caps their number).
@@ -64,6 +66,18 @@ EXTRA_PARAM_BOUNDS_BY_PARAM: dict[str, tuple[float, float, float]] = {
     # member, admissible at every registered τ, as Tawn's ψ = 1 is, and the
     # upper bound 10 is admissible for τ ≥ 0.9 only, as BB1's δ = 10 is.
     "delta6": (1.0,   10.0,  1.0),
+    # BB7 (FR-9): the **Joe-side exponent θ ≥ 1**, under its own name — not
+    # BB1's ``delta`` and not BB6's ``delta6``, since ``_two_parameter_spec``
+    # dispatches on the name and each of the three carries a different τ map
+    # (``pmcprg.copulas.archimedean.bb7``, "Parametrisation"). θ and not BB7's
+    # own δ, because τ is monotone in δ at fixed θ but **not** in θ at fixed δ
+    # (it dips below the Clayton value for δ ≳ 3.44), so only (τ, θ) is a
+    # one-to-one parametrisation. Jointly constrained with τ
+    # (τ > τ_Joe(θ), i.e. θ < θ_Joe(τ)); the init 1.0 is the Clayton member,
+    # admissible at every registered τ as BB6's δ = 1 is, and the upper bound
+    # 10 is admissible for τ > τ_Joe(10) ≈ 0.816 only, as BB1's δ = 10 is for
+    # τ > 0.9.
+    "theta7": (1.0,   10.0,  1.0),
     # Three-parameter Tawn (FR-9, round 5): the two weights of the full
     # asymmetric-logistic model, same box as ``psi`` (each is a weight in
     # (0, 1] and the init 1.0 is the Gumbel corner, admissible at every
@@ -73,6 +87,17 @@ EXTRA_PARAM_BOUNDS_BY_PARAM: dict[str, tuple[float, float, float]] = {
     # names, and a family's extras must be distinguishable one from another.
     "psi_u": (0.01,    1.0,  1.0),
     "psi_v": (0.01,    1.0,  1.0),
+    # BB8 (FR-9): δ ∈ (0, 1], under its own name — not BB1's ``delta`` nor
+    # BB6's ``delta6``, whose ``_two_parameter_spec`` branches carry those
+    # families' own τ maps (``pmcprg.copulas.archimedean.bb8``,
+    # "Parametrisation"). Unlike every other entry above, this box is the
+    # whole admissible set: BB8 puts **no** joint constraint on (τ, δ), every
+    # τ ∈ (0, 1) being reached at every δ. The init 1.0 is the Joe member and
+    # the lower bound 0.01 is admissible at every τ as well; it is a
+    # *fitting* floor (δ → 0 is independence, where δ stops being
+    # identifiable), not an admissibility one — the constructor accepts any
+    # δ > 0.
+    "delta8": (0.01,   1.0,  1.0),
 }
 
 # τ-bound padding for the bounded optimisers (``fit(method='mle')`` here,
@@ -196,6 +221,29 @@ class CopulaEnum(CopulaDataMixin, Enum):
     # *reachable* τ jointly (``CopulaTawn3.reachable_tau_cap``), not the
     # registered range, exactly as BB1's δ does.
     TAWN3            = 39, "Tawn3",   "Tawn (asymmetric logistic, 3 par.)", "CopulaTawn3",    True, ["tau_k", "psi_u", "psi_v"], [0.0 + EPS, 1.0], "pmcprg.copulas.extreme_value.tawn"
+    # FR-9, round 6: BB7, the Joe-Clayton copula — Clayton at θ = 1, Joe as
+    # δ → 0, λ_U = 2 − 2^{1/θ} and λ_L = 2^{−1/δ}, the first family here with
+    # a *two-way* nest and one tail coefficient per parameter. Its second
+    # parameter is registered as ``theta7`` — θ, not δ, because τ is *not*
+    # monotone in θ at fixed δ — and under its own name, so the joint fitter
+    # cannot route it through BB1's or BB6's branch
+    # (``pmcprg.copulas.archimedean.bb7`` module docstring). The τ-range is
+    # Joe's own: every τ ∈ (0, 1) is reached, at θ = 1 (Clayton).
+    BB7              = 40, "BB7",     "BB7 (Joe-Clayton)",                  "CopulaBB7",      True, ["tau_k", "theta7"], [0.0 + EPS, 1.0],  "pmcprg.copulas.archimedean.bb7"
+    # FR-9, BB8 round: the last of the BB families the audit names. Joe at
+    # δ = 1, the independence copula at θ = 1 (*not* Frank, despite the
+    # "Joe-Frank" nickname — Frank is only the joint limit θ → ∞, δ → 0 with
+    # θδ fixed), and **no upper-tail dependence at all for δ < 1**. Its second
+    # parameter is registered as ``delta8`` — neither BB1's ``delta`` nor
+    # BB6's ``delta6`` — so the joint fitter cannot route it through another
+    # family's branch (``pmcprg.copulas.archimedean.bb8`` module docstring).
+    # The τ-range is Joe's own and, unlike BB1/BB6/Tawn, is reached *whole* at
+    # every δ: BB8 has no joint (τ, δ) constraint. τ has no elementary closed
+    # form here (a ₃F₂ one, unusable numerically) and is computed by
+    # quadrature — the first Archimedean family in the package that needs one.
+    # ID reconciled with BB7 (both agents worked from the same 40-slot base):
+    # BB7 kept 40 (integrated first), BB8 takes the next free slot, 41.
+    BB8              = 41, "BB8",     "BB8 (Joe-Frank)",                    "CopulaBB8",      True, ["tau_k", "delta8"], [0.0 + EPS, 1.0],  "pmcprg.copulas.archimedean.bb8"
 
     def describe(self):
         return self.name, self.value

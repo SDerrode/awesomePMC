@@ -7,7 +7,8 @@ order and GICE ``candidates`` round trip, pair margins with multivariate
 observations (supported for PMC-IN), FFBS on pair models against the exact
 path posterior, the relation between ``PMCModel.weight`` and
 ``precompute_weights``, and the log-space weights. Formulas: Derrode &
-Pieczynski (2013, A16) Eqs. 12–14 and the Proposition of §2.1.
+Pieczynski (2013, DerrodePieczynski_CSDA2013) Eqs. 12–14 and the Proposition
+of §2.1.
 """
 from __future__ import annotations
 
@@ -211,7 +212,8 @@ def test_pair_margins_with_multivariate_observations():
 # --------------------------------------------------------------------------
 
 def _exact_path_posterior(raw, Y):
-    """P(x_{1:N} | y_{1:N}) for every path, from A16 Eqs. 12–14."""
+    """P(x_{1:N} | y_{1:N}) for every path, from DerrodePieczynski_CSDA2013
+    Eqs. 12–14."""
     m = PMCModel.from_dict(raw)
     P = m.prior_p
     uses_cop = m.variant.uses_copula

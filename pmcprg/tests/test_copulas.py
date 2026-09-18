@@ -104,7 +104,10 @@ def test_available_count():
     #   the audit's own "BB1 de survie") = 37
     # + BB6 (FR-9, the outer power of Joe: Joe at δ = 1, Gumbel at θ = 1)
     # + Tawn3, the full asymmetric-logistic model (FR-9) = 39
-    assert len(CopulaEnum.available()) == 39
+    # + BB7 (FR-9, the Joe-Clayton copula: Clayton at θ = 1, Joe as δ → 0) = 40
+    # + BB8 (FR-9, Joe at δ = 1, independence at θ = 1 — not Frank, which is
+    #   only the joint limit θ → ∞, δ → 0 at fixed θδ) = 41
+    assert len(CopulaEnum.available()) == 41
 
 
 def test_cubsec_long_name_english():

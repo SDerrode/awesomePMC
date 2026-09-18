@@ -278,6 +278,19 @@ def _two_parameter_spec(cls, entry, tau_start: float):
       function dispatches on the parameter name, and the ``delta`` branch is
       BB1's, with BB1's own τ map
       (``pmcprg.copulas.archimedean.bb6``, "Parametrisation").
+    * BB7 (``theta7``, FR-9): ``p = (ln(θ − 1), ln δ)``, a box that is the
+      admissible set (every θ ≥ 1, δ > 0 is a BB7 copula), mapped back by the
+      family's **Beta closed form** τ(θ, δ); two stages, the second linear in
+      θ − 1 to reach the Clayton boundary θ = 1 (branch comment below). The
+      *stored* extra is θ, the nuisance one δ — τ is monotone in δ at fixed θ
+      but not in θ at fixed δ. ``theta7`` is deliberately neither BB1's
+      ``delta`` nor BB6's ``delta6``
+      (``pmcprg.copulas.archimedean.bb7``, "Parametrisation").
+    * BB8 (``delta8``, FR-9): ``p = (ln(θ − 1), δ)``, a box that is the
+      admissible set with *nothing* left over — BB8 is the one two-parameter
+      family here with no joint (τ, δ) constraint — mapped back by the
+      memoised τ(θ, δ) **quadrature** (branch comment below). ``delta8`` is
+      deliberately neither BB1's ``delta`` nor BB6's ``delta6``.
     * Tawn types 1/2 (``psi``, FR-9): ``p = (ln(θ − 1), ψ)``, a box that is
       the admissible set, mapped back by the family's τ(θ, ψ); two passes
       (branch comment below).
@@ -419,6 +432,89 @@ def _two_parameter_spec(cls, entry, tau_start: float):
              [exc_b, log_delta_b]),
         ]
         return p0, stages, params_of
+
+    if name == "theta7":
+        # BB7 (FR-9): (τ, θ) is jointly constrained (θ < θ_Joe(τ)), but every
+        # θ >= 1, δ > 0 *is* a BB7 copula — so optimise in (ln(θ − 1), ln δ),
+        # whose box is the admissible set, and map back by the family's own
+        # Beta closed form τ(θ, δ) (bb7 module docstring, (★★)). The *stored*
+        # extra is θ and the *nuisance* coordinate is δ, not the other way
+        # round: τ is monotone in δ at fixed θ but not in θ at fixed δ, so a
+        # (τ, δ) box would be many-to-one — RB-8's flat plateau in its worst
+        # form. δ's box is not registered (δ is not a parameter of BB7);
+        # [1e-6, 1e6] spans τ from τ_Joe(θ) to ≈ 1 at every θ the θ-box allows.
+        # ``theta7`` is deliberately neither BB1's ``delta`` nor BB6's
+        # ``delta6``: this function dispatches on the parameter name.
+        from pmcprg.copulas.archimedean.bb7 import _bb7_tau_from_theta
+        s_b = (math.log(1e-10), math.log(max(xhi - 1.0, 1e-9)))
+        d_b = (1e-6, 1e6)
+        ld_b = (math.log(d_b[0]), math.log(d_b[1]))
+        theta_b = (1.0, xhi)
+        # Start: θ₀ the registered init (θ = 1, the Clayton member, entered
+        # through the ln(θ − 1) floor) and δ₀ the δ that realises τ_start
+        # there, i.e. Clayton's own 2τ/(1 − τ).
+        p0 = (clip(math.log(max(xinit - 1.0, 1e-10)), s_b),
+              clip(2.0 * t0 / (1.0 - t0), d_b))
+
+        def params_of(p) -> dict:
+            s_, delta = clip(p[0], s_b), clip(p[1], d_b)
+            theta = 1.0 + math.exp(s_)
+            tau = _bb7_tau_from_theta(theta, delta)
+            return {"tau_k": min(max(tau, float(tau_min)), 1.0 - 1e-12),
+                    "theta7": clip(theta, theta_b)}
+
+        # Two stages, as BB1 and BB6: (ln(θ − 1), ln δ) finds interior optima
+        # whatever the scale of θ − 1; (θ − 1, ln δ) then reaches the Clayton
+        # boundary θ → 1, which the logarithm puts at the end of a flat valley.
+        exc_b = (math.exp(s_b[0]), math.exp(s_b[1]))
+        stages = [
+            (lambda p: [clip(p[0], s_b), math.log(clip(p[1], d_b))],
+             lambda x: (clip(x[0], s_b), clip(math.exp(clip(x[1], ld_b)), d_b)),
+             [s_b, ld_b]),
+            (lambda p: [clip(math.exp(clip(p[0], s_b)), exc_b),
+                        math.log(clip(p[1], d_b))],
+             lambda x: (clip(math.log(clip(x[0], exc_b)), s_b),
+                        clip(math.exp(clip(x[1], ld_b)), d_b)),
+             [exc_b, ld_b]),
+        ]
+        return p0, stages, params_of
+
+    if name == "delta8":
+        # BB8 (FR-9): the only two-parameter family here whose natural box is
+        # *already* the admissible set with nothing to project — every θ ≥ 1,
+        # δ ∈ (0, 1] is a BB8 copula and every τ ∈ (0, 1) is reached at every
+        # δ (bb8 module docstring, "Parametrisation"). So: p = (ln(θ − 1), δ),
+        # mapped back by the memoised τ(θ, δ) quadrature, whose memo hands the
+        # constructor this very θ back instead of a Brent re-inversion (Tawn's
+        # arrangement, and the reason the fit costs ~10³ and not ~4·10⁴
+        # quadratures). ``delta8`` is deliberately neither BB1's ``delta`` nor
+        # BB6's ``delta6``: those branches carry those families' own τ maps.
+        # ln(θ − 1) ≥ ln 1e-10 keeps τ ≈ 5·10⁻¹¹ at δ = 1, ≫ EPS; the ceiling
+        # is the θ cap of the family's own τ inversion, which is what a τ
+        # beyond the family's reach is built at anyway.
+        from pmcprg.copulas.archimedean.bb8 import _THETA_HI, _tau_of
+        s_b = (math.log(1e-10), math.log(_THETA_HI - 1.0))
+        delta_b = (xlo, xhi)
+        # Start: δ₀ = the registry's init (the Joe member, 1.0), θ₀ from
+        # Joe's own map at τ_start — exact at δ₀ = 1 and within a factor 2
+        # of the right θ elsewhere.
+        delta0 = clip(xinit, delta_b)
+        theta0 = 1.0 / (1.0 - min(max(t0, 0.0), 1.0 - 1e-12))
+        p0 = (clip(math.log(max(theta0 - 1.0, 1e-10)), s_b), delta0)
+
+        def params_of(p) -> dict:
+            s, delta = clip(p[0], s_b), clip(p[1], delta_b)
+            tau = _tau_of(1.0 + math.exp(s), delta)
+            return {"tau_k": min(max(tau, float(tau_min)), 1.0 - 1e-12), "delta8": delta}
+
+        # The same box twice (Tawn's pattern, not BB1's two coordinate
+        # systems): δ is already linear and bounded at both ends, so there is
+        # no logarithm to undo near a boundary; the second pass is a restart
+        # with a fresh curvature memory on the same narrow curved ridge.
+        stage = (lambda p: [clip(p[0], s_b), clip(p[1], delta_b)],
+                 lambda x: (clip(x[0], s_b), clip(x[1], delta_b)),
+                 [s_b, delta_b])
+        return p0, [stage, stage], params_of
 
     if name == "psi":
         # Tawn types 1/2 (FR-9): (τ, ψ) is jointly constrained (τ < ψ), but

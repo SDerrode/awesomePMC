@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_select_and_fit_copula` call — are built from the posterior-weighted
   empirical counterpart of *the margin the M-step estimates, with the weights
   it uses*: `F̂_i(y) = Σ_n γ_n(i)·1{y_n ≤ y} / (Σ_n γ_n(i) + 1)` for state
-  margins, and for pair margins f_ij (general PMC, A16 Eq. 12) the ½ξ-weighted
+  margins, and for pair margins f_ij (general PMC, DerrodePieczynski_CSDA2013 Eq. 12) the ½ξ-weighted
   **dual-view** sample — `y_n` with weight ½ξ_n(i,j) (left observation of a
   pair (i, j)) and `y_{n+1}` with weight ½ξ_n(j,i) (right observation of a
   pair (j, i)), the same sample the parametric pair update is fitted on, so
@@ -73,6 +73,260 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the key is deliberately kept out of `ice_estim_defaults()` /
   `sem_estim_defaults()` (the widget contract) and travels through the TOML
   tables, which the GUI round trip preserves.
+### Added — BB7, the Joe-Clayton copula (FR-9)
+
+- **`BB7` (ID 40, `pmcprg/copulas/archimedean/bb7.py`)**, the next BB family
+  after BB6 and the registry's fortieth. Generator
+  `φ(t) = [1 − (1 − t)^θ]^{−δ} − 1`, `θ ≥ 1`, `δ > 0` — **not** transcribed:
+  the candidate was first shown to be a copula at all (uniform margins to
+  10⁻³⁰, no negative rectangle volume on an 11 × 11 grid at sixteen (θ, δ),
+  at 120 digits in `mpmath`) before anything was built on it. BB7 nests
+  **Clayton** at θ = 1 (checked to 4.8·10⁻¹²²) and **Joe** as δ → 0⁺ (error
+  exactly linear in δ), so it is a two-way nest, unlike BB6's Joe/Gumbel; its
+  tail coefficients are `λ_U = 2 − 2^{1/θ}` and `λ_L = 2^{−1/δ}`, one
+  parameter each.
+- **Kendall's τ has a closed form**, contrary to the usual claim, and the
+  audit's guess of "a Beta form with a removable singularity" is confirmed:
+  integrating Genest & MacKay's `1 + 4∫φ/φ′` gives
+  `τ = 1 − 2[1 − (2/θ)(δ+1)·B(2/θ, δ+1)]/(δ(2 − θ))`. The **removable
+  singularity is θ = 2** — the same θ at which Joe's own τ is 0/0 — where the
+  bracket vanishes with `2 − θ`; the limit is `1 − [ψ(δ+2) − ψ(2)]/δ`. A
+  second, weaker 0/0 at δ → 0 gives Joe's τ. Both are removed by writing the
+  bracket as `1 − e^L` with `L = lnΓ(2+δ) + lnΓ(2+κ) − lnΓ(2+δ+κ)`,
+  `κ = 2/θ − 1` — symmetric in (δ, κ), vanishing when either does — and
+  expanding `L/(δκ)` in positive-term Hurwitz-ζ series. No quadrature is used.
+- **Measured, not estimated.** τ against a 120-digit `mpmath` evaluation of
+  the Beta form: |Δτ| ≤ 1.2·10⁻¹⁵ absolute over θ ∈ [1, 10¹²] × δ ∈ [10⁻¹², 10];
+  the Beta form itself against an independent Genest–MacKay quadrature of
+  BB7's own generator: 9·10⁻⁶¹ to 4·10⁻⁵⁸ relative, the quadrature's limit.
+  C, h and ln c against an adaptive-precision (120 → 3840 digits) `mpmath`
+  ground truth on `[10⁻¹², 1 − 10⁻¹²]²` at eight (τ, θ): **C ≤ 1.0·10⁻¹⁴**,
+  **ln c ≤ 2.4·10⁻¹⁴**, **h ≤ 2.3·10⁻¹³**. The reference ladder itself had to
+  be corrected twice (it "converged" at 240 digits on `C = 1` exactly, and on
+  a difference quotient of exactly 0) — recorded in the test file, because a
+  reference is a measurement too.
+- **τ is not monotone in θ**, which is why BB7 keeps **θ** and not δ as its
+  free parameter — the one place where it could not simply follow BB1 and
+  BB6. At fixed δ, τ starts at Clayton's δ/(δ + 2), *dips*, and only then
+  rises to 1; the dip appears at δ* ≈ 3.44121781421 and reaches 0.059 below
+  the Clayton value at δ = 20. Keeping δ would have made (τ, δ) two-to-one,
+  hidden a slab of genuine BB7 copulas that no (τ, δ) pair can name, and
+  handed the joint MLE exactly the flat plateau audit RB-8 is about. τ **is**
+  strictly increasing in δ at fixed θ (checked at 50 digits over
+  θ ∈ [1, 10⁵] × δ ∈ [10⁻⁸, 10⁴]), so `theta7` is registered and δ recovered
+  by Brent. The joint constraint is therefore `τ > τ_Joe(θ)`, i.e.
+  `θ < θ_Joe(τ)`, with θ = 1 (Clayton, δ = 2τ/(1 − τ) in closed form) at the
+  lower end and the Joe limit at the upper one; **θ = 1 is admissible at
+  every registered τ**, so a block without `theta7` always builds.
+- **Honest limitation.** The *relative* accuracy of τ degrades in the
+  doubly-degenerate corner θ → 1 **and** δ → 0, where τ → 0 and the closed
+  form cancels: 7·10⁻⁵ relative at τ = 2·10⁻¹² (still 1.4·10⁻¹⁶ absolute).
+  This is weaker than `joe.py`'s τ, which is exact from θ = 1 (audit RB-2);
+  no factored form was found and the corner is only reachable when the joint
+  constraint already forces δ down to the order of τ.
+- Wiring: `CopulaEnum.BB7`, `EXTRA_PARAM_BOUNDS_BY_PARAM["theta7"]`
+  (`(1.0, 10.0, 1.0)`), a `theta7` branch of `_fit._two_parameter_spec`
+  optimising in `(ln(θ − 1), ln δ)` — a box that *is* the admissible set, with
+  δ as the nuisance coordinate — and two `_stderr._SUBMODEL_NESTING` entries
+  (BB7 ⊃ Clayton at θ = 1, BB7 ⊃ Joe at δ → 0), both with the one-sided
+  `½χ²₀ + ½χ²₁` null. The parameter is named `theta7`, not `delta` or
+  `delta6`, because `_two_parameter_spec` dispatches on the parameter *name*
+  and each of the three carries a different τ map.
+- Tests: `pmcprg/tests/test_bb7.py` (237 cases), and four BB7 cases added to
+  the `decimal` reference grid of `test_copula_limits.py`
+  (`pmcprg/tests/data/copula_limits_references.json` regenerated), one of
+  them the Clayton sub-model and one the Joe end.
+
+### Changed
+
+- `pmcprg/tests/test_copulas.py::test_available_count` and every documented
+  copula-family count (README, `pmcprg/__init__.py`) move from 39 to 40
+  with BB7, and to 41 with BB8 below.
+
+### Known gaps (BB7)
+
+- No 90°/270° rotation: FR-8 closed on a fixed list of six families that does
+  not include the BB6/BB7/BB8 pairs. BB7 reaches τ > 0 only.
+- BB7 is not in `_stderr._spec_of`'s Oakes / Lystig–Hughes analytic
+  standard-error machinery, which FR-4 defers for every two- and
+  three-parameter family beyond BB1 and Student.
+- `mle_tau_discrepancy_test` and `dpd_fit` (FR-7) are one-parameter
+  estimators and refuse **every** two-parameter family, BB7 included, with a
+  documented `NotImplementedError` — Kendall's τ does not identify a second
+  parameter. The test suite pins that this is the reasoned refusal (it names
+  BB7's own `theta7`), not a crash; lifting it is a separate FR-7 job.
+- BB8 and the non-parametric comparison copula remain open under FR-9.
+
+### Added — BB8 (FR-9)
+
+- **`CopulaBB8` (`BB8`, registry ID 41 — 40 was BB7's, integrated first), the
+  last of the BB families the audit names** — `pmcprg/copulas/archimedean/bb8.py`, generator
+  `φ(t) = −ln([1 − (1 − δt)^θ]/[1 − (1 − δ)^θ])`, θ ≥ 1, 0 < δ ≤ 1. The
+  generator was re-derived and checked rather than transcribed: `φ(1) = 0`
+  exactly (the numerator at t = 1 *is* the normalising constant) and
+  `φ(0) = +∞`, so it is **strict for every admissible (θ, δ)**, δ < 1
+  included — the boundary the audit suspected of trouble is not one. The
+  closed form `C = (1 − (1 − A)^{1/θ})/δ`,
+  `A = (1 − (1 − δu)^θ)(1 − (1 − δv)^θ)/(1 − (1 − δ)^θ)`, agrees with
+  `φ^{-1}(φ(u) + φ(v))` to 9.7·10⁻⁵² at 60 digits; margins uniform to
+  6.5·10⁻¹⁷ and the density positive (min 0.0498 over the points tried).
+- **Sub-models, verified numerically — one popular claim confirmed, one
+  refuted.** δ = 1 gives **Joe** *exactly* and with no limit to take
+  (`(1 − δ)^θ = 0` makes the denominator 1): `max |C_BB8 − C_Joe| ≤
+  1.4·10⁻⁵⁹`, and the two build the same θ bit for bit. θ = 1 gives
+  **independence, not Frank** — `φ(t) = −ln t` whatever δ is,
+  `|C − uv| ≤ 1.7·10⁻¹⁶` — so the "Joe–Frank" nickname does *not* describe
+  any parameter value. δ → 0 at fixed θ is independence too, linearly in δ
+  (`max |C/uv − 1|` on the corner grid = 1.5·10⁻³, 1.5·10⁻⁶, 1.5·10⁻⁹ at
+  θ = 4, δ = 10⁻³, 10⁻⁶, 10⁻⁹). **Frank appears
+  only as a joint limit** θ → ∞, δ → 0 at fixed θδ = κ, where
+  `(1 − δt)^θ → e^{−κt}`: `max |C_BB8 − C_Frank|` = 1.2·10⁻², 9.9·10⁻⁴,
+  9.7·10⁻⁶, 9.7·10⁻⁸ at θ = 10, 10², 10⁴, 10⁶ (κ = 5), i.e. O(1/θ), and only
+  the positive-dependence half of Frank is reached. `_stderr` therefore
+  registers **one** nesting, BB8 ⊃ Joe (δ = 1, the upper end of (0, 1], so a
+  one-sided null), and not the two BB6 has.
+- **Kendall's τ needed a quadrature — the audit's note stands, with a
+  caveat.** `sympy` returns the Genest–MacKay integral unevaluated
+  (indefinite, definite, with and without `meijerg`); the piece it does
+  evaluate comes back as a Lerch transcendent. Summing the series by hand
+  gives an exact **₃F₂ closed form**,
+  `τ = 1 − (η²/(θ²δ²))·₃F₂(2, 2, 2 − 2/θ; 3, 3; η)` with `η = 1 − (1 − δ)^θ`,
+  verified against a 50-digit quadrature of φ/φ′ itself to 6·10⁻⁴⁴–9·10⁻²⁶.
+  It is **not usable**: the series converges like `Σ k^{−1−2/θ}`, `mpmath`'s
+  own `hyper` raises `NoConvergence` from θ ≈ 10³, and `scipy` has no ₃F₂. So
+  τ is computed by a 24-node composite Gauss-Legendre rule on the package's
+  existing `graded_mesh`, after the substitution that flattens the integrand
+  (`m = −2 ln x`, which makes `G(m) → −e^{−m}` whatever θ is):
+  **36 panels, 864 vectorised integrand evaluations, 0.077 ms per τ**. Against
+  a 60-digit `mpmath` reference (two independent breakpoint sets agreeing to
+  10⁻⁵²) over θ ∈ [1 + 10⁻⁷, 10⁷] × δ ∈ [10⁻³, 1 − 10⁻¹²]: **max absolute
+  error 6.0·10⁻¹⁶**; the max *relative* error, 3.9·10⁻⁵, occurs only where
+  τ itself is 1.1·10⁻¹¹. δ = 1 does not go through the rule at all — it is
+  Joe's own closed form, so the Joe member's τ is Joe's to the last bit.
+  Cost of one `fit()` on n = 2000: **≈ 520 τ evaluations ≈ 4.5·10⁵ integrand
+  evaluations, 0.04 s** — the τ memo (Tawn's, reused) keeps the constructor
+  from re-inverting τ by Brent at every likelihood evaluation, which would
+  have multiplied that by ≈ 40.
+- **A cancellation the reference itself fell into, recorded as a warning.**
+  `ln(A₁/η)` formed as `ln A₁ − ln η` loses 44 of 50 digits at θ = 10³,
+  δ = 0.2, and a naive 50-digit `mpmath` reference disagreed with the truth
+  in the *third* digit while looking converged — two wrong reference values
+  before the cancellation-free form (`log1p` of a ratio, with a `y ≥ ½`
+  branch) was put in both the kernel and the reference.
+- **Tail dependence: λ_L = 0 always, λ_U = 0 for every δ < 1, and
+  2 − 2^{1/θ} at δ = 1** — a genuine discontinuity of the family, not an
+  approximation, derived from the finite non-zero slope of `1 − φ^{-1}(s)` at
+  s = 0 when η < 1 and checked on the diagonal: `2 − (1 − C(u,u))/(1 − u)` at
+  `1 − u = 10^{-k}`, k = 3…8, lands on λ_U and (for δ < 1) falls a decade per
+  decade; k stops at 8 because below that the double's resolution of
+  `ln(1 − A)` is coarser than the quantity measured.
+- **No joint (τ, δ) constraint** — the first two-parameter family here
+  without one. τ(θ, δ) rises from 0 at θ = 1 to 1 as θ → ∞ at *every* δ, so
+  the admissible set is the full rectangle and `constructible_params` only
+  has to clip δ into (0, 1]. Measured: τ(10⁷, δ) = 0.99960, 0.99996, 0.999992,
+  0.999998, 0.9999994, 0.9999998 at δ = 10⁻³, 0.01, 0.05, 0.2, 0.5, 1. The
+  approach to τ = 1 has Joe's own rate, `1 − τ = O(1/θ)`, but a constant that
+  blows up as δ falls: the measured `(1 − τ)·θ` at θ = 10⁷ is **`4/δ − 2`** to
+  1.3·10⁻⁷–1.6·10⁻⁵ relative (2.000000, 2.444444, 6.000000, 18.00000,
+  77.9998, 397.993 at δ = 1, 0.9, 0.5, 0.2, 0.05, 0.01; δ = 1 is Joe's
+  `1 − 2/θ`). Hence the θ cap 10⁷ and the RB-10 convention (build at the cap,
+  store the τ realised), and hence BB8 is the **first Archimedean family here
+  to declare `reachable_tau_bounds`** — the mechanism Frank, Plackett and the
+  extreme-value families use; it is excluded from
+  `test_frank_reachable_tau.test_other_families_are_unchanged` and pinned by
+  its own test instead, which is what that list is for.
+- Registered as `delta8` — neither BB1's `delta` nor BB6's `delta6` — so
+  `_two_parameter_spec` cannot route BB8 through another family's τ map; its
+  own branch optimises in `(ln(θ − 1), δ)`, a box that **is** the admissible
+  set with nothing to project. `EXTRA_PARAM_BOUNDS_BY_PARAM["delta8"] =
+  (0.01, 1.0, 1.0)`, the init being the Joe member.
+- **Ground truth against adaptive-precision `mpmath`** (480 → 7680 digits, C
+  from the generator alone, c and h as its finite differences) on the 6×6
+  corner grid `[10⁻¹², 1 − 10⁻¹²]²` at fourteen (τ, δ), 504 points:
+  **C ≤ 6.2·10⁻¹⁵, h ≤ 4.5·10⁻¹³, ln c ≤ 1.1·10⁻¹⁴, all relative.** The one
+  exclusion is `h` where the truth is below 10⁻²⁹⁰ and no double holds it
+  (1.0·10⁻¹¹⁹⁶ at τ = 0.99, δ = 1, (1 − 10⁻⁶, 10⁻¹²); `ln c` there is right
+  to 6·10⁻¹⁶).
+- **A reference that stops on two agreeing precisions can stop on two wrong
+  ones.** At (10⁻¹², 1 − 10⁻¹²), τ = 0.99, δ = 0.5, the mixed finite
+  difference of C needs ≈ 230 digits of cancellation; a 240-digit reference
+  returned ln c = −407.8454 against the truth −407.836452727273792 — the
+  double-precision kernel was right to 2·10⁻¹⁶ and the *reference* wrong in
+  the fourth digit. The measurement above starts at 480 digits and requires
+  **three** successive precisions to agree to 10⁻²⁵; the 14-row reference
+  table of `test_bb8.py` was re-verified under that rule (0 rows changed).
+- **Two cancellations found by the corner grid, not suspected in advance.**
+  `ln(1 − A)` as `ln D − ln η` is exact towards (1, 1) and catastrophic
+  towards (0, 0) — at (10⁻¹², 10⁻¹²) the true value is −10⁻²⁴ while both logs
+  are rounded numbers of order 1, so C came out **exactly 0** instead of
+  10⁻²⁴; `ln A` plus `log1p(−e^{ln A})` is now used below A = ½. And the
+  complement `1 − C = ((1 − A)^{1/θ} − E)/δ` cancels completely at (1, 1),
+  where `1 − A = E^θ` exactly; it is now `(E/δ)·expm1(ln(1 − A)/θ − ln E)`,
+  whose argument is ≥ 0 everywhere and exactly 0 at the corner.
+- Four BB8 cases added to the `decimal` reference
+  file of `test_copula_limits.py` (τ = 0.3, 0.5, 0.7, 0.95 with δ = 0.5, 0.2,
+  1.0, 0.05 — the third being the Joe sub-model exactly). Regenerating the
+  file rewrote every pre-existing byte unchanged.
+
+### Known limitations (BB8)
+
+- δ is weakly identified at moderate n: on n = 2000 from (τ, δ) = (0.5, 0.2)
+  the joint MLE returns δ̂ = 0.37 with τ̂ = 0.496 — the likelihood ridge in
+  (θ, δ) is long and flat, as it is for BB1 and BB6, and this is worse here
+  because θ and δ both control the same slow approach to τ = 1.
+- Two-parameter standard errors are **not** implemented for BB8: `_spec_of`
+  refuses it exactly as it refuses BB1, BB6 and Tawn (the deferred FR-4
+  `_stderr` job). `mle_tau_discrepancy_test` and `dpd_fit` likewise raise
+  their existing, documented `NotImplementedError` for any family with more
+  than one parameter — BB8 changes nothing there. The generic
+  `integral_c_power` (`∫∫ c^{1+α}`) *does* work on BB8 and has **no** closed
+  form, as for every non-Gaussian family; measured against its own refined
+  design, the default grid is exact to all 12 printed digits for δ < 1 (a
+  bounded density, no tail dependence) and only degrades at δ = 1, the Joe
+  member: 7.4·10⁻⁶ relative at α = 0.1, 5.8·10⁻⁴ at α = 0.5.
+- No 90°/270° rotations (out of scope: FR-8 closed on a fixed list of six
+  families).
+
+### Added — the empirical beta copula (FR-9)
+
+- `pmcprg.copulas.EmpiricalBetaCopula` (`pmcprg/copulas/_nonparametric.py`),
+  the last item of audit FR-9: a nonparametric comparison tool, Segers,
+  Sibuya & Tsukahara (2017, doi:10.1016/j.jmva.2016.11.010 — verified against
+  Crossref). It is **not** a 40th `CopulaEnum` family: no τ, no `fit()`, not
+  wired into ICE's family selection — given a bivariate sample it *is* the
+  nonparametric copula that sample suggests, for checking a fitted
+  parametric family's `cdf`/`pdf` against what the data alone say.
+- API: `EmpiricalBetaCopula(data)` (raw data or pseudo-observations —
+  ranking makes them equivalent) / `.from_data` / `.from_pseudo_obs`;
+  `cdf`/`cdf_array`, `pdf`/`pdf_array`, `logpdf`/`logpdf_array` (native, via
+  `scipy.special.logsumexp`, with `pdf_array = exp(logpdf_array)` per the
+  `CopulaVirt` convention), the two h-functions `h1`/`h1_array`,
+  `h2`/`h2_array` (closed form, ``∂C/∂u`` and ``∂C/∂v``), and `sample(n,
+  seed=...)` — an **exact** two-stage mixture draw (pick a data index
+  uniformly, then two independent Beta draws), not Rosenblatt inversion.
+- Ties use the same average-rank convention as `CopulaVirt.fit`'s
+  `rankdata(...)/(n+1)` pseudo-observations.
+- **Derived and verified, not assumed**: without ties the margins are
+  **exactly** uniform — `C_n^β(u, 1) ≡ u` is a deterministic identity of the
+  regularised incomplete beta function (`Σ_{k=1}^n I_u(k, n+1-k) ≡ nu`),
+  checked to float64 rounding (≤ 4e-15) — a stronger and more useful fact
+  than the usual "asymptotically uniform" claim. With ties a small
+  discrepancy appears and shrinks (empirically ~n⁻²) as the tied points are
+  diluted into a larger sample. The density is evaluated in log space
+  (`logsumexp`) because a naive `log(mean(exp(per-point logpdf)))`
+  underflows to `-inf` at an extreme corner even though the true log-density
+  is finite (concretely demonstrated at n = 500, (u, v) = (1e-30, 1e-30):
+  naive gives `-inf`, `logpdf_array` gives −1804.8).
+- Tests: `pmcprg/tests/test_empirical_beta_copula.py` — a hand-verified
+  n = 3 case, an independent brute-force loop cross-check, h-functions vs.
+  numerical derivative, tie handling, the exact/approximate margin-
+  uniformity results above, sampler-vs-cdf agreement with a Monte-Carlo
+  error bound, the log-space underflow scenario, and n = 2 / n = 300 edge
+  cases.
+- Out of scope for this version (documented, not silently skipped):
+  frequency/posterior weights (no current caller needs them — this module is
+  not wired into ICE) and an inverse h-function (not needed: the exact
+  two-stage sampler makes Rosenblatt inversion unnecessary).
 
 ---
 
@@ -126,8 +380,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (2004) applied pairwise Markov chains to segmentation. All five DOIs
   resolved against Crossref.
 - **`CITATION.cff`**: the two 2003/2005 foundational papers added to
-  `references` (informational — citing them is not asked for, only A16/A23
-  are).
+  `references` (informational — citing them is not asked for, only
+  DerrodePieczynski_CSDA2013/DerrodePieczynski_SP2016 are).
 
 ### Fixed — five tests that held only on the platform that wrote them
 
@@ -1975,9 +2229,10 @@ not part of the public repository.
 
 ### Highlights
 
-- **General pairwise Markov chains**: pair-indexed margins f_ij (A16 Eqs. 12–14)
-  alongside state margins, for the five HMC/PMC variants, with 17 copula
-  families computed in log space and checked against high-precision references.
+- **General pairwise Markov chains**: pair-indexed margins f_ij
+  (DerrodePieczynski_CSDA2013 Eqs. 12–14) alongside state margins, for the five
+  HMC/PMC variants, with 17 copula families computed in log space and checked
+  against high-precision references.
 - **Unsupervised estimation**: ICE, SEM and GICE with automatic copula- and
   margin-family selection (MLE, AIC, BIC, Huard, Cramér–von Mises, `xvcic`),
   k-means warm start, multistart over parameters or over copula families.
@@ -2363,15 +2618,15 @@ not part of the public repository.
   only reading consistent with the printed Gamma parameters; `--margins state`
   keeps the standard deviation and every recorded output.
 
-### Changed — general PMC with pair-indexed margins f_ij (A16 Eqs. 12–14)
+### Changed — general PMC with pair-indexed margins f_ij (DerrodePieczynski_CSDA2013 Eqs. 12–14)
 
 The package's "PMC" had one margin per state (f_ij = f_i), attributed to
-reversibility. By the Proposition of A16 §2.1 that is exactly the case where X
-is Markov: it was a stationary reversible HMC-DN, not the general PMC of the
-paper. On the CSDA-2013 settings this was the main cause of the gap with the
-published error rates (smoke run of `report/reproduce_csda2013.py --margins
-pair`, 10 replicates: Tables 2 and 4 within about a point of the paper;
-Table 3(a) and 5(b) gaps remain).
+reversibility. By the Proposition of DerrodePieczynski_CSDA2013 §2.1 that is
+exactly the case where X is Markov: it was a stationary reversible HMC-DN, not
+the general PMC of the paper. On the CSDA-2013 settings this was the main cause
+of the gap with the published error rates (smoke run of
+`report/reproduce_csda2013.py --margins pair`, 10 replicates: Tables 2 and 4
+within about a point of the paper; Table 3(a) and 5(b) gaps remain).
 
 - **Breaking for K²-format files.** `[[margins]]` blocks keyed by `(i, j)` are
   now kept as pair margins on PMC and PMC-IN, and estimated separately.
@@ -2499,10 +2754,11 @@ high-precision decimal references from the published CDFs, down to u = 1e-12,
 - `inference.py` no longer calls its backward scaling "Devijver's": α̂ is
   normalised per Devijver (1985), β̂ is rescaled by its own sum (Rabiner
   1989 §V.A) and γ/ξ are renormalised downstream — same result.
-- The provenance of every selection criterion is stated: only `huard` is
-  from A16 (Eq. 20); `mle` is A23's PLM rule (Eq. 11), `kolmogorov` A23
-  Eq. (10); AIC/BIC/CvM/xvcic/huard_common/huard_global and the margin
-  rules mle/aic/bic are package additions.
+- The provenance of every selection criterion is stated: only `huard` is from
+  DerrodePieczynski_CSDA2013 (Eq. 20); `mle` is DerrodePieczynski_SP2016's PLM
+  rule (Eq. 11), `kolmogorov` DerrodePieczynski_SP2016 Eq. (10);
+  AIC/BIC/CvM/xvcic/huard_common/huard_global and the margin rules mle/aic/bic
+  are package additions.
 
 ### Fixed (audit K-6, K-7 — Huard evidence quadrature; bootstrap p-values)
 
@@ -2533,13 +2789,13 @@ high-precision decimal references from the published CDFs, down to u = 1e-12,
 
 ### Changed (documentation — audit K-4, K-5, B-1, B-2)
 
-- `ice()` is documented as the ξ-weighted variant of ICE: A16 §4.2
-  (Eqs. 22–24) and A23 §3 (b)–(c) estimate copulas and margins on **one**
-  posterior draw (L = 1) and reserve the conditional expectation for the
-  prior; `sem()` is the hard-draw estimator. Said in `ice.py`, the
-  feature ↔ paper map, the README's ICE-vs-SEM box and §Exp. 3 of the
-  reproduction report, which no longer claims a faithful reproduction of the
-  estimator.
+- `ice()` is documented as the ξ-weighted variant of ICE:
+  DerrodePieczynski_CSDA2013 §4.2 (Eqs. 22–24) and DerrodePieczynski_SP2016 §3
+  (b)–(c) estimate copulas and margins on **one** posterior draw (L = 1) and
+  reserve the conditional expectation for the prior; `sem()` is the hard-draw
+  estimator. Said in `ice.py`, the feature ↔ paper map, the README's ICE-vs-SEM
+  box and §Exp. 3 of the reproduction report, which no longer claims a faithful
+  reproduction of the estimator.
 - `n_eff` is Σw everywhere it is named: two GUI docstrings claimed Kish's
   (Σw)²/Σw² and the pair-scatter panel computed it under the same label.
 - `note/penalty_scale.bib`: `ko2019` had the DOI of a different paper;
@@ -3452,17 +3708,18 @@ the CSDA-2013 reproduction script. No public-API breaking changes.
 
 ### Added
 
-- **GICE — automatic margin family selection (paper A23 / SP 2016, §3).**
-  Margin blocks now accept an optional ``candidates`` list (a set of
-  ``scipy.stats`` family names). When non-empty, the ICE M-step fits
-  each candidate and picks the winner via a configurable rule:
-  ``mle`` (default), ``kolmogorov`` (SP 2016, Example 3.1),
-  ``aic`` or ``bic``. Eight families ship with data-aware
-  initialisation heuristics: ``norm, gamma, invgamma, betaprime,
-  lognorm, expon, weibull_min, beta``. Other ``scipy.stats`` names
-  still work; the M-step falls back to ``scipy.stats.<dist>.fit`` for
-  the init point. Public constants ``ice.GICE_KNOWN_FAMILIES`` and
-  ``ice.SP2016_DEFAULT_CANDIDATES`` exposed.
+- **GICE — automatic margin family selection (paper
+  DerrodePieczynski_SP2016 / SP 2016, §3).** Margin blocks now accept
+  an optional ``candidates`` list (a set of ``scipy.stats`` family
+  names). When non-empty, the ICE M-step fits each candidate and picks
+  the winner via a configurable rule: ``mle`` (default),
+  ``kolmogorov`` (SP 2016, Example 3.1), ``aic`` or ``bic``. Eight
+  families ship with data-aware initialisation heuristics: ``norm,
+  gamma, invgamma, betaprime, lognorm, expon, weibull_min, beta``.
+  Other ``scipy.stats`` names still work; the M-step falls back to
+  ``scipy.stats.<dist>.fit`` for the init point. Public constants
+  ``ice.GICE_KNOWN_FAMILIES`` and ``ice.SP2016_DEFAULT_CANDIDATES``
+  exposed.
 - **New shipped fixture** ``models/sp2016_gice_k2.toml`` reproducing
   the SP-2016 §5.1 setup (Gamma + BetaPrime margins).
 - **GUI: new ICE view "Parameters: true vs fitted"** (view *M*) — at
@@ -3509,27 +3766,28 @@ the CSDA-2013 reproduction script. No public-API breaking changes.
 - **Report: progress bar + ETA** for every experiment row / ICE
   config. Stdlib-only (no tqdm dependency); TTY rewrites in place,
   non-TTY emits one line per ~10 % rate-limited to ≤ 1 / 3 s.
-- **Documentation: dedicated ``prg/pmc/README.md``** that opens
-  with both source-paper citations (A16 / A23), a feature ↔ paper
-  table, and BibTeX entries.
+- **Documentation: dedicated ``prg/pmc/README.md``** that opens with
+  both source-paper citations (DerrodePieczynski_CSDA2013 /
+  DerrodePieczynski_SP2016), a feature ↔ paper table, and BibTeX
+  entries.
 - **Documentation: GitHub Actions workflow** ``.github/workflows/ci.yml``
   mirroring ``.gitlab-ci.yml`` (lint + matrix tests on Python
   3.11 / 3.12 / 3.13, headless Qt via ``QT_QPA_PLATFORM=offscreen``).
 
 ### Changed
 
-- ICE selection criteria expanded from MLE-only to
-  ``{mle, aic, bic, huard, cvm}`` for copulas (A16 Eq. 20 implemented
-  as ``huard``) and ``{mle, kolmogorov, aic, bic}`` for margins
-  (A23 §3).
+- ICE selection criteria expanded from MLE-only to ``{mle, aic, bic,
+  huard, cvm}`` for copulas (DerrodePieczynski_CSDA2013 Eq. 20
+  implemented as ``huard``) and ``{mle, kolmogorov, aic, bic}`` for
+  margins (DerrodePieczynski_SP2016 §3).
 - Default ``N_default`` lowered from 5000 → 1000 in every shipped
   fixture except ``sp2016_gice_k2.toml`` (which keeps the paper's
   3000), so the auto-loaded default lands on a fast turnaround.
 - Top-level README's "References" section rewritten with full
-  citations for **both** A16 (CSDA 2013) and **A23** (SP 2016),
-  including BibTeX. Fixed pre-existing author typo
-  "Piecini" → "Pieczynski"; added ``docs/SP_2016.pdf`` to the
-  documented directory tree.
+  citations for **both** DerrodePieczynski_CSDA2013 (CSDA 2013) and
+  **DerrodePieczynski_SP2016** (SP 2016), including BibTeX. Fixed
+  pre-existing author typo "Piecini" → "Pieczynski"; added
+  ``docs/SP_2016.pdf`` to the documented directory tree.
 - ``[project.urls]`` in ``pyproject.toml`` gains a
   ``Mirror = https://github.com/SDerrode/copulasformm`` entry.
 
@@ -3556,13 +3814,13 @@ the CSDA-2013 reproduction script. No public-API breaking changes.
 
 Two papers by S. Derrode and W. Pieczynski:
 
-- **A16** — *Unsupervised data classification using pairwise Markov
-  chains with automatic copulas selection*, Comput. Stat. Data Anal.
-  63 (2013), 81-98.
+- **DerrodePieczynski_CSDA2013** — *Unsupervised data classification
+  using pairwise Markov chains with automatic copulas selection*,
+  Comput. Stat. Data Anal. 63 (2013), 81-98.
   [doi:10.1016/j.csda.2013.01.027](https://doi.org/10.1016/j.csda.2013.01.027)
-- **A23** — *Unsupervised classification using hidden Markov chain
-  with unknown noise copulas and margins*, Signal Process. 128
-  (2016), 8-17.
+- **DerrodePieczynski_SP2016** — *Unsupervised classification using
+  hidden Markov chain with unknown noise copulas and margins*, Signal
+  Process. 128 (2016), 8-17.
   [doi:10.1016/j.sigpro.2016.03.008](https://doi.org/10.1016/j.sigpro.2016.03.008)
 
 See [`prg/pmc/README.md`](prg/pmc/README.md) for the feature ↔

@@ -1,4 +1,5 @@
-"""General pairwise Markov chain — pair-indexed margins f_ij (A16 Eqs. 12–14).
+"""General pairwise Markov chain — pair-indexed margins f_ij
+(DerrodePieczynski_CSDA2013 Eqs. 12–14).
 
 Acceptance tests of the first implementation wave (model, simulation,
 inference). Since v0.5.0 the package collapsed the K² margins of a PMC to K

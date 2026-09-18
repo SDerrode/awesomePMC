@@ -3,7 +3,7 @@ awesomePMC — Copula-based Markov models for non-Gaussian transition kernels.
 
 The package provides three complementary layers:
 
-* :mod:`pmcprg.copulas` — 39 bivariate copula families (elliptical,
+* :mod:`pmcprg.copulas` — 41 bivariate copula families (elliptical,
   Archimedean, survival, extreme-value, explicit, and the 90°/270° rotations
   for negative dependence) with a common ``CopulaVirt`` API: ``pdf``, ``cdf``,
   ``conditional_cdf``, ``inv_h``, ``sample``, ``fit``, plus vectorised

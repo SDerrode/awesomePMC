@@ -1,6 +1,7 @@
 """General PMC — pseudo-observations and margin samples of the diagnostics.
 
-For the pair margins of a general PMC (A16 Eqs. 12–14) the pair density is
+For the pair margins of a general PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14)
+the pair density is
 f_ij(y_n) · f_ji(y_{n+1}) · c_ij(F_ij(y_n), F_ji(y_{n+1})). The diagnostics
 therefore test
 
@@ -11,7 +12,7 @@ therefore test
 and, for a state model, reduce to the per-state construction value for value.
 Each construction is checked here against a direct computation on a short
 series — scipy CDFs and ξ by enumerating every state path — and the PMM
-(A16 §3.3) against the pair density written out by hand.
+(DerrodePieczynski_CSDA2013 §3.3) against the pair density written out by hand.
 """
 from __future__ import annotations
 
@@ -63,7 +64,8 @@ def _xi_by_enumeration(model, Y):
     """ξ_n(i, j) = P(x_n = i, x_{n+1} = j | y) summed over every state path.
 
     p(x, y) = Σ_j p_{x1 j} f_{x1 j}(y_1) · Π_n p_ij f_ij(y_n) / Σ_k p_ik f_ik(y_n)
-              · f_ji(y_{n+1}) · c_ij(F_ij(y_n), F_ji(y_{n+1}))   (A16 Eqs. 12–14)
+              · f_ji(y_{n+1}) · c_ij(F_ij(y_n), F_ji(y_{n+1}))
+              (DerrodePieczynski_CSDA2013 Eqs. 12–14)
     """
     P = model.prior_p
     K, N = model.K, len(Y)
@@ -263,7 +265,8 @@ def test_margin_sample_against_a_loop():
 
 
 # --------------------------------------------------------------------------
-# PMM with pair margins (A16 §3.3 with the pair density of Eq. 12)
+# PMM with pair margins (DerrodePieczynski_CSDA2013 §3.3 with the pair
+# density of Eq. 12)
 # --------------------------------------------------------------------------
 
 def test_classify_pmm_pair_matches_the_pair_density_written_out(pair_model):

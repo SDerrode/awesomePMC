@@ -1,8 +1,9 @@
 """General PMC — unit tests of the pair-margin M-step (ICE, SEM, K-means).
 
 Fast, exact checks of the dual-view update of ``pmcprg.pmc.ice._m_step`` for
-pair-indexed margins f_ij (A16 Eqs. 12–14), complementing the statistical
-acceptance tests of ``test_general_pmc_estimation.py``:
+pair-indexed margins f_ij (DerrodePieczynski_CSDA2013 Eqs. 12–14),
+complementing the statistical acceptance tests of
+``test_general_pmc_estimation.py``:
 
 * the dual-view sample of f_ij is {y_n : (x_n, x_{n+1}) = (i, j)} ∪
   {y_{n+1} : (x_n, x_{n+1}) = (j, i)} for hard labels, with weights ½ ξ;

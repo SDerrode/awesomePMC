@@ -967,7 +967,8 @@ def test_pmcmodel_warns_on_legacy_k2_untied_margins(tmp_path, caplog):
         '[model]\nname="legacy_bad"\nvariant="PMC-IN"\nK=2\nN_default=100\n'
         'margin_structure="state"\n'
         '[prior]\np = [[0.45, 0.05], [0.05, 0.45]]\n'
-        # Untied: (0, 0) ≠ (0, 1) — not state margins (A16 §2.1 Proposition).
+        # Untied: (0, 0) ≠ (0, 1) — not state margins (DerrodePieczynski_CSDA2013
+        # §2.1 Proposition).
         '[[margins]]\ni=0\nj=0\ndist="norm"\nparams={loc=-1.0, scale=1.0}\n'
         '[[margins]]\ni=0\nj=1\ndist="norm"\nparams={loc=-2.0, scale=0.5}\n'
         '[[margins]]\ni=1\nj=0\ndist="norm"\nparams={loc=1.0, scale=1.0}\n'

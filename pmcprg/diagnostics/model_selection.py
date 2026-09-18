@@ -41,7 +41,8 @@ On top of the pairwise tests:
 * :func:`ice_pair_comparisons` — for each pair of states ``(i, j)`` of a
   fitted chain, the comparison of the ICE candidates on the ξ-weighted
   pseudo-observations ``(F_ij(y_n), F_ji(y_{n+1}))``, ``w_n = ξ_n(i, j)``
-  (A16 Eq. 12), with the family the ICE criterion selects and its runner-up.
+  (DerrodePieczynski_CSDA2013 Eq. 12), with the family the ICE criterion
+  selects and its runner-up.
 
 Nothing here changes a default or a selection decision: these functions are
 read-only diagnostics, opt-in.
@@ -196,8 +197,8 @@ References
   *Econometrica* 79(2), 453–497. doi:10.3982/ECTA5771
 * Derrode, S. & Pieczynski, W. (2013). Unsupervised data classification using
   pairwise Markov chains with automatic copulas selection. *Comput. Statist.
-  Data Anal.* 63, 81–98. doi:10.1016/j.csda.2013.01.027 (A16) — Eq. 12, the
-  pseudo-observations of the pair copulas.
+  Data Anal.* 63, 81–98. doi:10.1016/j.csda.2013.01.027 (DerrodePieczynski_CSDA2013)
+  — Eq. 12, the pseudo-observations of the pair copulas.
 """
 from __future__ import annotations
 
@@ -1340,8 +1341,8 @@ def ice_pair_comparisons(
 
     For every pair ``(i, j)`` this rebuilds the weighted sample the ICE
     M-step fits the copula ``c_ij`` on — ``(F_ij(y_n), F_ji(y_{n+1}))`` with
-    weight ``ξ_n(i, j)`` (A16 Eq. 12), the CDFs clipped as in
-    ``pmcprg.pmc.ice._m_step`` — refits every candidate with the M-step's own
+    weight ``ξ_n(i, j)`` (DerrodePieczynski_CSDA2013 Eq. 12), the CDFs clipped
+    as in ``pmcprg.pmc.ice._m_step`` — refits every candidate with the M-step's own
     weighted MLE (``ice._fit_copula_params``), scores it with the ICE
     criterion (``ice._SCORE_FN``), and compares the candidates with
     :func:`vuong_test` or :func:`clarke_test`.

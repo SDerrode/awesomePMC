@@ -24,11 +24,11 @@ Margin structure
 ----------------
   Every command accepts both margin structures of PMCModel: state margins f_i
   and pair margins f_ij, the law of y_n given (x_n = i, x_{n+1} = j) — the
-  general PMC of A16 Eqs. 12–14 (Derrode & Pieczynski 2013, CSDA 63:81–98).
-  The model line of the summary says "pair margins f_ij" for the latter. Should
-  the estimator fail on a pair model, 'estimate' / 'estimate-image' print the
-  error on one line and exit with status 2 (traceback in the log file) rather
-  than raising.
+  general PMC of DerrodePieczynski_CSDA2013 Eqs. 12–14 (Derrode & Pieczynski
+  2013, CSDA 63:81–98). The model line of the summary says "pair margins f_ij"
+  for the latter. Should the estimator fail on a pair model, 'estimate' /
+  'estimate-image' print the error on one line and exit with status 2
+  (traceback in the log file) rather than raising.
 
 Image I/O
 ---------
@@ -140,7 +140,7 @@ def _read_observations(
 
 
 # ---------------------------------------------------------------------------
-# Model summary and estimator guard (pair margins — A16 Eqs. 12–14)
+# Model summary and estimator guard (pair margins — DerrodePieczynski_CSDA2013 Eqs. 12–14)
 # ---------------------------------------------------------------------------
 
 #: Exit status of 'estimate' / 'estimate-image' when the estimator fails on a

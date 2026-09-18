@@ -3,8 +3,9 @@ test_gui_pair_margins.py — the GUI on a general PMC with pair-indexed margins.
 
 A model with ``margin_structure == "pair"`` carries K² margins f_ij, the law of
 y_n given (x_n = i, x_{n+1} = j) (Derrode & Pieczynski 2013, CSDA 63:81–98 —
-"A16" — Eqs. 12–14). ``PMCModel.margin(i)`` raises on such a model, and every
-panel that used it, or assumed K margin blocks, broke. These tests cover:
+"DerrodePieczynski_CSDA2013" — Eqs. 12–14). ``PMCModel.margin(i)`` raises on
+such a model, and every panel that used it, or assumed K margin blocks, broke.
+These tests cover:
 
 * the Margins tab — K×K cells labelled f_ij, editing, the state ↔ pair switch,
   and the unchanged K-cell grid of state models;
@@ -115,7 +116,7 @@ def test_pair_model_margins_tab_shows_k2_cells_labelled_f_ij(qapp):
     assert cells == [["norm(loc=0.0, scale=1.0)", "norm(loc=0.3, scale=1.6)"],
                      ["norm(loc=1.1, scale=1.4)", "norm(loc=1.5, scale=1.0)"]]
     info = tab._info.text()
-    assert "f_ij" in info and "x_{n+1} = j" in info and "A16" in info
+    assert "f_ij" in info and "x_{n+1} = j" in info and "DerrodePieczynski_CSDA2013" in info
     assert "SR-PMC" not in info
     assert tab._combo_structure.currentData() == "pair"
     assert tab._combo_structure.isEnabled()
@@ -133,7 +134,8 @@ def test_state_model_margins_tab_is_unchanged(qapp):
     assert cols == ["density"] and rows == ["i=0", "i=1"]
     assert cells == [["norm(loc=-1.0, scale=1.0)"], ["norm(loc=1.0, scale=1.0)"]]
     assert "f_i" in tab._info.text() and "SR-PMC" not in tab._info.text()
-    # A PMC may switch to pair margins; an HMC may not (A16 §2.1 Proposition).
+    # A PMC may switch to pair margins; an HMC may not (DerrodePieczynski_CSDA2013
+    # §2.1 Proposition).
     assert tab._combo_structure.isEnabled()
     w_hmc = PMCMainWindow(HMC_TOML)
     assert not w_hmc._tab_margins._combo_structure.isEnabled()
@@ -355,7 +357,8 @@ def test_edited_pair_model_survives_a_disk_round_trip(qapp, tmp_path, monkeypatc
 # ---------------------------------------------------------------------------
 
 def test_state_law_is_the_mixture_over_the_next_state(qapp):
-    """g_i(y) = Σ_j (p_ij / p_i) f_ij(y) — A16 Eq. 12 summed over x_{n+1}."""
+    """g_i(y) = Σ_j (p_ij / p_i) f_ij(y) — DerrodePieczynski_CSDA2013 Eq. 12
+    summed over x_{n+1}."""
     from pmcprg.pmc.gui._margins import state_law, state_law_name
     from pmcprg.pmc.model import PMCModel
 

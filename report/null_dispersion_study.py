@@ -123,7 +123,7 @@ def main() -> None:
 
     ref = PMCModel(BASE_MODEL)
     # State 0 for state margins; the pair (0, 0) — sample in the dual view —
-    # for the pair margins of a general PMC (A16 Eqs. 12–14).
+    # for the pair margins of a general PMC (DerrodePieczynski_CSDA2013 Eqs. 12–14).
     key = margin_keys(ref)[0]
     margin = margin_of(ref, key)
     grid, sigma = _reference(margin)
