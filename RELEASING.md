@@ -45,11 +45,13 @@ On the GitLab working copy (`main`):
 2. **CHANGELOG.md** — add the `X.Y.Z` section with the release date.
 3. **CITATION.cff** — set `version: X.Y.Z` and `date-released: "YYYY-MM-DD"`
    (and the date in its header comment).
-4. **Full test suite** (slow tests included), GUI extra installed:
+4. **Full test suite** (slow tests included), GUI extra installed. CI runs
+   only the fast subset on a push; the full suite runs on the release tag
+   (step 8) and weekly, but a local full run before tagging saves a red tag:
 
    ```bash
    pip install -e ".[dev,gui]"
-   QT_QPA_PLATFORM=offscreen pytest -q
+   QT_QPA_PLATFORM=offscreen OMP_NUM_THREADS=1 pytest -q -n auto   # ~20 min on 4 workers
    ruff check pmcprg
    ```
 
@@ -73,7 +75,8 @@ Export and publish:
    git push github public:main
    ```
 
-   Wait for the GitHub CI (`CI` workflow) to be green on `main`.
+   Wait for the GitHub CI (`CI` workflow) to be green on `main`: lint, smoke,
+   min-versions and the **fast** suite on Python 3.11 and 3.14 — a few minutes.
 8. **Tag the exported commit** (the GitHub tag points to the `public` commit,
    not to the GitLab one):
 
@@ -98,7 +101,12 @@ Export and publish:
 
     A version can be uploaded only once to an index: to repeat a dry run, use a
     pre-release version (`X.Y.Zrc1`, tag `vX.Y.Zrc1`).
-11. **Publish the Release** — the `release: published` event runs the workflow:
+11. **Wait for the CI run of the tag** (*Actions → CI*, the run named after
+    `vX.Y.Z`): pushing a `v*` tag is what triggers the **full** suite — slow
+    tests included, Python 3.11 to 3.14, 4 workers each — and a green run
+    there is the release gate. `publish.yml` does not wait for it, so check
+    it yourself. (A push to `main` only runs the fast suite.)
+12. **Publish the Release** — the `release: published` event runs the workflow:
     guard (tag = version) → build → upload to PyPI (after the `pypi` environment
     approval, if configured).
     If the release event run failed for an external reason, re-run it, or run the
@@ -106,7 +114,7 @@ Export and publish:
 
 Post-release checks:
 
-12. In a fresh virtual environment, away from the repository:
+13. In a fresh virtual environment, away from the repository:
 
     ```bash
     python -m venv /tmp/awesomepmc-check && . /tmp/awesomepmc-check/bin/activate
@@ -115,5 +123,5 @@ Post-release checks:
     python -c "import pmcprg, pmcprg.pmc, pmcprg.copulas, pmcprg.missing; print(pmcprg.__version__)"
     ```
 
-13. Check the project page <https://pypi.org/project/awesomepmc/> (README
+14. Check the project page <https://pypi.org/project/awesomepmc/> (README
     rendering, links, classifiers) and the GitHub *Cite this repository* box.

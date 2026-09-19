@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib import gridspec
 
 from pmcprg.numerics import minmaxEPS, EPS, ONE_MINUS_EPS
+from pmcprg.plot_style import with_package_style
 # Re-export for backward compatibility — was raised by the AR sampler that
 # is now superseded by Rosenblatt inversion. Kept so existing user code
 # that imports it from ``pmcprg.copulas.bivariate`` still works.
@@ -157,6 +158,21 @@ class BivariateLaw:
         self._x = np.linspace(x_range[0], x_range[1], N)
         self._y = np.linspace(y_range[0], y_range[1], N)
         self._X, self._Y = np.meshgrid(self._x, self._y)
+
+    #: Built by :meth:`_init_plot_grid` from the margins and the quantile
+    #: range: left out of a pickle (2 × 200 + 2 × 200² float64, 0.64 MB) and
+    #: rebuilt on load.
+    _GRID_ATTRS = ("_x", "_y", "_X", "_Y")
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        for name in self._GRID_ATTRS:
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._init_plot_grid()
 
     def _compute_pdf_grid(self) -> np.ndarray:
         return np.vectorize(lambda a, b: self.pdf([a, b]))(self._X, self._Y)
@@ -519,6 +535,7 @@ class BivariateLaw:
     # Plotting
     # ------------------------------------------------------------------
 
+    @with_package_style
     def plot_pdf(self, plot_dir: str, prefix: str = "") -> None:
         z = self._compute_pdf_grid()
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -548,6 +565,7 @@ class BivariateLaw:
         )
         plt.close()
 
+    @with_package_style
     def plot_pdf_with_margins(
         self, plot_dir: str, title: str = "", prefix: str = ""
     ) -> None:

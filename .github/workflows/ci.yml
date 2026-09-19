@@ -1,12 +1,25 @@
 # ----------------------------------------------------------------------------
 # GitHub Actions CI for awesomePMC  (mirror of .gitlab-ci.yml)
 #
+# What runs when — the suite is 7 100 tests, 458 of them `slow` (Monte-Carlo
+# size/power studies, multistart, notebooks). Run whole, one process, on four
+# Python versions, it took 1.5–2.5 h per job on every push, so a burst of
+# pushes hid red runs behind cancelled ones. Now:
+#
+#   push / pull request   lint, smoke, min-versions and the FAST suite
+#                         (`-m "not slow"`, 4 workers) on Python 3.11 and 3.14
+#                         — minutes, not hours.
+#   tag `v*`, weekly      the FULL suite (slow included, 4 workers) on 3.11 to
+#   schedule, manual      3.14, coverage on 3.14. A green run on the release
+#                         tag is the release gate (RELEASING.md).
+#
 # Jobs:
 #   lint         — ruff (no autofix; fails on any warning).
 #   smoke        — packaging: build sdist + wheel (wheel built from the sdist),
 #                  twine check, install the wheel (no extras) and check the
 #                  imports + `pmc --help`, in parallel with the test matrix.
-#   test         — pytest + coverage on Python 3.11 / 3.12 / 3.13 / 3.14.
+#   plan         — decides the test matrix from the event (see above).
+#   test         — pytest -n auto, fast or full according to the plan.
 #   min-versions — Python 3.11 with every runtime dependency (and the `ml`
 #                  extra) pinned to the lower bound declared in
 #                  pyproject.toml; fast test subset.
@@ -25,13 +38,24 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  schedule:
+    # Mondays 03:23 UTC — the full suite on the current main.
+    - cron: "23 3 * * 1"
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "fast = `-m 'not slow'` on 3.11 + 3.14; full = everything on 3.11-3.14"
+        type: choice
+        options: [full, fast]
+        default: full
 
-# Cancel in-flight runs on the same ref when a new push lands; PR pushes
-# of repeated commits don't fan out into queued shadows.
+# A new push cancels the in-flight run of the same ref, so a burst of pushes
+# does not queue shadows. The event is part of the group and a run that is
+# the release gate (tag), the weekly one or a manual one is never cancelled:
+# a push to main used to cancel — and be cancelled by — anything sharing its ref.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -94,23 +118,52 @@ jobs:
           pmc --help
 
   # --------------------------------------------------------------------
-  # Tests  — matrix over Python versions
+  # Plan — which tests, on which Python versions
+  #   Fast (`-m "not slow"`) on the minimum and the development Python for
+  #   every push and pull request; the full suite on all four versions for a
+  #   release tag, the weekly schedule and a manual run.
+  # --------------------------------------------------------------------
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SUITE: ${{ inputs.suite }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          event, ref, suite = os.environ["EVENT"], os.environ["REF"], os.environ["SUITE"]
+          full = (event == "schedule" or ref.startswith("refs/tags/v")
+                  or (event == "workflow_dispatch" and suite != "fast"))
+          # 3.11 is the minimum (requires-python); 3.14 is the development
+          # version. Every entry is a required check.
+          versions = ["3.11", "3.12", "3.13", "3.14"] if full else ["3.11", "3.14"]
+          include = [{"python-version": v,
+                      "suite": "full" if full else "fast",
+                      # coverage only where it is read: the full run, one version
+                      "coverage": full and v == "3.14"} for v in versions]
+          matrix = json.dumps({"include": include})
+          print(matrix)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"matrix={matrix}\n")
+          EOF
+
+  # --------------------------------------------------------------------
+  # Tests  — matrix from the plan
   # --------------------------------------------------------------------
   test:
-    name: pytest (Python ${{ matrix.python-version }})
-    needs: lint
+    name: pytest ${{ matrix.suite }} (Python ${{ matrix.python-version }})
+    needs: [lint, plan]
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-      matrix:
-        # 3.11 is the minimum (requires-python); 3.14 is the development
-        # version. Every entry is a required check. To try a pre-release
-        # Python, add an `include` entry with `experimental: true` and set
-        # `allow-prereleases: true` on setup-python.
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-
-    continue-on-error: ${{ matrix.experimental == true }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v7
@@ -139,14 +192,23 @@ jobs:
           pip install --upgrade pip
           pip install -e ".[dev,gui]"
 
-      - name: Run tests with coverage
+      - name: Run tests (${{ matrix.suite }})
         env:
           # Headless Qt — avoid "could not connect to any X display".
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q --cov --cov-report=term --cov-report=xml
+          # One BLAS thread per xdist worker: 4 workers x N threads
+          # oversubscribes the 4 vCPUs and slows every test down.
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          args=(-q -n auto)
+          if [ "${{ matrix.suite }}" = "fast" ]; then args+=(-m "not slow"); fi
+          if [ "${{ matrix.coverage }}" = "true" ]; then args+=(--cov --cov-report=term --cov-report=xml); fi
+          pytest "${args[@]}"
 
       - name: Upload coverage artefact
-        if: always()
+        if: ${{ matrix.coverage }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.python-version }}
@@ -194,9 +256,11 @@ jobs:
         run: |
           python -V
           pip install --upgrade pip
-          pip install -c constraints-min.txt ".[ml]" pytest
+          pip install -c constraints-min.txt ".[ml]" pytest pytest-xdist
           pip list
       - name: Fast test subset
         env:
           MPLBACKEND: Agg
-        run: pytest -q -m "not slow"
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+        run: pytest -q -n auto -m "not slow"

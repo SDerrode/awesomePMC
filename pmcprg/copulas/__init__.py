@@ -7,9 +7,6 @@ field set) and writing the module file; this __init__.py stays untouched.
 
 import importlib
 
-# Apply package-wide matplotlib defaults (white facecolor, dpi=150, font_size=12).
-import pmcprg.plot_style  # noqa: F401
-
 from pmcprg.copulas._base     import CopulaEnum, CopulaVirt, FitResult, GoFResult
 from pmcprg.copulas.bivariate import BivariateLaw, ConditionalLaw, BivariateFitResult, BivariateBootstrapCI
 from pmcprg.copulas._stderr   import (IndependenceLRTest, MleTauDiscrepancyTest,

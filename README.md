@@ -170,7 +170,7 @@ Optional extras:
 | `[gui]` | PyQt6, for the graphical interface (`pmc gui`) — kept optional so the package installs on headless servers |
 | `[ml]` | scikit-learn, for the k-means warm start of ICE/SEM (`init = "kmeans"`) |
 | `[image]` | Pillow, to read and write images (`pmc classify-image`, `pmc estimate-image`, image loading in the GUI) |
-| `[dev]` | pytest, pytest-cov, ruff and the notebook runners, plus `[image]` and `[ml]` — everything the test suite needs |
+| `[dev]` | pytest (with pytest-xdist and pytest-cov), ruff and the notebook runners, plus `[image]` and `[ml]` — everything the test suite needs |
 
 ```bash
 pip install "awesomepmc[gui]"
@@ -189,7 +189,8 @@ pip install .
 
 ```bash
 pip install -e ".[dev,gui]"
-pytest                      # full suite; add -m "not slow" for a quick run
+pytest -n auto -m "not slow"   # the fast suite, in parallel: a few minutes
+pytest -n auto                 # everything, incl. the Monte-Carlo studies (~15 min)
 ```
 
 ### Requirements

@@ -42,6 +42,7 @@ import numpy as np
 
 from pmcprg.numerics   import MIN_POSITIVE
 from pmcprg.plot_style import DEFAULT_FONT_SIZE as FONT_SIZE
+from pmcprg.plot_style import with_package_style
 
 if TYPE_CHECKING:
     from pmcprg.copulas._base import CopulaVirt
@@ -974,6 +975,7 @@ class FitResult:
     # ------------------------------------------------------------------
     # Visual diagnostics
     # ------------------------------------------------------------------
+    @with_package_style
     def plot_diagnostics(self, plot_dir: str, prefix: str = '') -> None:
         """6-panel diagnostic plot:
         (0,0) pseudo-observations + fitted PDF contours

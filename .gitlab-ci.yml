@@ -1,14 +1,24 @@
 # ----------------------------------------------------------------------------
 # GitLab CI for awesomePMC
 #
+# What runs when (mirrors .github/workflows/ci.yml — see its header): the
+# suite is 7 100 tests, 458 of them `slow`; run whole, in one process, on four
+# Python versions, it took 1.5–2.5 h per job on every push.
+#   every pipeline        lint, smoke-install, min-versions and the FAST suite
+#                         (`-m "not slow"`, 4 workers) on Python 3.11 and 3.14.
+#   tag, schedule,        the FULL suite (slow included, 4 workers) on 3.11 to
+#   "Run pipeline"        3.14. On an ordinary push these jobs are offered as
+#                         manual jobs (play button), never required.
+#   -> Create a weekly schedule in CI/CD > Schedules to get the weekly run.
+#
 # Stages:
 #   lint  — ruff (no autofix; fails on any warning).
 #   test  — smoke-install (build sdist + wheel, twine check, install the wheel,
-#           imports + pmc --help), pytest + coverage on Python 3.11 / 3.12 /
-#           3.13 / 3.14, and min-versions (Python 3.11 with the lowest declared
-#           runtime dependencies, fast test subset). The jobs are independent
-#           signals (packaging vs code vs dependency bounds), so one failing
-#           does not block the others — mirrors the GitHub CI.
+#           imports + pmc --help), pytest fast/full, and min-versions (Python
+#           3.11 with the lowest declared runtime dependencies, fast test
+#           subset). The jobs are independent signals (packaging vs code vs
+#           dependency bounds), so one failing does not block the others —
+#           mirrors the GitHub CI.
 #
 # The "gui" optional extra (PyQt6) is installed so the test_gui_dialogs
 # tests run; the system Qt libs needed for headless Qt are pulled in by
@@ -67,12 +77,17 @@ smoke-install:
     - pmc --help
 
 # ---------------------------------------------------------------------------
-# Tests — matrix over Python versions
+# Tests — fast on 3.11 + 3.14 always; full on 3.11-3.14 for a tag, a schedule
+# or a manual pipeline (an offered-but-optional manual job otherwise).
 # 3.11 is the minimum (requires-python); 3.14 is the development version.
-# Every job is required (no allow_failure).
 # ---------------------------------------------------------------------------
 .test-template: &test-template
   stage: test
+  variables:
+    # One BLAS thread per xdist worker: workers x threads would oversubscribe.
+    OMP_NUM_THREADS: "1"
+    OPENBLAS_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
   before_script:
     - python -V
     - pip install --upgrade pip
@@ -84,8 +99,30 @@ smoke-install:
         libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
         libxkbcommon0 libfontconfig1
     - pip install -e ".[dev,gui]"
+
+# --- fast: every pipeline -----------------------------------------------------
+.test-fast: &test-fast
+  <<: *test-template
   script:
-    - pytest -q --cov --cov-report=term --cov-report=xml
+    - pytest -q -n auto -m "not slow"
+
+test-fast:python3.11:
+  <<: *test-fast
+  image: python:3.11-slim
+
+test-fast:python3.14:
+  <<: *test-fast
+  image: python:3.14-slim
+
+# --- full: tag / schedule / manual pipeline ----------------------------------------
+.test-full: &test-full
+  <<: *test-template
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - when: manual
+      allow_failure: true
+  script:
+    - pytest -q -n auto --cov --cov-report=term --cov-report=xml
   coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+)%/'
   artifacts:
     when: always
@@ -97,20 +134,20 @@ smoke-install:
       - coverage.xml
     expire_in: 1 week
 
-test:python3.11:
-  <<: *test-template
+test-full:python3.11:
+  <<: *test-full
   image: python:3.11-slim
 
-test:python3.12:
-  <<: *test-template
+test-full:python3.12:
+  <<: *test-full
   image: python:3.12-slim
 
-test:python3.13:
-  <<: *test-template
+test-full:python3.13:
+  <<: *test-full
   image: python:3.13-slim
 
-test:python3.14:
-  <<: *test-template
+test-full:python3.14:
+  <<: *test-full
   image: python:3.14-slim
 
 # ---------------------------------------------------------------------------
@@ -147,7 +184,7 @@ min-versions:
       open("constraints-min.txt", "w").write("\n".join(pins) + "\n")
       EOF
     - cat constraints-min.txt
-    - pip install -c constraints-min.txt ".[ml]" pytest
+    - pip install -c constraints-min.txt ".[ml]" pytest pytest-xdist
     - pip list
   script:
-    - pytest -q -m "not slow"
+    - pytest -q -n auto -m "not slow"

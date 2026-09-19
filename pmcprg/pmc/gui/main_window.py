@@ -90,10 +90,14 @@ from PyQt6.QtWidgets import (                                # noqa: E402
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg  # noqa: E402
 from matplotlib.figure import Figure                              # noqa: E402
 
-from pmcprg.plot_style      import apply_gui_compact_style           # noqa: E402
+from pmcprg.plot_style      import apply_gui_compact_style, apply_style  # noqa: E402
 
-# Activate compact, math-friendly rcParams (smaller titles/ticks, LaTeX
-# mathtext, constrained_layout) for every Figure created in this module.
+# The GUI is an application: it restyles the session on purpose. The package
+# look first (white facecolor, 150 dpi, 12 pt — ``import pmcprg.copulas`` no
+# longer applies it), then the compact, math-friendly rcParams (smaller
+# titles/ticks, LaTeX mathtext, constrained_layout) that override it, for
+# every Figure created in this module.
+apply_style()
 apply_gui_compact_style()
 
 from pmcprg                 import __version__ as _PKG_VERSION    # noqa: E402

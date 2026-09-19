@@ -9,6 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — CI: the fast suite on every push, the full suite on tags, weekly and on demand
+
+- **The problem, measured.** Every push ran the whole suite (7 100 tests) in
+  one process on four Python versions: 94 min (3.14), 97 (3.13), 145 (3.11)
+  and 150 (3.12) per job on the last full run, plus 18 min for the
+  minimum-versions job. A burst of pushes cancelled itself into silence: of the
+  53 CI runs between 13 and 18 September, **11 were green, 22 red and 20
+  cancelled** — several reds were noticed hours late, and the near-bit-exact
+  tolerance failures had to be found by waiting for a whole matrix.
+- **Now** (`.github/workflows/ci.yml`, mirrored in `.gitlab-ci.yml`):
+  - *push / pull request* — lint, smoke, minimum-versions and the **fast**
+    suite (`-m "not slow"`, `pytest -n auto`) on Python 3.11 and 3.14;
+  - *release tag `v*`, weekly schedule (Mondays 03:23 UTC), manual run* — the
+    **full** suite on Python 3.11 to 3.14, coverage on 3.14 only. A green run
+    on the release tag is the release gate (`RELEASING.md` step 11).
+  A small `plan` job decides the matrix from the event; a run that is the
+  release gate, the weekly one or a manual one is no longer cancelled by a
+  push (they used to share one concurrency group per ref).
+- **Measured** (4 xdist workers, one BLAS thread each, on the development
+  machine): the fast suite — 6 627 tests — passes in **2 min 43 s**; the 458
+  `slow` tests pass in **19 min 27 s**, 10 of them minutes each (the
+  Rosenblatt, Lystig–Hughes and dependent-multiplier Monte-Carlo studies).
+  No test failed for lack of isolation under xdist. On GitHub's runners
+  (4 vCPU, slower per core) expect minutes rather than hours for a push; the
+  first runs after this change will say by how much.
+- `pytest-xdist` joins the `dev` extra; the `slow` marker's description now says
+  when CI runs those tests. `README.md` and `RELEASING.md` give the parallel
+  commands. No test was removed or skipped: the same tests run, less often.
+
+### Changed — importing the package no longer changes matplotlib's settings
+
+- **`import pmcprg.copulas` used to rewrite ten `matplotlib.rcParams`** (dpi,
+  figure/axes/savefig facecolor, every font size) through
+  `plot_style.apply_style()` run at import — and therefore so did
+  `import pmcprg.pmc` and `import pmcprg.diagnostics`, which import it. Every
+  figure a user drew afterwards, with no connection to this package, came out
+  at 150 dpi and 12 pt. Measured on the previous code: 10 `rcParams` changed
+  by `import pmcprg.copulas`; on this code: **none**, for `pmcprg`,
+  `pmcprg.copulas`, `pmcprg.diagnostics`, `pmcprg.pmc` and `pmcprg.missing`.
+- The package look is now **opt-in**, in three levels
+  (`pmcprg.plot_style`): the package's own plot methods (`plot_pdf`,
+  `plot_cdf`, `plot_samples`, `plot_h_function`, `plot_overview`,
+  `plot_multi_tau`, `plot_diagnostics`, `BivariateLaw.plot_pdf`,
+  `plot_pdf_with_margins`) apply it inside a `style_context()` and leave
+  `rcParams` exactly as they found it; `style_context()` scopes it to your own
+  `with` block; `apply_style()` restyles a whole session on purpose. The GUI
+  is an application and now calls `apply_style()` then
+  `apply_gui_compact_style()` explicitly.
+- **The plots themselves are unchanged**: all nine plot methods were rendered
+  with the previous code and with this one and compared pixel by pixel —
+  maximum difference 0.0. Only code that *relied* on `import pmcprg.copulas`
+  restyling its own figures is affected (the example notebooks now draw with
+  matplotlib's defaults); call `apply_style()` to get the old look back.
+- **A latent failure fixed on the way:** the GUI enables
+  `figure.constrained_layout.use` globally, and in a process that had imported
+  it `plot_diagnostics` (which uses `tight_layout`) raised `RuntimeError:
+  Colorbar layout of new layout engine not compatible with old engine`.
+  Reproduced on the previous code. `style_context()` pins constrained layout
+  off, so the package's figures no longer depend on the caller's settings.
+  New: `pmcprg/tests/test_plot_style_isolation.py` (20 cases, including
+  fresh-interpreter import checks for five packages and the GUI restyle).
+
+### Changed — pickled copulas are 1 000× lighter, and survive registry edits
+
+- **Weight.** Every `CopulaVirt` built three 150 × 150 float64 plotting
+  meshes (180 kB each) in its constructor, so a pickled copula was **0.5 MB**
+  before holding a single parameter, 1.1–1.6 MB for a rotated or survival one
+  (they hold a base copula), a `BivariateLaw` 1.2 MB and a two-state PMC model
+  **2.2 MB** — copied into every worker of a multistart and into every
+  `copy.deepcopy`. The meshes are deterministic in `N`: they are left out of
+  the pickled state and rebuilt on load, bit for bit. Now 268–633 bytes per
+  copula (all 41 families), 15 kB per `BivariateLaw`, 16 kB per packaged PMC
+  model; classification after a round trip is identical, and 20 deep copies of
+  a model take 13 ms.
+- **Fragility.** `Enum` pickles by *value*, i.e. the whole registry entry
+  (τ-range, parameter names, MODULE path…), so editing any field of an entry —
+  this registry has seen a τ-range fixed, parameters added and a module moved —
+  made every pickle of that family unloadable. `CopulaEnum` now pickles by
+  **name**. A pickle written by an earlier version still loads (tested with a
+  by-value payload, and with a copula state that still carries the meshes),
+  as long as its entry has not changed since.
+- New: `pmcprg/tests/test_pickle.py` (134 cases): every one of the 41
+  families round-trips with `logpdf` and meshes bit-identical, deep-copies and
+  stays under 4 kB; a fresh interpreter loads the pickle with identical
+  numbers; fit results, `BivariateLaw`, `EmpiricalBetaCopula`, test results, a
+  PMC model and an ICE result round-trip.
+
 ### Fixed — two audit-flagged bugs, both reproduced before the fix
 
 - **The GUI's copula-block dialog could hand back a pair the constructor

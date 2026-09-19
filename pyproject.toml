@@ -67,6 +67,10 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    # `pytest -n auto`: the suite is 7 100 tests and is run in parallel by CI
+    # (fast suite on every push in ~3 min on 4 workers instead of ~17 in one
+    # process) and worth running that way locally.
+    "pytest-xdist>=3.5",
     # The linter CI runs (`ruff check pmcprg`), so a fresh dev install can lint too.
     "ruff>=0.5",
     # Notebook regression tests importorskip these three — without them CI
@@ -111,7 +115,7 @@ Citation          = "https://github.com/SDerrode/awesomePMC/blob/main/CITATION.c
 testpaths = ["pmcprg/tests"]
 python_files = ["test_*.py"]
 markers = [
-    "slow: marks tests that take > ~1 s (they run by default, in CI included; deselect with `-m 'not slow'`).",
+    "slow: marks tests that take > ~1 s (the Monte-Carlo size/power studies, multistart, notebooks: 458 of ~7 100). They run by default locally; CI runs them on release tags, weekly and on demand, and only the fast suite on every push (`-m 'not slow'`). Run everything with `pytest -n auto`.",
 ]
 
 [tool.coverage.run]

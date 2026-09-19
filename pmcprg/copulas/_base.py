@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from pmcprg.numerics import EPS, ONE_MINUS_EPS, EPS_MINUS_ONE, minmaxEPS
 from pmcprg.plot_style import DEFAULT_FONT_SIZE as FONT_SIZE
+from pmcprg.plot_style import with_package_style
 from pmcprg.exceptions import CopulaParameterError, CopulaNotAvailableError
 
 # AMH τ_K range constants (computed at import time, θ ∈ [−1, 1))
@@ -248,6 +249,24 @@ class CopulaEnum(CopulaDataMixin, Enum):
     def describe(self):
         return self.name, self.value
 
+    def __reduce_ex__(self, protocol):
+        """Pickle a member by its **name**, not by its value.
+
+        ``Enum`` pickles by value, i.e. it stores the whole registry entry —
+        ID, both names, τ-range, parameter names *and the dotted MODULE path*
+        — and looks the member up by equality on load. Any later edit of one
+        of those fields (a τ-range fixed, a parameter added, a module moved:
+        this registry has seen all three) made every previously pickled copula
+        of that family unloadable. The name (``"BB1"``, ``"TAWN3"``…) is the
+        stable identity: it is what TOML model files, ``CopulaEnum[...]``
+        lookups and the registry snapshot test already rely on.
+
+        A pickle written by an earlier version, which stores the value,
+        still loads through ``CopulaEnum(value)`` as long as that entry has
+        not changed since.
+        """
+        return getattr, (type(self), self._name_)
+
     def constructible_tau_range(self) -> tuple[float, float]:
         """The registered τ-range without its singular endpoints (|τ| = 1),
         cut to the τ the family's parameter map reaches.
@@ -429,14 +448,44 @@ class CopulaVirt:
         # Grid for the numerical majorant (150 points on (0,1))
         self.N = 150
         self.ticks_nbr = 15
+        self._init_grids()
+
+    #: Attributes built by :meth:`_init_grids`: pure functions of ``N``, so
+    #: left out of a pickle and rebuilt on load (see :meth:`__getstate__`).
+    _GRID_ATTRS = ("_x", "_y", "_x1", "_y1", "_x2", "_y2", "_z2")
+
+    def _init_grids(self) -> None:
+        """The numerical-majorant grid and the plotting mesh, from ``self.N``."""
+        # Grid for the numerical majorant (N points on (0,1))
         self._x = np.linspace(EPS, ONE_MINUS_EPS, self.N)
         self._y = np.zeros(self.N)
 
-        # Grid for plotting (150×150)
+        # Grid for plotting (N×N)
         self._x1 = np.linspace(EPS, ONE_MINUS_EPS, self.N)
         self._y1 = np.linspace(EPS, ONE_MINUS_EPS, self.N)
         self._x2, self._y2 = np.meshgrid(self._x1, self._y1)
         self._z2 = np.zeros(self._x2.shape)
+
+    def __getstate__(self) -> dict:
+        """The instance state without the rebuildable grids.
+
+        Three of them are N×N = 150×150 float64 arrays (180 kB each): a
+        pickled copula was 0.5 MB before any parameter, 1.1–1.6 MB for a
+        rotated or survival one (which holds a base copula), and a two-state
+        PMC model 2.2 MB — copied into every worker of a multistart and into
+        every ``copy.deepcopy``. They are deterministic in ``N``, so
+        :meth:`__setstate__` rebuilds them bit for bit.
+        """
+        state = self.__dict__.copy()
+        for name in self._GRID_ATTRS:
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        # Also accepts the state of a pickle written before the grids were
+        # dropped: those keys are simply overwritten by the identical rebuild.
+        self.__dict__.update(state)
+        self._init_grids()
 
     # ------------------------------------------------------------------
     # Internal parameter update (must be overridden by every subclass)
@@ -1094,6 +1143,7 @@ class CopulaVirt:
     # ------------------------------------------------------------------
     # Plotting helpers
     # ------------------------------------------------------------------
+    @with_package_style
     def plot_pdf(self, plot_dir: str, prefix: str = "") -> None:
         """Contour plot of the copula density c(u,v) on (0,1)²."""
         Z = np.vectorize(lambda a, b: self.pdf([a, b]))(self._x2, self._y2)
@@ -1127,6 +1177,7 @@ class CopulaVirt:
         )
         plt.close()
 
+    @with_package_style
     def plot_cdf(self, plot_dir: str, prefix: str = "") -> None:
         """Contour plot of the copula CDF C(u,v) on (0,1)²."""
         try:
@@ -1184,6 +1235,7 @@ class CopulaVirt:
     # New plots
     # ------------------------------------------------------------------
 
+    @with_package_style
     def plot_samples(
         self, plot_dir: str, prefix: str = "", n: int = 5000, seed: int = 42
     ) -> None:
@@ -1220,6 +1272,7 @@ class CopulaVirt:
         )
         plt.close()
 
+    @with_package_style
     def plot_h_function(self, plot_dir: str, prefix: str = "") -> None:
         """Heatmap of h(v|u) = ∂C(u,v)/∂u with iso-probability contours.
 
@@ -1262,6 +1315,7 @@ class CopulaVirt:
         )
         plt.close()
 
+    @with_package_style
     def plot_overview(
         self, plot_dir: str, prefix: str = "", n_samples: int = 2000, seed: int = 42
     ) -> None:
@@ -1371,6 +1425,7 @@ class CopulaVirt:
         )
         plt.close()
 
+    @with_package_style
     def plot_multi_tau(
         self,
         plot_dir: str,
