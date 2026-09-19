@@ -244,3 +244,42 @@ def test_ice_result_round_trips(pmc_model):
     back_model, back_trace = pickle.loads(pickle.dumps((fitted, trace)))
     assert back_model.raw == fitted.raw
     np.testing.assert_array_equal(back_trace.log_liks, trace.log_liks)
+
+
+# ---------------------------------------------------------------------------
+# PMC models with a missingness mechanism (P6)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("table", [
+    {"mechanism": "state", "rates": [0.05, 0.4]},
+    {"mechanism": "state-markov", "onset": [0.01, 0.2], "persistence": [0.5, 0.9]},
+], ids=["state", "state-markov"])
+def test_pmc_model_with_missingness_round_trips(pmc_model, table):
+    from pmcprg.pmc import classify, simulate
+    m = pmc_model.with_missingness(table)
+    back = pickle.loads(pickle.dumps(m))
+    assert back.missingness == m.missingness and back.raw == m.raw
+    assert pickle.loads(pickle.dumps(m.missingness)) == m.missingness
+    _, Y = simulate(pmc_model, N=120, seed=_seed("P6", table["mechanism"]) % 2**31)
+    Y[[0, 30, 31, 119]] = np.nan
+    for got, want in zip(classify(back, Y), classify(m, Y)):
+        np.testing.assert_array_equal(got, want)
+
+
+def test_pmc_model_pickled_before_missingness_loads_as_ignorable(pmc_model):
+    """A model pickled before P6 has no ``_missingness`` in its state: the
+    class-level default makes it load as an ignorable model."""
+    from pmcprg.pmc import classify, simulate
+    legacy = copy.deepcopy(pmc_model)
+    del legacy.__dict__["_missingness"]            # the state an older version wrote
+    payload = pickle.dumps(legacy)
+    assert b"_missingness" not in payload
+    back = pickle.loads(payload)
+    assert back.missingness is None
+    _, Y = simulate(pmc_model, N=120, seed=_seed("P6", "legacy") % 2**31)
+    Y[[5, 6, 60]] = np.nan
+    for got, want in zip(classify(back, Y), classify(pmc_model, Y)):
+        np.testing.assert_array_equal(got, want)
+    # and it can still be given a mechanism
+    mech = back.with_missingness({"mechanism": "state", "rates": [0.1, 0.2]}).missingness
+    assert mech.rates == (0.1, 0.2)

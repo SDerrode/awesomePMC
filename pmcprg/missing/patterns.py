@@ -49,6 +49,15 @@ Errors
     Impossible settings raise ``ValueError`` naming the quantity at fault.
     GenGap sometimes corrects silently instead (``mcar`` shrinks
     ``block_size``); these functions never do.
+
+State-dependent masks
+---------------------
+``state_dependent`` and ``state_markov`` are not GenGap patterns: given a
+hidden state path ``X`` they draw the non-ignorable mechanisms
+``"state"`` and ``"state-markov"`` of :mod:`pmcprg.pmc.missingness` (the
+missing probability depends on the hidden state), for simulations of data
+whose mask is evidence on the states. They remove whole rows and have no
+protected offset or target count: every row follows the mechanism's law.
 """
 
 from __future__ import annotations
@@ -69,6 +78,8 @@ __all__ = [
     "overlap",
     "gaussian",
     "distribution",
+    "state_dependent",
+    "state_markov",
 ]
 
 Seed = Union[int, np.random.Generator, np.random.SeedSequence, None]
@@ -511,3 +522,148 @@ def distribution(Y, probabilities, rate_series, *, rate_dataset=1.0,
                                  "given distribution")
         mask[chosen, j] = True
     return _finish(arr, mask, univariate)
+
+
+# ---------------------------------------------------------------------------
+# State-dependent masks (non-ignorable, given a hidden state path)
+# ---------------------------------------------------------------------------
+
+
+def _state_path(X, N: int) -> np.ndarray:
+    """Validate a state path of length ``N`` (integers >= 0)."""
+    try:
+        x = np.asarray(X)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"X must be an integer state path: {exc}") from exc
+    if x.shape != (N,):
+        raise ValueError(
+            f"X must be the (N,) state path of Y's N={N} rows, got shape {x.shape}."
+        )
+    if x.dtype == bool or not (np.issubdtype(x.dtype, np.integer)
+                               or (np.issubdtype(x.dtype, np.floating)
+                                   and np.all(np.isfinite(x)) and np.all(x == np.round(x)))):
+        raise ValueError(f"X must hold integer states, got dtype {x.dtype}.")
+    x = x.astype(int)
+    if N and x.min() < 0:
+        raise ValueError(f"X holds a negative state ({x.min()}).")
+    return x
+
+
+def _state_probabilities(name: str, values, x: np.ndarray) -> np.ndarray:
+    """Validate a vector of probabilities in [0, 1], one per state of ``x``."""
+    try:
+        p = np.asarray(values, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric: {exc}") from exc
+    if p.ndim != 1 or p.size == 0:
+        raise ValueError(f"{name} must be a non-empty 1-D array, got shape {p.shape}.")
+    if not np.all(np.isfinite(p)) or np.any((p < 0.0) | (p > 1.0)):
+        raise ValueError(f"{name} must hold probabilities in [0, 1], got {values!r}.")
+    if x.size and x.max() >= p.size:
+        raise ValueError(
+            f"X holds state {x.max()}, but {name} has only {p.size} entries "
+            f"(one per state)."
+        )
+    return p
+
+
+def _row_mask(arr: np.ndarray, rows: np.ndarray, univariate: bool):
+    """Remove whole rows: the drawn rows, flagged where a value was observed."""
+    mask = np.repeat(rows[:, None], arr.shape[1], axis=1) & ~np.isnan(arr)
+    out = arr.copy()
+    out[rows] = np.nan
+    if univariate:
+        return out[:, 0], mask[:, 0]
+    return out, mask
+
+
+def state_dependent(Y, X, rates, *, seed: Seed = None):
+    """Rows missing independently given the hidden states: P(row n missing | x_n = i) = rates[i].
+
+    Simulates the ``"state"`` mechanism of :mod:`pmcprg.pmc.missingness`
+    (``[missingness] mechanism = "state"``): given the state path ``X`` the
+    rows are removed independently, row n with probability ``rates[X[n]]`` —
+    missingness that depends on the hidden state, hence not at random given
+    Y. One uniform u_n is drawn per row and row n is removed iff
+    u_n < rates[X[n]], so a rate 0 never and a rate 1 always removes.
+
+    Differences from the GenGap patterns above: whole rows are removed (every
+    column of a multichannel ``Y``, as inference treats a row with a missing
+    component), and there is no protected offset — every row follows the
+    mechanism's law, which is what a simulation from the model needs. Values
+    already missing in ``Y`` stay NaN and are not flagged; they do not change
+    the draw (same seed, same removed rows).
+
+    Parameters
+    ----------
+    Y : array (N,) or (N, d)
+    X : (N,) integer state path (e.g. from :func:`pmcprg.pmc.simulate`).
+    rates : (K,) probabilities in [0, 1], one per state (K > max(X)).
+    seed : int, Generator, SeedSequence or None — ``default_rng(seed)``.
+
+    Returns
+    -------
+    (Y_masked, mask) — see the module docstring.
+    """
+    arr, univariate = _as_columns(Y)
+    x = _state_path(X, arr.shape[0])
+    r = _state_probabilities("rates", rates, x)
+    u = np.random.default_rng(seed).random(arr.shape[0])
+    return _row_mask(arr, u < r[x], univariate)
+
+
+def state_markov(Y, X, onset, persistence, *, seed: Seed = None):
+    """Bursts of missing rows whose onset and length depend on the hidden states.
+
+    Simulates the ``"state-markov"`` mechanism of :mod:`pmcprg.pmc.missingness`
+    (``[missingness] mechanism = "state-markov"``): given the state path
+    ``X`` the row mask m is a two-state Markov chain,
+
+        P(m_n = 1 | m_{n-1} = 0, x_n = i) = onset[i],
+        P(m_n = 1 | m_{n-1} = 1, x_n = i) = persistence[i],
+        P(m_0 = 1 | x_0 = i) = onset[i] / (1 − persistence[i] + onset[i]),
+
+    the last being the stationary missing probability of the mask chain
+    under a constant state i. The mean length of a burst in state i is
+    1 / (1 − persistence[i]). One uniform u_n per row: m_n = 1 iff u_n is
+    below the probability above. ``onset[i] = 0`` with ``persistence[i] = 1``
+    is refused (the initial probability is 0/0), as in the model.
+
+    Whole rows, no protected offset, values already missing: as in
+    :func:`state_dependent` (the chain runs on the drawn mask only).
+
+    Parameters
+    ----------
+    Y : array (N,) or (N, d)
+    X : (N,) integer state path.
+    onset, persistence : (K,) probabilities in [0, 1], one per state.
+    seed : int, Generator, SeedSequence or None — ``default_rng(seed)``.
+
+    Returns
+    -------
+    (Y_masked, mask) — see the module docstring.
+    """
+    arr, univariate = _as_columns(Y)
+    N = arr.shape[0]
+    x = _state_path(X, N)
+    a = _state_probabilities("onset", onset, x)
+    b = _state_probabilities("persistence", persistence, x)
+    if a.size != b.size:
+        raise ValueError(
+            f"onset and persistence must have one entry per state each; got "
+            f"{a.size} and {b.size}."
+        )
+    stuck = np.nonzero((a == 0.0) & (b == 1.0))[0]
+    if stuck.size:
+        raise ValueError(
+            f"onset = 0 and persistence = 1 for state(s) {stuck.tolist()}: the "
+            f"mask chain never moves and its initial missing probability "
+            f"onset / (1 − persistence + onset) is 0/0."
+        )
+    u = np.random.default_rng(seed).random(N)
+    rows = np.zeros(N, dtype=bool)
+    if N:
+        rows[0] = u[0] < a[x[0]] / ((1.0 - b[x[0]]) + a[x[0]])
+    for n in range(1, N):
+        rows[n] = u[n] < (b[x[n]] if rows[n - 1] else a[x[n]])
+    return _row_mask(arr, rows, univariate)

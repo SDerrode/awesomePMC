@@ -116,6 +116,18 @@ above (bit-identical results). With missing rows:
   :mod:`pmcprg.pmc.gaps`); the pairwise posteriors ξ are
   ``pmcprg.pmc.gaps.gap_posterior(model, Y).xi``.
 
+Non-ignorable missingness
+-------------------------
+When ``model.missingness`` is not None (``[missingness]`` table,
+:mod:`pmcprg.pmc.missingness`) the mask m of Y — m_n = 1 at a missing row —
+is evidence on the states, p(m | x) = Π_n e_n(x_n), and every function above
+works with p(y_obs, m) (a complete Y has the mask m = 0). The factor e_n(i)
+multiplies the message at position n componentwise: ``precompute_weights``
+puts e_{n+1}(j) in the columns of W[n] and e_n(i) in f_pdf[n, i, :] (hence in
+α_1), ``_log_transition_weights`` adds their logarithms, and the augmented
+chain of :mod:`pmcprg.pmc.gaps` applies them after its block
+renormalisation. With ``model.missingness is None`` nothing changes.
+
 References
 ----------
 * Devijver, P. A. (1985). Baum's forward-backward algorithm revisited.
@@ -196,6 +208,39 @@ def _refuse_weights_with_gaps(model: PMCModel, what: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Non-ignorable missingness — the evidence factors of the observed mask
+# ---------------------------------------------------------------------------
+
+#: Sentinel of the private ``ev`` arguments: the evidence factors of
+#: ``model.missingness`` on the mask of ``Y`` (the default of every public
+#: entry point). An explicit array (or ``None``, no factor) is passed by
+#: :func:`pmcprg.pmc.gaps.forecast`, whose appended rows have no known mask,
+#: and by ICE's ``"impute"`` strategy, whose completed series keep the mask of
+#: the observed one.
+_FROM_MODEL = object()
+
+
+def _evidence(model: PMCModel, miss: np.ndarray) -> np.ndarray | None:
+    """(N, K) factors e_n(i) = p(m_n | m_{n-1}, x_n = i) of the model's
+    missingness mechanism on the boolean mask ``miss``; ``None`` when the
+    mechanism is ignorable (``model.missingness is None``)."""
+    mech = getattr(model, "missingness", None)
+    return None if mech is None else mech.evidence(miss)
+
+
+def _model_evidence(model: PMCModel, Y) -> np.ndarray | None:
+    """:func:`_evidence` on the mask of the rows of ``Y`` (all observed if none)."""
+    if getattr(model, "missingness", None) is None:
+        return None
+    miss = _missing_rows(Y)
+    return _evidence(model, np.zeros(len(Y), bool) if miss is None else miss)
+
+
+def _resolve_evidence(model: PMCModel, Y, ev):
+    return _model_evidence(model, Y) if ev is _FROM_MODEL else ev
+
+
+# ---------------------------------------------------------------------------
 # Weight pre-computation
 # ---------------------------------------------------------------------------
 
@@ -230,7 +275,33 @@ def precompute_weights(
     ``W[n, i, j] = A_ij`` for a missing y_{n+1} — and every K-state function of
     this module is exact on them. For the other variants the gap needs the
     augmented state of :mod:`pmcprg.pmc.gaps` and ``ValueError`` is raised.
+
+    Non-ignorable missingness (``model.missingness`` not None,
+    :mod:`pmcprg.pmc.missingness`): the evidence factors e_n(i) = p(m_n |
+    m_{n-1}, x_n = i) of the mask of Y live in the returned tensors,
+
+        W[n, i, j]     ← W[n, i, j] · e_{n+1}(j),
+        f_pdf[n, i, j] ← f_ij(y_n) · e_n(i)       (1 · e_n(i) at a missing n),
+
+    so that W is the transition of (x, y, m) at the observed (y, m) and
+    f_pdf[0] carries e_0 into the initialisation. Every function of this
+    module that takes ``W`` / ``f_pdf`` — ``forward``, ``backward``,
+    ``joint_posteriors``, ``sample_posterior`` — is then exact for
+    p(y_obs, m) without knowing the mechanism, and a user call
+    ``forward(model, Y, W=W, f_pdf=f_pdf)`` gives what ``forward(model, Y)``
+    gives. A complete Y still has a mask (m_n = 0 everywhere) and gets the
+    factors. With ``model.missingness is None`` the tensors are unchanged.
     """
+    return _weights(model, Y, _model_evidence(model, Y))
+
+
+def _weights(
+    model: PMCModel,
+    Y: np.ndarray,
+    ev: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """:func:`precompute_weights` with explicit evidence factors ``ev`` (N, K)
+    (``None``: none) — see there."""
     N   = len(Y)
     K   = model.K
     var = model.variant
@@ -348,6 +419,12 @@ def precompute_weights(
     # Guard against numerical zeros / negatives
     np.clip(W, 0.0, None, out=W)
 
+    if ev is not None:
+        # Missingness evidence (docstring of precompute_weights): a likelihood
+        # factor of the destination state, applied after the transition.
+        W *= ev[1:, None, :]
+        f_pdf *= ev[:, :, None]
+
     logger.debug(
         "precompute_weights: variant=%s  N=%d  K=%d  W.min=%.3e  W.max=%.3e",
         var.value, N, K, W.min(), W.max(),
@@ -381,6 +458,8 @@ def _margin_logpdf_vec(margin, Y: np.ndarray) -> np.ndarray:
 def _log_transition_weights(
     model: PMCModel,
     Y: np.ndarray,
+    *,
+    ev=_FROM_MODEL,
 ) -> tuple[np.ndarray, np.ndarray]:
     """``(log W, log α_1)`` — the exact logarithms of what :func:`precompute_weights`
     and the forward initialisation form in linear space.
@@ -403,8 +482,14 @@ def _log_transition_weights(
 
     Missing rows of Y (exact-shortcut variants only, as in
     :func:`precompute_weights`): ``log f = 0`` there.
+
+    Missingness evidence (``ev``, by default from ``model.missingness`` and
+    the mask of Y): ``log e_{n+1}(j)`` is added to ``log W[n, :, j]`` and
+    ``log e_0`` to ``log α_1`` — the logarithms of the factors of
+    :func:`precompute_weights` (−∞ where e = 0).
     """
     N, K, var = len(Y), model.K, model.variant
+    ev = _resolve_evidence(model, Y, ev)
 
     miss = _missing_rows(Y)
     if miss is not None:
@@ -464,13 +549,19 @@ def _log_transition_weights(
 
     for arr in (logW, log_a1):
         arr[np.isnan(arr) | (arr == np.inf)] = -np.inf
+    if ev is not None:
+        with np.errstate(divide="ignore"):
+            log_ev = np.log(ev)
+        logW = logW + log_ev[1:, None, :]
+        log_a1 = log_a1 + log_ev[0]
     return logW, log_a1
 
 
-def _forward_log_space(model: PMCModel, Y: np.ndarray) -> tuple[np.ndarray, float]:
+def _forward_log_space(model: PMCModel, Y: np.ndarray, *,
+                       ev=_FROM_MODEL) -> tuple[np.ndarray, float]:
     """The normalised forward pass of :func:`forward`, carried in log space."""
     N, K = len(Y), model.K
-    logW, log_a = _log_transition_weights(model, Y)
+    logW, log_a = _log_transition_weights(model, Y, ev=ev)
     alpha_hat = np.empty((N, K))
     log_c = float(_lse(log_a))
     if not np.isfinite(log_c):
@@ -499,10 +590,10 @@ def _forward_log_space(model: PMCModel, Y: np.ndarray) -> tuple[np.ndarray, floa
     return alpha_hat, float(log_lik)
 
 
-def _backward_log_space(model: PMCModel, Y: np.ndarray) -> np.ndarray:
+def _backward_log_space(model: PMCModel, Y: np.ndarray, *, ev=_FROM_MODEL) -> np.ndarray:
     """The normalised backward pass of :func:`backward`, carried in log space."""
     N, K = len(Y), model.K
-    logW, _ = _log_transition_weights(model, Y)
+    logW, _ = _log_transition_weights(model, Y, ev=ev)
     beta_hat = np.empty((N, K))
     lb = np.full(K, -np.log(K))
     beta_hat[N - 1] = 1.0 / K
@@ -565,7 +656,18 @@ def forward(
     run the augmented chain of :mod:`pmcprg.pmc.gaps` (``W`` must then be None),
     ``alpha_hat[n, i]`` being P(x_n = i | observations up to n) at every n and
     ``log_lik`` the observed-data log-likelihood.
+
+    Non-ignorable missingness (``model.missingness`` not None): ``alpha_hat``
+    and ``log_lik`` are those of p(y_obs, m) — the mask up to n is part of
+    the conditioning; the factors live in ``W`` and ``f_pdf``
+    (:func:`precompute_weights`), which must then come from the same model.
     """
+    return _forward(model, Y, W, f_pdf, gap_nodes=gap_nodes, ev=_FROM_MODEL)
+
+
+def _forward(model, Y, W, f_pdf, *, gap_nodes=None, ev=_FROM_MODEL):
+    """:func:`forward` with explicit evidence factors ``ev`` (``_FROM_MODEL``:
+    those of the model on the mask of Y); ``W``/``f_pdf`` must carry them."""
     N = len(Y)
     K = model.K
 
@@ -574,10 +676,11 @@ def forward(
         if W is not None:
             _refuse_weights_with_gaps(model, "forward")
         from pmcprg.pmc import gaps
-        return gaps._grid_forward(model, Y, miss, gap_nodes)
+        return gaps._grid_forward(model, Y, miss, gap_nodes, ev=ev)
 
+    ev = _resolve_evidence(model, Y, ev)
     if W is None:
-        W, f_pdf = precompute_weights(model, Y)
+        W, f_pdf = _weights(model, Y, ev)
 
     alpha_hat = np.zeros((N, K))
     log_lik   = 0.0
@@ -621,7 +724,7 @@ def forward(
                 "underflow; recomputing the pass in log space.",
                 C, n + 1,
             )
-            return _forward_log_space(model, Y)
+            return _forward_log_space(model, Y, ev=ev)
         log_lik         += np.log(C)
         alpha_hat[n + 1] = alpha_raw / C
 
@@ -669,7 +772,15 @@ def backward(
     messages — ``β̂_n(i) ∝ Σ_g α̃_n(i, g) β̃_n(i, g) / Σ_g α̃_n(i, g)`` — so the
     forward pass is run too; ``smooth(forward(...)[0], backward(...))`` is
     then exact at every n (:mod:`pmcprg.pmc.gaps`).
+
+    Non-ignorable missingness: β̂ carries the factors of the later masks, as
+    ``W`` does (:func:`precompute_weights`).
     """
+    return _backward(model, Y, W, gap_nodes=gap_nodes, ev=_FROM_MODEL)
+
+
+def _backward(model, Y, W, *, gap_nodes=None, ev=_FROM_MODEL):
+    """:func:`backward` with explicit evidence factors ``ev`` (see :func:`_forward`)."""
     N = len(Y)
     K = model.K
 
@@ -678,10 +789,11 @@ def backward(
         if W is not None:
             _refuse_weights_with_gaps(model, "backward")
         from pmcprg.pmc import gaps
-        return gaps._grid_backward(model, Y, miss, gap_nodes)
+        return gaps._grid_backward(model, Y, miss, gap_nodes, ev=ev)
 
+    ev = _resolve_evidence(model, Y, ev)
     if W is None:
-        W, _ = precompute_weights(model, Y)
+        W, _ = _weights(model, Y, ev)
 
     beta_hat = np.zeros((N, K))
 
@@ -698,7 +810,7 @@ def backward(
                 "Backward: D=%.3e at step n=%d — the transition weights "
                 "underflow; recomputing the pass in log space.", D, n,
             )
-            return _backward_log_space(model, Y)
+            return _backward_log_space(model, Y, ev=ev)
         beta_hat[n] = beta_raw / D
 
     return beta_hat
@@ -850,6 +962,11 @@ def sample_posterior(
     y_n ~ f_{X̃_n}. The grid variants run FFBS on the augmented chain of
     :mod:`pmcprg.pmc.gaps` (``W``/``alpha_hat`` must be None); the missing y are
     then drawn on its quadrature nodes.
+
+    Non-ignorable missingness (``model.missingness`` not None): the draw is
+    from P(X | y_obs, m) — the factors live in ``W`` (:func:`precompute_weights`)
+    and in the augmented chain; given X̃ the missing y are drawn as above
+    (y_miss does not depend on m given the states).
     """
     N = len(Y)
     K = model.K
@@ -961,7 +1078,9 @@ def classify(
                 missing rows included).
     gamma     : np.ndarray, shape (N, K)   — posterior marginals P(x_n | y_obs).
     log_lik   : float                       — log p(y_obs | model), the
-                observed-data log-likelihood (log p(y_{1:N}) without gaps).
+                observed-data log-likelihood (log p(y_{1:N}) without gaps);
+                log p(y_obs, m | model) when ``model.missingness`` is not
+                None, γ being then P(x_n | y_obs, m).
     """
     miss = _missing_rows(Y)
     if miss is not None and _grid_needed(model):

@@ -66,6 +66,13 @@ node). The M-step is the complete-data one on the completed series
 observed-data log-likelihood log p(y_obs) of the forward pass. The k-means
 warm start clusters the observed rows only.
 
+Non-ignorable missingness (``model.missingness`` not None,
+:mod:`pmcprg.pmc.missingness`): the mechanism is carried unchanged to every
+iterate and to the returned model (held fixed, not estimated in this
+version); the S-step draws from P(x, y_mis | y_obs, m, θ^q) and ``log_liks``
+is log p(y_obs, m) — the missingness factors are in the forward messages the
+draw comes from, for a complete Y (mask m = 0) too.
+
 Drawing ỹ_n on the quadrature nodes rather than from the continuous law is
 an approximation of the grid variants; measured against a continuous
 within-cell jitter and a 4× finer grid, it leaves the estimates unbiased

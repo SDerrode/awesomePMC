@@ -27,9 +27,42 @@ Missing observations
 A row of Y is *missing* when it holds a non-finite value (NaN, ±inf):
 ``miss = ~np.isfinite(Y)`` for d = 1; for d > 1 a row with any non-finite
 component is missing as a whole (partially observed rows are not supported in
-this version — their finite components are ignored). Missingness is assumed
-ignorable (MCAR/MAR): the quantities below are those of the observed-data
-likelihood p(y_obs) = ∫ p(y) dy_miss.
+this version — their finite components are ignored). The mask is m_n = 1 iff
+row n is missing.
+
+Missingness mechanisms
+----------------------
+The law of the mask belongs to the model (``model.missingness``, TOML table
+``[missingness]``, :mod:`pmcprg.pmc.missingness`):
+
+* **Ignorable** (MCAR/MAR — ``model.missingness is None``, the default): the
+  mask carries no information beyond y_obs, and the quantities below are
+  those of the observed-data likelihood p(y_obs) = ∫ p(y) dy_miss.
+* **State-dependent, non-ignorable** (``"state"``, ``"state-markov"``):
+  given the states the mask is independent of Y and p(m | x) = Π_n e_n(x_n),
+  with e_n(i) = π_i^{m_n} (1 − π_i)^{1 − m_n} for ``"state"`` (independent
+  masks, P(m_n = 1 | x_n = i) = π_i) and e_n(i) = p(m_n | m_{n-1}, x_n = i)
+  for ``"state-markov"`` (a two-state Markov mask whose onset and
+  persistence probabilities depend on the current state — bursts of gaps).
+  Then
+
+      p(y_obs, m) = Σ_x ∫ p(x, y) Π_n e_n(x_n) dy_miss,
+
+  a selection model for data missing not at random (Little & Rubin 2019):
+  the mask itself is evidence on the states (e.g. sensor dropouts more
+  frequent during some activities). e_n depends on x_n only, so it
+  multiplies the message at position n componentwise — the initial message
+  by e_0, the columns of the transition into n + 1 by e_{n+1}, e_n(i) for
+  every node g of an augmented state (i, g). It is a likelihood factor, not
+  part of the transition kernel: it is applied after the Tauchen–Hussey
+  block renormalisation below (and in ``precompute_weights``' W and f_pdf,
+  after the transition, for the exact shortcut). log p(y_obs, m) =
+  Σ_n log C_n as before, and γ, ξ, MPM, FFBS draws and imputations are given
+  (y_obs, m). Given x, y_miss does not depend on m: the laws of the missing
+  values given the states are unchanged, only the state posteriors move. A
+  complete Y has the mask m = 0 and still gets its factors (1 − π_i for
+  ``"state"``). ``forecast`` gives no factor to its h appended rows, whose
+  mask is unknown (Σ_m p(m | x) = 1).
 
 Z = (X, Y) is a Markov chain with transition q(j, y' | i, y) = W[n, i, j] for
 y = y_n, y' = y_{n+1} (see :mod:`pmcprg.pmc.inference`) and initial density
@@ -131,7 +164,9 @@ References
   mit Anwendungen auf Randwertaufgaben. *Acta Math.* 54, 185–204 — the
   interpolation of a quadrature solution through its kernel.
 * Little, R. J. A. & Rubin, D. B. (2019). *Statistical Analysis with Missing
-  Data*, 3rd ed., Wiley — ignorable missingness, observed-data likelihood.
+  Data*, 3rd ed., Wiley — ignorable missingness, observed-data likelihood;
+  selection models for data missing not at random (the ``[missingness]``
+  mechanisms).
 """
 
 from __future__ import annotations
@@ -575,10 +610,17 @@ class _Chain:
     ``trans[n]`` maps position n to n+1 and has shape S_n × S_{n+1}, with
     S_n = K at an observed n and K·G at a missing one (index i·G + g); in log
     space when ``log``. ``init`` has shape (S_0,).
+
+    ``ev`` (N, K): the missingness evidence factors e_n(i) (module
+    docstring), by default those of ``model.missingness`` on ``miss``;
+    ``None`` applies none. They multiply ``init`` and the columns of every
+    ``trans[n]`` (e_{n+1}(i) repeated over the nodes g at a missing n+1)
+    after the block renormalisation; ``fac_*`` are the pre-evidence block
+    factors and ``self.ev`` keeps the factors for :func:`_nystrom_masses`.
     """
 
     def __init__(self, model: PMCModel, Y: np.ndarray, miss: np.ndarray,
-                 grid: QuadratureGrid, *, log: bool):
+                 grid: QuadratureGrid, *, log: bool, ev=_inf._FROM_MODEL):
         self.model = model
         self.K = K = model.K
         self.G = G = grid.G
@@ -592,10 +634,11 @@ class _Chain:
         Y = np.asarray(Y, dtype=float)
         self.Y = Y
         Yf = np.where(miss, grid.nodes[G // 2], Y)
+        # Raw weights: the evidence factors are applied below, uniformly.
         if log:
-            Wobs, _ = _inf._log_transition_weights(model, Yf)
+            Wobs, _ = _inf._log_transition_weights(model, Yf, ev=None)
         else:
-            Wobs, _ = _inf.precompute_weights(model, Yf)
+            Wobs, _ = _inf._weights(model, Yf, None)
         self.Wobs = Wobs
         lw = np.log(grid.omega)
 
@@ -672,6 +715,33 @@ class _Chain:
             else:
                 trans.append(X[n])
         self.trans = trans
+
+        if ev is _inf._FROM_MODEL:
+            ev = _inf._evidence(model, miss)
+        self.ev = ev
+        if ev is not None:
+            # Missingness evidence: a likelihood factor of the destination
+            # state, after the block renormalisation (module docstring).
+            with np.errstate(divide="ignore"):
+                fac = np.log(ev) if log else np.asarray(ev, dtype=float)
+
+            def at(n):                       # (S_n,) factor, augmented layout
+                return np.repeat(fac[n], G) if miss[n] else fac[n]
+
+            def scale(T, v):
+                return (T + v) if log else (T * v)
+
+            self.init = scale(self.init, at(0))
+            q_scaled = {}                    # Q is shared: one copy per factor
+            for n in range(N - 1):
+                v = at(n + 1)
+                if Q is not None and trans[n] is Q:
+                    key = v.tobytes()
+                    if key not in q_scaled:
+                        q_scaled[key] = scale(Q, v[None, :])
+                    trans[n] = q_scaled[key]
+                else:
+                    trans[n] = scale(trans[n], v[None, :])
 
     def size(self, n: int) -> int:
         return self.K * self.G if self.miss[n] else self.K
@@ -763,9 +833,15 @@ def _backward_chain(chain: _Chain):
     return betas
 
 
-def _run_chain(model, Y, miss, grid, *, backward: bool):
-    """Build the chain and run forward (and backward), linear first, log on failure."""
-    chain = _Chain(model, Y, miss, grid, log=False)
+def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
+    """Build the chain and run forward (and backward), linear first, log on failure.
+
+    ``ev``: missingness evidence factors (:class:`_Chain`), by default those
+    of ``model.missingness`` on ``miss``.
+    """
+    if ev is _inf._FROM_MODEL:
+        ev = _inf._evidence(model, miss)
+    chain = _Chain(model, Y, miss, grid, log=False, ev=ev)
     fw = bw = None
     if not chain.overflow:
         fw = _forward_chain(chain)
@@ -776,7 +852,7 @@ def _run_chain(model, Y, miss, grid, *, backward: bool):
             "Missing-data pass: %s in linear space; recomputing in log space.",
             "a kernel value overflows" if chain.overflow else "a step underflows",
         )
-        chain = _Chain(model, Y, miss, grid, log=True)
+        chain = _Chain(model, Y, miss, grid, log=True, ev=ev)
         fw = _forward_chain(chain)
         bw = _backward_chain(chain) if backward else None
     return chain, fw[0], fw[1], bw
@@ -793,7 +869,9 @@ class GapPosterior:
     Attributes
     ----------
     miss       : (N,) bool — missing rows.
-    log_lik    : float — log p(y_obs), the observed-data log-likelihood.
+    log_lik    : float — log p(y_obs), the observed-data log-likelihood
+                 (log p(y_obs, m) with a non-ignorable ``model.missingness``,
+                 every posterior below being then given the mask m too).
     alpha_hat  : (N, K) — P(x_n = i | observations up to n).
     beta_hat   : (N, K) — normalised backward messages (module docstring for
                  their definition at a missing n).
@@ -905,7 +983,10 @@ def gap_posterior(
     identical to the functions of :mod:`pmcprg.pmc.inference`). The exact
     shortcut variants use ``precompute_weights`` / ``forward`` / ``backward``
     / ``smooth`` / ``joint_posteriors`` on the marginalised weights; the grid
-    variants run the augmented chain (module docstring).
+    variants run the augmented chain (module docstring). With a
+    non-ignorable ``model.missingness`` every quantity is given (y_obs, m),
+    the missingness factors included (module docstring, "Missingness
+    mechanisms").
 
     Parameters
     ----------
@@ -917,27 +998,30 @@ def gap_posterior(
     return _posterior(model, Y, gap_nodes, xi)[0]
 
 
-def _posterior(model, Y, gap_nodes, xi):
+def _posterior(model, Y, gap_nodes, xi, *, ev=_inf._FROM_MODEL):
     """:func:`gap_posterior` plus the run it came from.
 
     Returns ``(GapPosterior, run)`` with ``run = (W, None, None)`` for the
-    exact shortcut (the marginalised weights) and ``(chain, alphas, betas)``
-    for the grid.
+    exact shortcut (the marginalised weights, missingness factors included)
+    and ``(chain, alphas, betas)`` for the grid. ``ev``: evidence factors,
+    by default those of ``model.missingness`` on the mask of Y.
     """
     Y = np.asarray(Y, dtype=float)
     _check_length(Y)
     miss = missing_mask(Y)
+    if ev is _inf._FROM_MODEL:
+        ev = _inf._evidence(model, miss)
     if not needs_grid(model) or not miss.any():
-        W, f_pdf = _inf.precompute_weights(model, Y)
-        a, ll = _inf.forward(model, Y, W=W, f_pdf=f_pdf)
-        b = _inf.backward(model, Y, W=W)
+        W, f_pdf = _inf._weights(model, Y, ev)
+        a, ll = _inf._forward(model, Y, W, f_pdf, ev=ev)
+        b = _inf._backward(model, Y, W, ev=ev)
         g = _inf.smooth(a, b)
         x = _inf.joint_posteriors(a, W, b) if xi else None
         return (GapPosterior(miss=miss, log_lik=float(ll), alpha_hat=a, beta_hat=b,
                              gamma=g, xi=x, method="exact"), (W, None, None))
     _check_grid_supported(model)
     grid = reference_grid(model, gap_nodes)
-    chain, alphas, ll, betas = _run_chain(model, Y, miss, grid, backward=True)
+    chain, alphas, ll, betas = _run_chain(model, Y, miss, grid, backward=True, ev=ev)
     post = _chain_posterior(chain, alphas, betas, want_xi=xi)
     return (GapPosterior(miss=miss, log_lik=float(ll), method="grid", grid=grid, **post),
             (chain, alphas, betas))
@@ -945,17 +1029,17 @@ def _posterior(model, Y, gap_nodes, xi):
 
 # ---- entry points used by pmcprg.pmc.inference --------------------------------
 
-def _grid_forward(model, Y, miss, gap_nodes):
+def _grid_forward(model, Y, miss, gap_nodes, *, ev=_inf._FROM_MODEL):
     _check_length(Y)
     _check_grid_supported(model)
     grid = reference_grid(model, gap_nodes)
     chain, alphas, ll, _ = _run_chain(model, np.asarray(Y, dtype=float), miss, grid,
-                                      backward=False)
+                                      backward=False, ev=ev)
     return _marginal_alpha(chain, alphas), ll
 
 
-def _grid_backward(model, Y, miss, gap_nodes):
-    return gap_posterior(model, Y, gap_nodes=gap_nodes, xi=False).beta_hat
+def _grid_backward(model, Y, miss, gap_nodes, *, ev=_inf._FROM_MODEL):
+    return _posterior(model, Y, gap_nodes, False, ev=ev)[0].beta_hat
 
 
 def _grid_sample(model, Y, miss, rng, gap_nodes, return_y):
@@ -1049,6 +1133,8 @@ def _nystrom_masses(chain: _Chain, alphas, betas, positions: np.ndarray,
     (Nyström 1930) — accurate to the quadrature error of the messages, where
     a polynomial interpolation of the node masses loses half of the degree.
     ``betas`` None means B ≡ 1 (a trailing gap, for :func:`forecast`).
+    With missingness factors (``chain.ev``) F_n is multiplied by e_n(i) and
+    β̃_{n+1}(v) by e_{n+1}(v), as the chain's messages are.
 
     Returns (P, M) masses π_n(y_f) ω_f normalised per row, or ``None`` when a
     density is not representable in linear scale (the caller then uses the
@@ -1059,6 +1145,7 @@ def _nystrom_masses(chain: _Chain, alphas, betas, positions: np.ndarray,
     M = fine.G
     positions = np.asarray(positions, dtype=int)
     P = positions.size
+    ev = chain.ev                     # missingness factors (None: none)
     fN, FN = _margin_eval(model, chain.grid.nodes, log=False)
     fF, FF = _margin_eval(model, fine.nodes, log=False)
 
@@ -1100,6 +1187,8 @@ def _nystrom_masses(chain: _Chain, alphas, betas, positions: np.ndarray,
             C = C.reshape(K * G, K * M)
             a = np.array([alphas[int(n) - 1] for n in positions[sel]])            # (P', KG)
             F[sel] = (a @ C).reshape(sel.size, K, M)
+        if ev is not None:
+            F *= ev[positions][:, :, None]                     # e_n(i) of the transition into n
 
         # ---- outgoing side ------------------------------------------------
         if betas is not None:
@@ -1110,6 +1199,8 @@ def _nystrom_masses(chain: _Chain, alphas, betas, positions: np.ndarray,
                 rep_, til = np.repeat(np.arange(sel.size), M), np.tile(np.arange(M), sel.size)
                 ker = kern(fF[til], take(FF, til), fo[rep_], take(Fo, rep_)).reshape(sel.size, M, K, K)
                 b = np.array([betas[int(n)] for n in n_next])                     # (P', K)
+                if ev is not None:
+                    b = b * ev[n_next]                          # e_{n+1}(j), as in the chain
                 B[sel] = np.einsum("pfij,pj->pif", ker, b)
             sel = np.nonzero(~next_last & next_miss)[0]
             if sel.size:
@@ -1120,6 +1211,8 @@ def _nystrom_masses(chain: _Chain, alphas, betas, positions: np.ndarray,
                                          log=False)
                 T = T.reshape(K * M, K * G)
                 b = np.array([betas[int(n) + 1] for n in positions[sel]])          # (P', KG)
+                if ev is not None:
+                    b = b * np.repeat(ev[positions[sel] + 1], G, axis=1)       # e_{n+1}(j), per node
                 B[sel] = (b @ T.T).reshape(sel.size, K, M)
             # the chain rescales β̃ by its own sum at every step: any positive
             # constant per position cancels in the normalisation below.
@@ -1402,6 +1495,11 @@ def forecast(
     filter at N + k is P(x_{N+k}, y_{N+k} | y_obs) (no backward message is
     needed for a trailing gap). Y may contain missing rows.
 
+    With a non-ignorable ``model.missingness`` the laws are given
+    (y_obs, m_{1:N}): the N rows of Y carry their missingness factors, the h
+    appended rows none — their mask is unknown, and summing p(m_n | m_{n-1},
+    x_n) over it gives 1.
+
     Parameters
     ----------
     model     : PMCModel — known parameters.
@@ -1421,12 +1519,17 @@ def forecast(
     Yx = np.concatenate([Y, tail], axis=0)
     N = len(Y)
     miss = missing_mask(Yx)
+    # Missingness factors of the N conditioning rows only: the mask of the h
+    # future rows is unknown, and Σ_m p(m_n | m_{n-1}, x_n) = 1.
+    ev = _inf._evidence(model, miss[:N])
+    if ev is not None:
+        ev = np.concatenate([ev, np.ones((h, model.K))], axis=0)
     d = getattr(model, "d", 1)
     nodes = density = None
     if needs_grid(model):
         _check_grid_supported(model)
         grid = reference_grid(model, gap_nodes)
-        chain, alphas, ll, _ = _run_chain(model, Yx, miss, grid, backward=False)
+        chain, alphas, ll, _ = _run_chain(model, Yx, miss, grid, backward=False, ev=ev)
         K, G = chain.K, chain.G
         joint = np.array([alphas[N + k].reshape(K, G) for k in range(h)])   # (h, K, G)
         joint /= joint.sum(axis=(1, 2), keepdims=True)
@@ -1439,8 +1542,8 @@ def forecast(
         method = "grid"
         nodes, density = grid.nodes, mass / grid.omega[None, :]
     else:
-        W, f_pdf = _inf.precompute_weights(model, Yx)
-        a, ll = _inf.forward(model, Yx, W=W, f_pdf=f_pdf)
+        W, f_pdf = _inf._weights(model, Yx, ev)
+        a, ll = _inf._forward(model, Yx, W, f_pdf, ev=ev)
         state_probs = a[N:]
         state_probs = state_probs / state_probs.sum(axis=1, keepdims=True)
         mean, sd, qv = _mixture_summary(model, state_probs, qs)

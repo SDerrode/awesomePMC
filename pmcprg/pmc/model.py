@@ -83,6 +83,11 @@ tau  = 0.7
 # optional extra params: df = 4.0 (Student), delta = 1.5 (BB1), psi = 1.0 (Tawn1/Tawn2),
 # nu = 4.0 (tEV), psi_u = psi_v = 1.0 (Tawn3 — the only family with two extras)
 
+[missingness]             # optional; absent = ignorable missingness (MCAR/MAR)
+mechanism = "state"       # "ignorable" | "state" | "state-markov" (pmcprg.pmc.missingness)
+rates = [0.01, 0.3]       # "state": P(y_n missing | x_n = i), one per state
+# "state-markov": onset = [...] and persistence = [...] instead of rates
+
 Reference
 ---------
 DerrodePieczynski_CSDA2013 — Derrode, S. & Pieczynski, W. (2013).
@@ -102,6 +107,7 @@ import scipy.stats as _ss
 import tomli_w
 
 from pmcprg.copulas._base import CopulaEnum, CopulaVirt
+from pmcprg.pmc.missingness import as_missingness, parse_missingness
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +490,14 @@ class PMCModel:
     name             : str   Human-readable label from [model].
     margin_structure : str   ``"state"`` (K margins f_i) or ``"pair"``
                              (K² margins f_ij) — see the module docstring.
+    missingness      : None (ignorable, the default) or the non-ignorable
+                       mechanism of the ``[missingness]`` table
+                       (:mod:`pmcprg.pmc.missingness`).
     """
+
+    # Class-level default: a model pickled before the ``[missingness]`` table
+    # existed has no ``_missingness`` in its state and loads as ignorable.
+    _missingness = None
 
     # ------------------------------------------------------------------
     # Construction
@@ -723,6 +736,10 @@ class PMCModel:
                 "use copulas — blocks ignored.",
                 self.variant.value,
             )
+
+        # ── [missingness] ─────────────────────────────────────────────
+        # Absent or mechanism = "ignorable" → None (MCAR/MAR, the default).
+        self._missingness = parse_missingness(raw.get("missingness"), self.K)
 
     # ------------------------------------------------------------------
     # Margin parsing — state margins (K-format, or K²-format collapsed)
@@ -1032,6 +1049,39 @@ class PMCModel:
     def raw(self) -> dict:
         """Deep copy of the raw TOML dict — safe to mutate."""
         return copy.deepcopy(self._raw)
+
+    @property
+    def missingness(self):
+        """Missingness mechanism: ``None`` (ignorable) or a mechanism object.
+
+        ``None`` — the default, no ``[missingness]`` table or ``mechanism =
+        "ignorable"``: missing rows are integrated out of the observed-data
+        likelihood p(y_obs). Otherwise a
+        :class:`~pmcprg.pmc.missingness.StateMissingness` (``"state"``) or
+        :class:`~pmcprg.pmc.missingness.StateMarkovMissingness`
+        (``"state-markov"``), frozen: the mask m is then evidence on the
+        states and every inference function works with p(y_obs, m)
+        (:mod:`pmcprg.pmc.missingness`, :mod:`pmcprg.pmc.gaps`). Use
+        :meth:`with_missingness` for a model with another mechanism.
+        """
+        return self._missingness
+
+    def with_missingness(self, missingness) -> "PMCModel":
+        """A copy of this model with another missingness mechanism.
+
+        ``missingness`` is ``None`` (ignorable), a mechanism object or a
+        ``[missingness]`` table (dict), validated against K. The copy is built
+        like the estimators' iterates — ``from_dict`` on a deep copy of
+        ``raw`` with the ``[missingness]`` table replaced (or removed) — so
+        every other parameter is unchanged and ``self`` is not modified.
+        """
+        mech = as_missingness(missingness, self.K)
+        raw = self.raw
+        if mech is None:
+            raw.pop("missingness", None)
+        else:
+            raw["missingness"] = mech.to_table()
+        return PMCModel.from_dict(raw, path=self._path)
 
     def ice_config(self) -> dict:
         """Return the ``[ice]`` TOML section as a dict (empty if absent)."""

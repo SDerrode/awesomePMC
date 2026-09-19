@@ -2691,12 +2691,17 @@ def _m_step_impute(
     selection_criterion: str,
     margin_selection_rule: str,
     copula_margins: str = "parametric",
+    miss: np.ndarray | None = None,
 ) -> None:
     """M-step of ICE strategy ``"impute"`` — multiple imputation, updates ``raw`` in place.
 
     ``Y_draws`` (D, N[, d]) are D completed series drawn jointly with the
     states from P(x, y_mis | y_obs, θ^q); ``xi`` the exact pair posteriors
-    given the observed data.
+    given the observed data. ``miss`` is the mask of the observed series: a
+    completed series keeps it, so with a non-ignorable
+    ``current.missingness`` its complete-data E-step is P(x | y^(d), m),
+    with the missingness factors of that mask (not of the completed series,
+    which has none missing).
 
     * Prior: from ``xi`` (its conditional expectation — no Monte Carlo).
     * On each completed series y^(d): the complete-data E-step under θ^q
@@ -2720,11 +2725,18 @@ def _m_step_impute(
     _m_step_prior(raw, current, xi)
     var = current.variant
 
+    from pmcprg.pmc import inference as _inf
+    ev = None if miss is None else _inf._evidence(current, miss)
     posts = []
     for Yd in Y_draws:
-        W, f_pdf = precompute_weights(current, Yd)
-        a, _ = forward(current, Yd, W=W, f_pdf=f_pdf)
-        b = backward(current, Yd, W=W)
+        if ev is None:
+            W, f_pdf = precompute_weights(current, Yd)
+            a, _ = forward(current, Yd, W=W, f_pdf=f_pdf)
+            b = backward(current, Yd, W=W)
+        else:
+            W, f_pdf = _inf._weights(current, Yd, ev)
+            a, _ = _inf._forward(current, Yd, W, f_pdf, ev=ev)
+            b = _inf._backward(current, Yd, W, ev=ev)
         posts.append((smooth(a, b), joint_posteriors(a, W, b)))
 
     if fit_margins:
@@ -3421,6 +3433,17 @@ def ice(
     samples above (observed values, or each completed series). Why
     ``"available"`` is the default (bias/RMSE against the missing rate) is
     documented at :data:`DEFAULT_MISSING_STRATEGY`.
+
+    Non-ignorable missingness (``model.missingness`` not None,
+    :mod:`pmcprg.pmc.missingness`): the mechanism is carried unchanged to
+    every iterate and to the returned model — its parameters are held fixed,
+    not estimated in this version — and every E-step is given (y_obs, m):
+    ``trace.log_liks`` is log p(y_obs, m), γ and ξ are P(· | y_obs, m), the
+    completions of ``"impute"`` are drawn given (y_obs, m) and the
+    complete-data E-step of each completed series keeps the observed mask.
+    A Y without missing rows still has a mask (m = 0), which the E-step uses
+    too. With π fixed, the M-step formulas are those above: the factors of
+    p(m | x) do not involve the other parameters.
     """
     cfg = _parse_ice_cfg(model, ice_cfg)
     miss = _missing_rows_or_none(Y)
@@ -3685,6 +3708,7 @@ def _ice_single_run(
                 selection_criterion=selection_criterion,
                 margin_selection_rule=margin_selection_rule,
                 copula_margins=copula_margins,
+                miss=miss,
             )
         else:
             _m_step(

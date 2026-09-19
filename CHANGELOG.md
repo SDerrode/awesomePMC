@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — state-dependent missingness: the mask as evidence on the hidden states (P6, pilot)
+
+- **Why.** Missing rows were integrated out under an *ignorable* mechanism
+  (MCAR/MAR): the mask said nothing about the states. On real data it does —
+  on PAMAP2 the hand-IMU dropout is 1–4 % of the rows during walking or
+  running against < 0.02 % lying or sitting, so a gap is itself evidence on
+  the activity. A model can now say so.
+- **What.** An optional `[missingness]` table in the model TOML,
+  `PMCModel.missingness` (read-only; `None` = ignorable, the default) and
+  `PMCModel.with_missingness(...)` (a copy with another mechanism, or none).
+  Two mechanisms (`pmcprg.pmc.missingness`), the mask m independent of Y given
+  the states, p(m | x) = Π_n e_n(x_n) — a selection model for data missing not
+  at random (Little & Rubin 2019):
+  - `mechanism = "state"`, `rates = [π_i]`: P(row n missing | x_n = i) = π_i,
+    independently;
+  - `mechanism = "state-markov"`, `onset = [a_i]`, `persistence = [b_i]`: a
+    Markov mask, P(m_n = 1 | m_{n-1} = 0, x_n = i) = a_i,
+    P(m_n = 1 | m_{n-1} = 1, x_n = i) = b_i, m_0 from the stationary law
+    a_i / (1 − b_i + a_i). Gaps come in bursts: `"state"` counts a burst of L
+    rows as L independent pieces of evidence, `"state-markov"` as one onset
+    and L − 1 continuations.
+  Inference then uses p(y_obs, m) = Σ_x ∫ p(x, y) Π_n e_n(x_n) dy_miss in every
+  entry point — `classify`, `forward`, `backward` (and their log-space
+  fallbacks), `sample_posterior`, `gap_posterior`, `impute` (Nyström
+  quantiles and FFBS draws included) and `forecast`. The factor multiplies the
+  message at each position after the transition (after the Tauchen–Hussey
+  block renormalisation on the quadrature grid); for the exact shortcut it
+  lives in the tensors of `precompute_weights` (columns of W, rows of
+  f_pdf), so user calls `forward(model, Y, W=W, f_pdf=f_pdf)` stay exact. A
+  complete Y still has a mask (none missing) and gets its factors; `forecast`
+  gives none to the appended rows, whose mask is unknown. Rates 0 and 1 are
+  allowed (a state becomes impossible at missing or observed rows).
+- **Estimation.** Not in this pilot: ICE and SEM carry the mechanism of the
+  initial model unchanged (π held fixed) and compute every E-step given
+  (y_obs, m); ICE's `"impute"` strategy keeps the observed mask in the
+  E-step of each completed series.
+- **Simulation.** `pmcprg.missing.state_dependent(Y, X, rates)` and
+  `state_markov(Y, X, onset, persistence)` draw such masks from a state path.
+- **Measured.** Against path enumeration (N = 6, every path weighted by its
+  factors written from the definitions): exact-shortcut variants to 7e-15;
+  Gaussian-copula HMC-DN / PMC against the exact Gaussian path mixture at
+  G = 64 to 1.2e-7 (log-likelihood, γ, ξ), 9e-7 (imputation sd), 3e-7
+  (quantiles) — the ignorable model's own quadrature error on the same data
+  is 7e-8 / 1.1e-7 / 1.4e-6; Clayton PMC (state and pair margins) and PMC-IN
+  with pair margins against adaptive quadrature to 5.7e-7 at G = 64 and
+  6.2e-10 at G = 128. A state-independent mechanism leaves every posterior
+  unchanged to 9e-15 and shifts the log-likelihood by the log-probability of
+  the mask to 1.3e-13. Monte Carlo (HMC-IN, 40 sequences): with π = (0.01,
+  0.3) the MPM error at the missing rows falls from 0.311 (ignorable) to 0.034,
+  and the posterior probabilities there are calibrated (overall z = −0.66;
+  the ignorable ones are not, z = +56). With bursty masks (a = (0.002, 0.02),
+  b = (0.8, 0.95)) the error at the missing rows is 0.193 ignorable, 0.090
+  with `"state"` at the matched marginal rates and 0.062 with
+  `"state-markov"`; `"state"` is over-confident (top bin predicts 0.998, 0.912
+  observed; z = −13.9), `"state-markov"` calibrated (z = +0.69, every bin
+  within 0.04).
+- **Unchanged by default.** With `missingness = None` every result is
+  bit-identical to 1.2.0 — checked on every fixture against the 1.2.0 code
+  itself (`classify`, `forward`, `backward`, `sample_posterior`,
+  `gap_posterior`, `impute`, `forecast`, the augmented chain), besides the
+  existing golden and bit-identity tests. Old pickles load as ignorable.
+
 ---
 
 ## [1.2.0] - 2026-09-19

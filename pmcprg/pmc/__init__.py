@@ -29,12 +29,16 @@ sample_posterior : Forward-Filter Backward-Sample draw  X̃ ~ P(X | Y).
 impute    : posterior law of missing observations (NaN) given the observed ones.
 forecast  : h-step predictive law of (x_{N+k}, y_{N+k}) given Y.
 gap_posterior : α̂, β̂, γ, ξ and log-likelihood of a sequence with missing values.
+StateMissingness, StateMarkovMissingness : non-ignorable missingness mechanisms
+            (``PMCModel.missingness``, TOML ``[missingness]``) — the mask is
+            evidence on the hidden states.
 ice       : unsupervised ICE parameter estimation (DerrodePieczynski_CSDA2013 §4 +
             DerrodePieczynski_SP2016 §3 GICE).
 sem       : unsupervised Stochastic-EM parameter estimation (sister of ICE).
 """
 
 from pmcprg.pmc.model         import PMCModel, Variant
+from pmcprg.pmc.missingness   import StateMarkovMissingness, StateMissingness
 from pmcprg.pmc.simulate      import simulate
 from pmcprg.pmc.pmm           import simulate_pmm, classify_pmm
 from pmcprg.pmc.inference     import (
@@ -91,6 +95,9 @@ __all__ = [
     "Imputation",
     "Forecast",
     "GapPosterior",
+    # non-ignorable missingness mechanisms (PMCModel.missingness)
+    "StateMissingness",
+    "StateMarkovMissingness",
     # unsupervised estimation
     "ice",
     "ice_image",

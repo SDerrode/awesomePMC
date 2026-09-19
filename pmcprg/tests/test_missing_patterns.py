@@ -13,7 +13,7 @@ import pytest
 from pmcprg.missing import patterns as pt
 from pmcprg.missing.patterns import (
     aligned, blackout, disjoint, distribution, gaussian, mask_from_nan, mcar,
-    overlap, scattered,
+    overlap, scattered, state_dependent, state_markov,
 )
 
 
@@ -400,3 +400,111 @@ def test_distribution_refusals():
         distribution(Y, few, 0.1)
     with pytest.raises(ValueError, match=r"shape \(180,\) — one entry"):
         distribution(Y[:, 0], np.ones((180, 2)), 0.1)
+
+
+# ---------------------------------------------------------------------------
+# State-dependent masks (P6): state_dependent, state_markov
+# ---------------------------------------------------------------------------
+
+def _blocks(N, length=50):
+    """State path alternating 0 / 1 by blocks of ``length``."""
+    return (np.arange(N) // length) % 2
+
+
+_STATE_GENS = [
+    ("state_dependent", lambda Y, X, seed=3: state_dependent(Y, X, [0.1, 0.4], seed=seed)),
+    ("state_markov", lambda Y, X, seed=3: state_markov(Y, X, [0.05, 0.2], [0.5, 0.9], seed=seed)),
+]
+
+
+@pytest.mark.parametrize("name,fn", _STATE_GENS, ids=[n for n, _ in _STATE_GENS])
+@pytest.mark.parametrize("d", [1, 3])
+def test_state_masks_contract(name, fn, d):
+    Y = _data(N=400, d=d)
+    Y0 = Y.copy()
+    X = _blocks(400)
+    Ym, m = fn(Y, X)
+    assert Ym.shape == Y.shape and m.shape == Y.shape and m.dtype == bool and m.any()
+    np.testing.assert_array_equal(np.isnan(Ym), m)
+    np.testing.assert_array_equal(Ym[~m], Y[~m])
+    np.testing.assert_array_equal(Y, Y0)
+    if d > 1:                                          # whole rows
+        assert np.all(m.all(axis=1) == m.any(axis=1))
+    _, m2 = fn(Y, X)
+    _, m3 = fn(Y, X, seed=4)
+    np.testing.assert_array_equal(m, m2)
+    assert not np.array_equal(m, m3)
+
+
+@pytest.mark.parametrize("name,fn", _STATE_GENS, ids=[n for n, _ in _STATE_GENS])
+def test_state_masks_skip_values_already_missing(name, fn):
+    Y = _data(N=400, d=1)
+    X = _blocks(400)
+    _, m_ref = fn(Y, X)
+    Y[100:140] = np.nan
+    Ym, m = fn(Y, X)
+    assert not m[100:140].any() and np.isnan(Ym[100:140]).all()
+    # the draw does not depend on them: same rows outside
+    np.testing.assert_array_equal(m[:100], m_ref[:100])
+    np.testing.assert_array_equal(m[140:], m_ref[140:])
+
+
+def test_state_dependent_rates_per_state():
+    N = 40_000
+    X = _blocks(N, 37)
+    rates = np.array([0.05, 0.4])
+    _, m = state_dependent(np.zeros(N), X, rates, seed=11)
+    for i in range(2):
+        n = int((X == i).sum())
+        f = m[X == i].mean()
+        assert abs(f - rates[i]) < 4.5 * np.sqrt(rates[i] * (1 - rates[i]) / n)
+    _, m = state_dependent(np.zeros(N), X, [0.0, 1.0], seed=11)
+    np.testing.assert_array_equal(m, X == 1)
+
+
+def test_state_markov_onset_persistence_and_initial_law():
+    N = 60_000
+    X = _blocks(N, 400)
+    a, b = np.array([0.02, 0.1]), np.array([0.6, 0.9])
+    _, m = state_markov(np.zeros(N), X, a, b, seed=5)
+    prev, cur, x = m[:-1], m[1:], X[1:]
+    for i in range(2):
+        for p_true, sel in ((a[i], ~prev & (x == i)), (b[i], prev & (x == i))):
+            n = int(sel.sum())
+            assert abs(cur[sel].mean() - p_true) < 4.5 * np.sqrt(p_true * (1 - p_true) / n)
+    # m_0 ~ Bernoulli(a / (1 − b + a)) given x_0: 4000 independent first rows
+    s = a / (1 - b + a)
+    for i in range(2):
+        first = np.array([state_markov(np.zeros(1), [i], a, b, seed=k)[1][0] for k in range(4000)])
+        assert abs(first.mean() - s[i]) < 4.5 * np.sqrt(s[i] * (1 - s[i]) / 4000)
+    # a = 0 never starts a burst; b = 0 ends every burst after one row
+    _, m = state_markov(np.zeros(2000), np.zeros(2000, int), [0.0, 0.5], [0.3, 0.5], seed=1)
+    assert not m.any()
+    _, m = state_markov(np.zeros(2000), np.zeros(2000, int), [0.5, 0.5], [0.0, 0.5], seed=1)
+    assert not np.any(m[1:] & m[:-1]) and m.any()
+
+
+def test_state_mask_refusals():
+    Y = np.zeros(10)
+    X = np.zeros(10, int)
+    with pytest.raises(ValueError, match="state path"):
+        state_dependent(Y, X[:9], [0.1, 0.2])
+    with pytest.raises(ValueError, match="integer states"):
+        state_dependent(Y, X + 0.5, [0.1, 0.2])
+    with pytest.raises(ValueError, match="negative state"):
+        state_dependent(Y, X - 1, [0.1, 0.2])
+    with pytest.raises(ValueError, match="only 2 entries"):
+        state_dependent(Y, X + 2, [0.1, 0.2])
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        state_dependent(Y, X, [0.1, 1.2])
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        state_dependent(Y, X, [np.nan, 0.2])
+    with pytest.raises(ValueError, match="1-D"):
+        state_dependent(Y, X, [[0.1, 0.2]])
+    with pytest.raises(ValueError, match="one entry per state each"):
+        state_markov(Y, X, [0.1, 0.2], [0.5])
+    with pytest.raises(ValueError, match="0/0"):
+        state_markov(Y, X, [0.0, 0.2], [1.0, 0.5])
+    # integer-valued floats are states
+    _, m = state_dependent(Y, X.astype(float), [1.0, 0.0])
+    assert m.all()

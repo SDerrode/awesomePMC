@@ -7,8 +7,11 @@ Two modules, both free of any inference code:
   arXiv:2503.15250; scenarios of *Mind the Gap*, PVLDB 13(5), 2020,
   doi:10.14778/3377369.3377383): ``mcar``, ``aligned``, ``scattered``,
   ``blackout``, ``disjoint``, ``overlap``, ``gaussian``, ``distribution``,
-  plus :func:`~pmcprg.missing.patterns.mask_from_nan`. Each pattern returns
-  ``(Y_masked, mask)`` with ``mask`` True where a value was removed.
+  plus :func:`~pmcprg.missing.patterns.mask_from_nan`, and two state-dependent
+  (non-ignorable) masks drawn given a hidden state path, ``state_dependent``
+  and ``state_markov`` (the ``[missingness]`` mechanisms of
+  :mod:`pmcprg.pmc.missingness`). Each pattern returns ``(Y_masked, mask)``
+  with ``mask`` True where a value was removed.
 
 * :mod:`pmcprg.missing.metrics` — scores restricted to the masked positions:
   point metrics as in ImputeGAP (RMSE, MAE, 10-bin mutual information,
@@ -43,6 +46,8 @@ from pmcprg.missing.patterns import (
     mcar,
     overlap,
     scattered,
+    state_dependent,
+    state_markov,
 )
 
 __all__ = [
@@ -56,6 +61,8 @@ __all__ = [
     "overlap",
     "gaussian",
     "distribution",
+    "state_dependent",
+    "state_markov",
     # metrics
     "rmse",
     "mae",
