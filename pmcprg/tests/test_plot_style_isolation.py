@@ -33,6 +33,17 @@ from pmcprg.plot_style import (
 matplotlib.use("Agg")
 
 
+def _run(script: str) -> str:
+    """Run ``script`` in a fresh interpreter and return its stdout — with the
+    child's stderr in the failure message (``check=True`` hides it, which is
+    how a Linux-only failure once had to be diagnosed blind from CI)."""
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert done.returncode == 0, (
+        f"the child interpreter exited with {done.returncode}\n"
+        f"--- stdout ---\n{done.stdout}\n--- stderr ---\n{done.stderr}")
+    return done.stdout
+
+
 def _snapshot() -> dict:
     """``rcParams`` without the backend, whose lazy resolution is not a setting."""
     return {k: v for k, v in matplotlib.rcParams.items() if k != "backend"}
@@ -57,8 +68,7 @@ def test_importing_the_package_leaves_rcparams_alone(module):
         after = snap()
         print(sorted(k for k in before if before[k] != after[k]))
     """)
-    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
-                         check=True).stdout.strip().splitlines()[-1]
+    out = _run(script).strip().splitlines()[-1]
     assert out == "[]", f"import {module} changed rcParams: {out}"
 
 
@@ -184,6 +194,12 @@ def test_the_gui_restyles_the_session_explicitly():
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         import warnings; warnings.filterwarnings("ignore")
         import matplotlib
+        # main_window switches matplotlib to the QtAgg backend, which matplotlib
+        # refuses on a headless Linux (no DISPLAY) unless a QApplication is
+        # already running — as it always is when the GUI starts. macOS never
+        # reports "headless", which is how this passed locally and failed in CI.
+        from PyQt6.QtWidgets import QApplication
+        _app = QApplication([])
         import pmcprg.pmc.gui.main_window          # noqa: F401
         rc = matplotlib.rcParams
         # package look first (apply_style) ...
@@ -191,8 +207,7 @@ def test_the_gui_restyles_the_session_explicitly():
         # ... then the compact overrides win (apply_gui_compact_style)
         print(rc["mathtext.fontset"], rc["axes.titlesize"], rc["figure.constrained_layout.use"])
     """)
-    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
-                         check=True).stdout.strip().splitlines()[-2:]
+    out = _run(script).strip().splitlines()[-2:]
     dpi, face, size = out[0].split()
     assert (float(dpi), face, float(size)) == (DEFAULT_DPI, "white", DEFAULT_FONT_SIZE)
     fontset, title, constrained = out[1].split()
@@ -209,8 +224,7 @@ def test_a_user_figure_after_importing_the_package_is_untouched():
         fig = plt.figure()
         print(fig.dpi, matplotlib.rcParams["font.size"])
     """)
-    dpi, size = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
-                               check=True).stdout.split()[-2:]
+    dpi, size = _run(script).split()[-2:]
     assert float(dpi) == matplotlib.rcParamsDefault["figure.dpi"]
     assert float(size) == matplotlib.rcParamsDefault["font.size"]
     assert np.isfinite(float(dpi))
