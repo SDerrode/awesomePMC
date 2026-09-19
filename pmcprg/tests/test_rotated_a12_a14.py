@@ -183,14 +183,17 @@ def test_kernel_inverse_h_round_trips_at_ulp_precision(base, tau):
     for vi, ui, wi in zip(v, u, w):
         lo = cop.conditional_cdf(np.nextafter(vi, 0.0), ui)
         hi = cop.conditional_cdf(np.nextafter(vi, 1.0), ui)
-        slack = 1e-14
-        # The 1e-13 fallback (not a strict bracket) absorbs a Newton step
-        # that lands one ulp short of a bracket on some CPU/SIMD codepaths;
-        # 5e-13 covers a 2.7e-13 residual measured on a GitHub Actions
-        # runner, still 40 000x tighter than inv_h_array's own Brent
-        # tolerance checked two lines below.
-        assert min(lo, hi) - slack <= wi <= max(lo, hi) + slack or \
-            abs(cop.conditional_cdf(vi, ui) - wi) <= 5e-13
+        # "Within one ulp of v" is a statement about v, so it is checked on the
+        # scale of h's own steepness: |hi - lo| is how far h moves over two
+        # ulps of v. A fixed tolerance on h is wrong at high tau, where h is so
+        # steep (slope ~5e3 for A14 at tau = 0.97) that ONE ulp of v is already
+        # ~1e-12 in h: it failed at 5e-13 on a GitHub runner (6.9e-13), and had
+        # been widened once before from 1e-13 (2.7e-13) — both times the
+        # residual was a fraction of the ulp-scale, never more than one of them.
+        # Allow ~4 ulps of v, and a small floor for the flat regions where the
+        # scale itself is at rounding level.
+        ulp_scale = abs(hi - lo)
+        assert abs(cop.conditional_cdf(vi, ui) - wi) <= 4.0 * ulp_scale + 1e-13
     np.testing.assert_allclose(v, cop.inv_h_array(w, u), atol=1e-8)
 
 
