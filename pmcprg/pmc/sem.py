@@ -66,12 +66,24 @@ node). The M-step is the complete-data one on the completed series
 observed-data log-likelihood log p(y_obs) of the forward pass. The k-means
 warm start clusters the observed rows only.
 
-Non-ignorable missingness (``model.missingness`` not None,
-:mod:`pmcprg.pmc.missingness`): the mechanism is carried unchanged to every
-iterate and to the returned model (held fixed, not estimated in this
-version); the S-step draws from P(x, y_mis | y_obs, m, θ^q) and ``log_liks``
-is log p(y_obs, m) — the missingness factors are in the forward messages the
-draw comes from, for a complete Y (mask m = 0) too.
+Missingness mechanism
+---------------------
+The config key ``missingness`` is ICE's (:func:`pmcprg.pmc.ice.ice`, section
+"Missingness mechanism"; :mod:`pmcprg.pmc.missingness`, "Estimation"):
+
+* ``"model"`` (default) — ``model.missingness`` is carried unchanged to every
+  iterate and to the returned model, its parameters held fixed. With a
+  mechanism the S-step draws from P(x, y_mis | y_obs, m, θ^q) and
+  ``log_liks`` is log p(y_obs, m) — the missingness factors are in the
+  forward messages the draw comes from, for a complete Y (mask m = 0) too.
+* ``"ignorable"`` — any mechanism is dropped.
+* ``"state"`` / ``"state-markov"`` — estimated: the M-step adds ICE's
+  formulas (:func:`pmcprg.pmc.missingness.estimate_mechanism`) on the one-hot
+  drawn path γ̃, with the same start (the model's mechanism of that kind, or
+  the state-independent MLE of the mask) and the same boundary guard. A Y
+  without missing rows falls back to ``"ignorable"`` with a WARNING.
+
+``trace.missingness_history`` records the mechanism of every iterate.
 
 Drawing ỹ_n on the quadrature nodes rather than from the continuous law is
 an approximation of the grid variants; measured against a continuous
@@ -111,6 +123,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from pmcprg.pmc._estim_common import (
+    DEFAULT_MISSINGNESS,
+    ESTIMATED_MECHANISMS,
     BestIterate,
     IceResult,
     IceTrace,
@@ -118,19 +132,25 @@ from pmcprg.pmc._estim_common import (
     check_copula_margins,
     check_init_strategy,
     check_missing_cfg,
+    check_missingness_mode,
     check_multistart_families,
     check_return_best_iterate,
     copula_margin_defaults,
+    effective_missingness,
     evaluate_log_lik,
     gap_e_step,
     linearise_image,
     m_step,
+    m_step_missingness,
+    missingness_defaults,
     record_copula_margins,
     report_degenerate_states,
     run_multistart,
     sem_estim_defaults,
     sem_missing_defaults,
+    set_start_missingness,
     snapshot_margins,
+    snapshot_missingness,
     snapshot_prior_p,
     snapshot_tau_family,
     warmstart_from_kmeans,
@@ -161,7 +181,8 @@ class SemTrace(IceTrace):
     Inherits every :class:`IceTrace` field (``log_liks``, ``tau_history``,
     ``family_history``, ``p_history``, ``margin_history``, ``multistart_runs``,
     ``run_tag``, ``candidates``, ``best_iter``, ``returned_iter``,
-    ``degenerate``) and the ``n_iters`` / ``__len__`` helpers, so
+    ``degenerate``, ``missingness_history``) and the ``n_iters`` /
+    ``__len__`` helpers, so
     the two share all GUI/plotting code. Adds:
 
     * ``sampled_X_history`` : (T, N) int — the FFBS draw X̃ used at each M-step
@@ -214,6 +235,10 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
     for the grid variants, hence ties, handled by ``≤``). A non-default value
     is recorded in the fitted model's ``[sem]`` table.
 
+    ``missingness`` (default ``"model"``) is ICE's key too — the model's
+    mechanism held fixed, ``"ignorable"``, or ``"state"`` / ``"state-markov"``
+    estimated on the drawn path (module docstring, "Missingness mechanism").
+
     Resolution order (lowest → highest priority):
       1. defaults (``sem_estim_defaults()`` — shared + SEM-specific keys)
       2. TOML ``[ice]`` section (``model.ice_config()`` — shared keys)
@@ -223,7 +248,7 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
     # Defaults come from a single source of truth so that ICE, SEM and the
     # GUI cannot silently drift apart (audit Q-9).
     defaults: dict = {**sem_estim_defaults(), **sem_missing_defaults(),
-                      **copula_margin_defaults()}
+                      **copula_margin_defaults(), **missingness_defaults()}
     # TOML [ice] section is the fallback for keys not duplicated under [sem];
     # a dedicated [sem] section then overrides the shared keys.
     cfg = {**defaults, **model.ice_config(), **model.sem_config()}
@@ -233,6 +258,7 @@ def _parse_sem_cfg(model: PMCModel, sem_cfg: dict | None) -> dict:
     check_return_best_iterate(cfg["return_best_iterate"])
     check_missing_cfg(cfg)
     check_copula_margins(cfg["copula_margins"])
+    check_missingness_mode(cfg["missingness"])
     return cfg
 
 
@@ -300,6 +326,8 @@ def sem(
             "(states and missing values drawn jointly), observed-data likelihood.",
             int(miss.sum()), miss.size, 100.0 * miss.mean(),
         )
+    cfg["missingness"] = effective_missingness(cfg["missingness"],
+                                               miss if miss.any() else None, "SEM")
 
     # Optional K-means warm-start (shared with ICE).
     init_strategy = check_init_strategy(str(cfg["init"]))
@@ -408,24 +436,36 @@ def _sem_single_run(
     miss = missing_mask(Y)
     miss = miss if miss.any() else None
     gap_nodes = cfg.get("gap_nodes")
+    # ``sem`` has already warned when an estimated mechanism meets a complete Y.
+    mech_mode = check_missingness_mode(cfg.get("missingness", DEFAULT_MISSINGNESS))
+    if mech_mode in ESTIMATED_MECHANISMS and miss is None:
+        mech_mode = "ignorable"
+    estimate_mech = mech_mode in ESTIMATED_MECHANISMS
 
     log_liks:    list[float]            = []
     tau_buf:     list[np.ndarray]       = []
     fam_buf:     list[list[list[str]]]  = []
     p_buf:       list[np.ndarray]       = []
     margin_buf:  list[list[dict]]       = []
+    mech_buf:    list[dict | None]      = []
     X_buf:       list[np.ndarray]       = []
 
     raw     = model.raw
     # A non-default copula_margins is recorded in the [sem] table (no-op on
     # the default path).
     record_copula_margins(raw, copula_margins, section="sem")
+    # Starting mechanism of missingness = "ignorable" / "state" /
+    # "state-markov"; a no-op on the default path ("model").
+    set_start_missingness(raw, model, mech_mode, miss)
     current = PMCModel.from_dict(raw)
 
     logger.info(
         "%s: variant=%s  K=%d  N=%d  max_iter=%d  candidates=%s  seed=%d",
         log_prefix, current.variant.value, K, N, max_iter, candidates, sem_seed,
     )
+    if estimate_mech:
+        logger.info("%s: estimating the %r missingness mechanism, start %s.",
+                    log_prefix, mech_mode, snapshot_missingness(current))
 
     for it in range(max_iter + 1 if return_best else max_iter):
         # ── E-step (filter) ───────────────────────────────────────────────
@@ -450,6 +490,7 @@ def _sem_single_run(
         fam_buf.append(fam_kk)
         p_buf.append(snapshot_prior_p(current))
         margin_buf.append(snapshot_margins(current))
+        mech_buf.append(snapshot_missingness(current))
         if return_best:
             best.offer(it, log_lik, current)
         if it == max_iter:
@@ -490,6 +531,9 @@ def _sem_single_run(
             margin_selection_rule=margin_selection_rule,
             copula_margins=copula_margins,
         )
+        if estimate_mech:
+            # The same formulas as ICE's, on the one-hot drawn path.
+            m_step_missingness(raw, mech_mode, gamma, miss)
         current = PMCModel.from_dict(raw)
 
     trace = SemTrace(
@@ -505,6 +549,7 @@ def _sem_single_run(
         run_tag           = run_tag,
         candidates        = list(candidates),
         best_iter         = best_iter_of(log_liks),
+        missingness_history = mech_buf,
     )
     if return_best and best.model is not None:
         trace.returned_iter = best.iter

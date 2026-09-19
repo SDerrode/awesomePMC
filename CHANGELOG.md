@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — estimating the missingness mechanism, and testing it (P6, wave 2)
+
+- **Why.** The pilot below made the mask evidence on the states, but its
+  rates had to be known: ICE and SEM held them fixed. On real data they are
+  what one wants to learn — and before relying on them, whether the mask
+  depends on the states at all.
+- **What — estimation.** A config key `missingness` for ICE and SEM
+  (`ice_cfg` / `sem_cfg`, TOML `[ice]` / `[sem]`; `MISSINGNESS_MODES`):
+  `"model"` (default: the model's mechanism, held fixed — bit-identical to
+  before), `"ignorable"` (dropped), `"state"` / `"state-markov"` (estimated).
+  The M-step adds `pmcprg.pmc.missingness.estimate_mechanism` on the exact
+  posteriors given (y_obs, m) (both `missing_strategy` values) or on SEM's
+  drawn path: π_i = Σ γ_n(i) m_n / Σ γ_n(i); onset and persistence split on
+  m_{n−1}, with the n = 0 term γ_0(i) log p(m_0 | s_i) maximised exactly per
+  state. Start: the model's mechanism of that kind, else the
+  state-independent MLE of the mask, whose first E-step is the ignorable
+  one. `trace.missingness_history` records the mechanism of every iterate;
+  the returned model carries the estimate. A complete Y (m = 0: MLE rates 0,
+  i.e. ignorable) logs a WARNING and fits the ignorable model.
+- **What — test.** `pmcprg.pmc.missingness_lr_test(model, Y, alternative=,
+  null=, ice_cfg=, n_bootstrap=, seed=)` → a frozen `MissingnessLRTest`
+  (`statistic`, `df`, `p_value`, `p_value_bootstrap`, the fitted models and
+  mechanisms, `summary()`): `"state"` vs a common rate (LL0 = the ignorable
+  fit + M log(M/N) + (N − M) log(1 − M/N) exactly, df = K − 1),
+  `"state-markov"` vs a common Markov mask (df = 2(K − 1)), and
+  `"state-markov"` vs `"state"` (df = K). Asymptotic χ² and a parametric
+  bootstrap (paths and masks from the fitted null, separate seed streams,
+  both models refitted); both fits run to ICE's fixed point.
+- **Measured — design** (`report/missing_state/design_measurements.py`,
+  HMC-IN, 100 runs per cell). *Initial term*: dropping it moves the
+  estimates by 4–7 % of an sd at N = 500 with no systematic shift, but loses
+  up to 2.5 nat (11 runs of 100 above 0.1 nat) on series that start inside a
+  long burst — kept exact, for 8 % of an ICE iteration. *Boundary guard*: a
+  rate at 0 is absorbing — from π_0 = 0 (truth 0.05) ICE stays at 0 in 50/50
+  runs, 58 nat below the fit from the common start (N = 2000); one
+  pseudo-observation at the pooled rate of the mask recovers it in 6–9
+  iterations and changes bias and RMSE by ≤ 0.001 on well-populated states
+  (not a config key). *Start*: the common rate is left at the first M-step
+  ((0.16, 0.16) → (0.055, 0.27), truth (0.02, 0.30)); with i.i.d. states π is
+  not identified.
+- **Measured — test** (`report/missing_state/lr_study.py`, 8 800
+  replications, K = 2, 5 % level; bootstrap by the warp-speed method).
+  Size on HMC-IN (ICE is EM): 0.045–0.060 (χ²) and 0.045–0.065 (bootstrap)
+  for `"state"`, 0.028–0.050 / 0.028–0.058 for `"state-markov"`,
+  0.020–0.048 / 0.022–0.072 nested, N = 500–2000. On HMC-DN (grid, ICE not
+  EM) `"state"` holds (0.060 / 0.040–0.060), `"state-markov"` does not at
+  N = 500 (0.135 χ², 0.175 bootstrap; ~9 bursts per series) and is
+  conservative at N = 1000 (0.030 / 0.015). Power of `"state"` on HMC-IN:
+  0.37 / 0.62 / 0.94 at N = 500 / 1000 / 2000 for rates 7.5 % vs 12.5 %,
+  0.885 / 0.995 / 1 for 5 % vs 15 %; of `"state-markov"` against onset and
+  persistence differences 0.26 / 0.49 / 0.81. Recovery: π̂ and â unbiased to
+  a tenth of their RMSE (π̂_1 = 0.15: 0.025, 0.017, 0.013, 0.008 at N = 500,
+  1000, 2000, 5000); b̂ biased down by 0.01–0.06 at N ≤ 1000, RMSE 0.10 at
+  N = 5000 for a state with 1 % onsets.
+- **Unchanged by default.** `missingness = "model"` is bit-identical to the
+  previous `ice.py` / `sem.py` (loaded from git: ICE with both strategies,
+  SEM, with and without a mechanism, gaps and complete Y); the 90 golden
+  bit-identity cases of `test_estim_complete_data_identity.py` pass
+  unchanged.
+
 ### Added — state-dependent missingness: the mask as evidence on the hidden states (P6, pilot)
 
 - **Why.** Missing rows were integrated out under an *ignorable* mechanism
@@ -44,7 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Estimation.** Not in this pilot: ICE and SEM carry the mechanism of the
   initial model unchanged (π held fixed) and compute every E-step given
   (y_obs, m); ICE's `"impute"` strategy keeps the observed mask in the
-  E-step of each completed series.
+  E-step of each completed series. (This is now the default,
+  `missingness = "model"`, of the entry above.)
 - **Simulation.** `pmcprg.missing.state_dependent(Y, X, rates)` and
   `state_markov(Y, X, onset, persistence)` draw such masks from a state path.
 - **Measured.** Against path enumeration (N = 6, every path weighted by its

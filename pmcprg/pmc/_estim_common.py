@@ -51,11 +51,13 @@ from pmcprg.pmc.ice import (
     DEFAULT_MARGIN_SELECTION_RULE,
     DEFAULT_MISSING_DRAWS,
     DEFAULT_MISSING_STRATEGY,
+    DEFAULT_MISSINGNESS,
     DEFAULT_SELECTION_CRITERION,
     EXTRA_PARAM_BOUNDS,
     INIT_STRATEGIES,
     MARGIN_SELECTION_RULES,
     MISSING_STRATEGIES,
+    MISSINGNESS_MODES,
     SELECTION_CRITERIA,
     IceResult,
     IceTrace,
@@ -65,13 +67,19 @@ from pmcprg.pmc.ice import (
     _check_copula_margins as check_copula_margins,
     _check_init_strategy  as check_init_strategy,
     _check_missing_cfg    as check_missing_cfg,
+    _check_missingness_mode as check_missingness_mode,
+    _effective_missingness as effective_missingness,
+    _ESTIMATED_MECHANISMS as ESTIMATED_MECHANISMS,
     _evaluate_log_lik     as evaluate_log_lik,
     _gap_e_step           as gap_e_step,
     _kmeans_label_assignment as kmeans_label_assignment,
     _m_step               as m_step,
+    _m_step_missingness   as m_step_missingness,
     _perturb_initial_model as perturb_initial_model,
     _record_copula_margins as record_copula_margins,
+    _set_start_missingness as set_start_missingness,
     _snapshot_margins     as snapshot_margins,
+    _snapshot_missingness as snapshot_missingness,
     _snapshot_prior_p     as snapshot_prior_p,
     _snapshot_tau_family  as snapshot_tau_family,
     _warmstart_from_kmeans as warmstart_from_kmeans,
@@ -827,6 +835,22 @@ def copula_margin_defaults() -> dict:
     return {"copula_margins": DEFAULT_COPULA_MARGINS}
 
 
+def missingness_defaults() -> dict:
+    """ICE and SEM default of the ``missingness`` key (P6).
+
+    ``"model"`` (:data:`DEFAULT_MISSINGNESS`) — the model's mechanism held
+    fixed, the historical behaviour; ``"ignorable"``, ``"state"`` and
+    ``"state-markov"`` (:data:`MISSINGNESS_MODES`) are documented at
+    :func:`pmcprg.pmc.ice.ice`, section "Missingness mechanism". Merged by
+    ``_parse_ice_cfg`` and ``_parse_sem_cfg`` but kept out of
+    :func:`ice_estim_defaults` / :func:`sem_estim_defaults`, like
+    :func:`copula_margin_defaults` and for the same reason (the
+    ``test_ice_tab_exposes_every_api_config_key`` contract): reachable from
+    ``ice_cfg`` / ``sem_cfg`` and from the TOML ``[ice]`` / ``[sem]`` tables.
+    """
+    return {"missingness": DEFAULT_MISSINGNESS}
+
+
 def sem_missing_defaults() -> dict:
     """SEM defaults of the keys read only when Y has missing observations.
 
@@ -854,10 +878,13 @@ __all__ = [
     "DEFAULT_MARGIN_SELECTION_RULE",
     "DEFAULT_MISSING_DRAWS",
     "DEFAULT_MISSING_STRATEGY",
+    "DEFAULT_MISSINGNESS",
     "DEFAULT_SELECTION_CRITERION",
+    "ESTIMATED_MECHANISMS",
     "INIT_STRATEGIES",
     "MARGIN_SELECTION_RULES",
     "MISSING_STRATEGIES",
+    "MISSINGNESS_MODES",
     "SELECTION_CRITERIA",
     # shared result/trace dataclasses (subclassed by SEM)
     "IceResult",
@@ -868,6 +895,7 @@ __all__ = [
     "record_copula_margins",
     "ice_estim_defaults",
     "ice_missing_defaults",
+    "missingness_defaults",
     "sem_estim_defaults",
     "sem_missing_defaults",
     "shared_estim_defaults",
@@ -883,6 +911,12 @@ __all__ = [
     # missing observations
     "check_missing_cfg",
     "gap_e_step",
+    # missingness mechanism (config key ``missingness``)
+    "check_missingness_mode",
+    "effective_missingness",
+    "m_step_missingness",
+    "set_start_missingness",
+    "snapshot_missingness",
     # init / warm-start
     "check_init_strategy",
     "kmeans_label_assignment",

@@ -81,6 +81,10 @@ ICE configuration (TOML [ice] section or dict)
                  empirical margins instead of the model's F (AUDIT_COPULES
                  FR-7 a; see :func:`_parse_ice_cfg` and
                  :func:`_empirical_margin_cdfs`).
+  missingness : str (default "model") — the missingness mechanism: the
+                 model's, held fixed; "ignorable"; or "state" /
+                 "state-markov", estimated (see :func:`ice`, section
+                 "Missingness mechanism").
 
 References
 ----------
@@ -159,6 +163,8 @@ __all__ = [
     "DEFAULT_MISSING_DRAWS",
     "COPULA_MARGIN_MODES",
     "DEFAULT_COPULA_MARGINS",
+    "MISSINGNESS_MODES",
+    "DEFAULT_MISSINGNESS",
 ]
 
 
@@ -226,6 +232,13 @@ class IceTrace:
                      (:func:`pmcprg.pmc._estim_common.degenerate_states`),
                      ``[]`` when none; ``None`` when not checked (the traces
                      of ``multistart_runs``, whose models are not kept).
+    missingness_history : ``list[dict | None]`` — length ``T``: at index
+                     ``t`` the ``[missingness]`` table of the iterate
+                     (``{"mechanism": "state", "rates": [...]}`` or
+                     ``{"mechanism": "state-markov", "onset": [...],
+                     "persistence": [...]}``, :mod:`pmcprg.pmc.missingness`),
+                     ``None`` when it is ignorable. Constant unless the
+                     ``missingness`` config key estimates the mechanism.
     """
     log_liks:        list[float]              = field(default_factory=list)
     # Always an ndarray (possibly shape (0, K, K)); the ``field(default=…)``
@@ -244,6 +257,7 @@ class IceTrace:
     best_iter:       int                      = -1
     returned_iter:   int                      = -1
     degenerate:      list | None              = None
+    missingness_history: list[dict | None]    = field(default_factory=list)
 
     @property
     def n_iters(self) -> int:
@@ -2520,6 +2534,101 @@ def _missing_rows_or_none(Y: np.ndarray) -> np.ndarray | None:
     return miss if miss.any() else None
 
 
+# ---------------------------------------------------------------------------
+# Missingness mechanism — config key ``missingness`` (P6)
+# ---------------------------------------------------------------------------
+
+#: Values of the ICE / SEM ``missingness`` config key: what the estimators do
+#: with the missingness mechanism of the model (:mod:`pmcprg.pmc.missingness`).
+#:
+#: * ``"model"``        — carry ``model.missingness`` unchanged (ignorable when
+#:   the model has none): its parameters are held fixed. The historical
+#:   behaviour.
+#: * ``"ignorable"``    — drop any mechanism: every iterate, and the returned
+#:   model, has ``missingness is None`` (observed-data likelihood p(y_obs)).
+#: * ``"state"`` / ``"state-markov"`` — estimate that mechanism with the other
+#:   parameters (:func:`pmcprg.pmc.missingness.estimate_mechanism`).
+MISSINGNESS_MODES: tuple[str, ...] = ("model", "ignorable", "state", "state-markov")
+
+#: Default ``missingness``: the model's mechanism, held fixed.
+DEFAULT_MISSINGNESS: str = "model"
+
+#: The values of ``missingness`` whose mechanism the estimators estimate.
+_ESTIMATED_MECHANISMS: tuple[str, ...] = ("state", "state-markov")
+
+
+def _check_missingness_mode(value) -> str:
+    """Validate the ``missingness`` config key (one of :data:`MISSINGNESS_MODES`)."""
+    if not isinstance(value, str) or value not in MISSINGNESS_MODES:
+        raise ValueError(
+            f"Unknown missingness {value!r}. Valid: {list(MISSINGNESS_MODES)}"
+        )
+    return value
+
+
+def _effective_missingness(mode: str, miss: np.ndarray | None, label: str) -> str:
+    """``mode``, or ``"ignorable"`` (WARNING) when it asks to estimate a mechanism
+    from a Y without missing rows.
+
+    The mask of a complete Y is m = 0 everywhere: the maximum-likelihood rates
+    are π̂_i = 0 (``"state"``), and â_i = 0 with b̂_i unidentified
+    (``"state-markov"``) — mechanisms whose evidence factors on m = 0 are all
+    1, i.e. the ignorable model. The estimators fit that model and say so.
+    """
+    mode = _check_missingness_mode(mode)
+    if mode in _ESTIMATED_MECHANISMS and miss is None:
+        logger.warning(
+            "%s: missingness=%r but Y has no missing rows — the mask m = 0 "
+            "identifies no missing rate (maximum likelihood: every rate 0, "
+            "i.e. ignorable). Fitting with missingness='ignorable'; the "
+            "returned model has no [missingness] table.", label, mode,
+        )
+        return "ignorable"
+    return mode
+
+
+def _missingness_start(model: PMCModel, mode: str, miss: np.ndarray):
+    """Starting mechanism of an estimated ``missingness`` mode.
+
+    ``model.missingness`` when it is of that kind; a ``"state"`` start π for
+    ``"state-markov"`` is its nested equivalent a = b = π. Otherwise the
+    state-independent maximum-likelihood mechanism of the mask
+    (:func:`pmcprg.pmc.missingness.common_mechanism`): its evidence factors do
+    not depend on the state, so the first E-step gives the posteriors of the
+    ignorable model, and the first M-step estimates the mechanism from them.
+    """
+    from pmcprg.pmc.missingness import StateMarkovMissingness, common_mechanism
+    mech = model.missingness
+    if mech is not None and mech.mechanism == mode:
+        return mech
+    if mode == "state-markov" and mech is not None and mech.mechanism == "state":
+        return StateMarkovMissingness(onset=mech.rates, persistence=mech.rates)
+    return common_mechanism(mode, miss, model.K)
+
+
+def _set_start_missingness(raw: dict, model: PMCModel, mode: str,
+                           miss: np.ndarray | None) -> None:
+    """Put the starting mechanism of ``mode`` in ``raw`` (no-op for ``"model"``)."""
+    if mode == "ignorable":
+        raw.pop("missingness", None)
+    elif mode in _ESTIMATED_MECHANISMS:
+        raw["missingness"] = _missingness_start(model, mode, miss).to_table()
+
+
+def _m_step_missingness(raw: dict, mode: str, gamma: np.ndarray, miss: np.ndarray) -> None:
+    """Mechanism part of the M-step (estimated ``missingness`` modes): updates
+    ``raw["missingness"]`` from the state posteriors ``gamma`` given (y_obs, m)
+    — :func:`pmcprg.pmc.missingness.estimate_mechanism`."""
+    from pmcprg.pmc.missingness import estimate_mechanism
+    raw["missingness"] = estimate_mechanism(mode, gamma, miss).to_table()
+
+
+def _snapshot_missingness(model: PMCModel) -> dict | None:
+    """The ``[missingness]`` table of ``model`` (``None``: ignorable)."""
+    mech = model.missingness
+    return None if mech is None else mech.to_table()
+
+
 @dataclass
 class _GapEStep:
     """E-step of a Y with missing rows.
@@ -2984,6 +3093,22 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     * ``gap_nodes``        (int,  default 64)    — quadrature nodes of the
                                                   grid variants
                                                   (:mod:`pmcprg.pmc.gaps`).
+
+    Missingness mechanism (:mod:`pmcprg.pmc.missingness`; see :func:`ice`,
+    section "Missingness mechanism"):
+
+    * ``missingness``      (str,  default ``"model"``) — one of
+                                                  :data:`MISSINGNESS_MODES`.
+                                                  ``"model"``: the model's
+                                                  mechanism held fixed (the
+                                                  historical behaviour);
+                                                  ``"ignorable"``: dropped;
+                                                  ``"state"`` /
+                                                  ``"state-markov"``:
+                                                  estimated. Kept out of
+                                                  :func:`~pmcprg.pmc._estim_common.ice_estim_defaults`
+                                                  (the GUI-widget contract),
+                                                  like ``copula_margins``.
     """
     # Defaults come from a single source of truth so that ICE, SEM and the
     # GUI cannot silently drift apart (audit Q-9). Local import avoids a
@@ -2995,9 +3120,10 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
         copula_margin_defaults,
         ice_estim_defaults,
         ice_missing_defaults,
+        missingness_defaults,
     )
     defaults: dict = {**ice_estim_defaults(), **ice_missing_defaults(),
-                      **copula_margin_defaults()}
+                      **copula_margin_defaults(), **missingness_defaults()}
     toml_ice = model.ice_config()
     cfg = {**defaults, **toml_ice}
     if ice_cfg:
@@ -3006,6 +3132,7 @@ def _parse_ice_cfg(model: PMCModel, ice_cfg: dict | None) -> dict:
     check_return_best_iterate(cfg["return_best_iterate"])
     _check_missing_cfg(cfg)
     _check_copula_margins(cfg["copula_margins"])
+    _check_missingness_mode(cfg["missingness"])
     return cfg
 
 
@@ -3434,16 +3561,39 @@ def ice(
     ``"available"`` is the default (bias/RMSE against the missing rate) is
     documented at :data:`DEFAULT_MISSING_STRATEGY`.
 
-    Non-ignorable missingness (``model.missingness`` not None,
-    :mod:`pmcprg.pmc.missingness`): the mechanism is carried unchanged to
-    every iterate and to the returned model — its parameters are held fixed,
-    not estimated in this version — and every E-step is given (y_obs, m):
-    ``trace.log_liks`` is log p(y_obs, m), γ and ξ are P(· | y_obs, m), the
-    completions of ``"impute"`` are drawn given (y_obs, m) and the
-    complete-data E-step of each completed series keeps the observed mask.
-    A Y without missing rows still has a mask (m = 0), which the E-step uses
-    too. With π fixed, the M-step formulas are those above: the factors of
-    p(m | x) do not involve the other parameters.
+    Missingness mechanism
+    ---------------------
+    The config key ``missingness`` (:data:`MISSINGNESS_MODES`, also in the
+    TOML ``[ice]`` table) says what ICE does with the law of the mask m
+    (:mod:`pmcprg.pmc.missingness`, section "Estimation"):
+
+    * ``"model"`` (default) — ``model.missingness`` is carried unchanged to
+      every iterate and to the returned model, its parameters held fixed:
+      ignorable when the model has none (the text above), otherwise every
+      E-step is given (y_obs, m) — ``trace.log_liks`` is log p(y_obs, m), γ
+      and ξ are P(· | y_obs, m), the completions of ``"impute"`` are drawn
+      given (y_obs, m) and the complete-data E-step of each completed series
+      keeps the observed mask. A Y without missing rows still has a mask
+      (m = 0), which the E-step uses too. The M-step formulas are those
+      above: the factors of p(m | x) do not involve the other parameters.
+    * ``"ignorable"`` — any mechanism is dropped: every iterate and the
+      returned model have ``missingness is None``.
+    * ``"state"`` / ``"state-markov"`` — the mechanism of that kind is
+      estimated with the other parameters. E-steps as for ``"model"``; the
+      M-step adds :func:`pmcprg.pmc.missingness.estimate_mechanism` on the
+      exact γ given (y_obs, m) — for ``"impute"`` too, as the prior takes the
+      exact ξ. Start: the model's mechanism of that kind if it has one,
+      otherwise the state-independent MLE of the mask, whose first E-step is
+      the ignorable one. Each M-step adds one pseudo-observation at the
+      pooled rate (the boundary guard: a rate at 0 or 1 would be
+      absorbing). The returned model carries the estimate. A Y without
+      missing rows identifies no rate (MLE 0: the ignorable model): WARNING
+      and ``"ignorable"``.
+
+    ``trace.missingness_history`` records the ``[missingness]`` table of
+    every iterate (``None`` when ignorable), like the other parameters.
+    Testing a state-dependent mechanism against a state-independent one:
+    :func:`pmcprg.pmc.missingness_lr.missingness_lr_test`.
     """
     cfg = _parse_ice_cfg(model, ice_cfg)
     miss = _missing_rows_or_none(Y)
@@ -3453,6 +3603,7 @@ def ice(
             "likelihood, missing_strategy=%r.",
             int(miss.sum()), miss.size, 100.0 * miss.mean(), cfg["missing_strategy"],
         )
+    cfg["missingness"] = _effective_missingness(cfg["missingness"], miss, "ICE")
 
     # Optional K-means warm-start: replace the user's initial parameters
     # by a single-shot supervised-style M-step on the K-means clustering
@@ -3589,6 +3740,11 @@ def _ice_single_run(
         )
     copula_margins = _check_copula_margins(
         cfg.get("copula_margins", DEFAULT_COPULA_MARGINS))
+    # ``ice`` has already warned when an estimated mechanism meets a complete Y.
+    mech_mode = _check_missingness_mode(cfg.get("missingness", DEFAULT_MISSINGNESS))
+    if mech_mode in _ESTIMATED_MECHANISMS and miss is None:
+        mech_mode = "ignorable"
+    estimate_mech = mech_mode in _ESTIMATED_MECHANISMS
     log_prefix = f"ICE[{run_tag}]" if run_tag else "ICE"
 
     var = model.variant
@@ -3602,6 +3758,7 @@ def _ice_single_run(
     fam_buf:    list[list[list[str]]]   = []
     p_buf:      list[np.ndarray]        = []
     margin_buf: list[list[dict]]        = []
+    mech_buf:   list[dict | None]       = []
 
     regress_streak  = 0   # consecutive iterations with LL decrease
     stopped_early   = False
@@ -3612,6 +3769,9 @@ def _ice_single_run(
     # Every iterate (hence the returned model) records a non-default
     # copula_margins in its [ice] table; a no-op on the default path.
     _record_copula_margins(raw, copula_margins, section="ice")
+    # Starting mechanism of missingness = "ignorable" / "state" /
+    # "state-markov"; a no-op on the default path ("model").
+    _set_start_missingness(raw, model, mech_mode, miss)
 
     # Build a mutable model reference updated each iteration
     current = PMCModel.from_dict(raw)
@@ -3622,6 +3782,9 @@ def _ice_single_run(
     )
     if copula_margins != DEFAULT_COPULA_MARGINS and var.uses_copula:
         logger.info("%s: copula step on %s margins (FR-7 a).", log_prefix, copula_margins)
+    if estimate_mech:
+        logger.info("%s: estimating the %r missingness mechanism, start %s.",
+                    log_prefix, mech_mode, _snapshot_missingness(current))
 
     for it in range(max_iter + 1 if return_best else max_iter):
         # ── E-step ────────────────────────────────────────────────────────
@@ -3651,6 +3814,7 @@ def _ice_single_run(
         fam_buf.append(fam_kk)
         p_buf.append(_snapshot_prior_p(current))
         margin_buf.append(_snapshot_margins(current))
+        mech_buf.append(_snapshot_missingness(current))
         if return_best:
             best.offer(it, log_lik, current)
         if it == max_iter:
@@ -3659,6 +3823,8 @@ def _ice_single_run(
             break
 
         logger.info("%s iter %d: log-lik = %.4f", log_prefix, it, log_lik)
+        if estimate_mech:
+            logger.debug("%s iter %d: missingness %s", log_prefix, it, mech_buf[-1])
         if progress_cb is not None:
             try:
                 progress_cb(it, max_iter, float(log_lik), run_tag)
@@ -3720,6 +3886,10 @@ def _ice_single_run(
                 obs=None if miss is None else ~miss,
                 copula_margins=copula_margins,
             )
+        if estimate_mech:
+            # γ given (y_obs, m) — exact for both strategies ("impute" too:
+            # like the prior, the mechanism takes the conditional expectation).
+            _m_step_missingness(raw, mech_mode, gamma, miss)
         # Rebuild the model with updated raw dict
         current = PMCModel.from_dict(raw)
 
@@ -3735,6 +3905,7 @@ def _ice_single_run(
         run_tag        = run_tag,
         candidates     = list(candidates),
         best_iter      = _best_iter(log_liks),
+        missingness_history = mech_buf,
     )
     if return_best and best.model is not None:
         trace.returned_iter = best.iter

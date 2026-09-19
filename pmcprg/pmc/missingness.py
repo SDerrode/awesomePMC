@@ -71,10 +71,71 @@ The table round-trips through ``PMCModel.from_dict`` / ``raw`` / ``save``;
 :meth:`pmcprg.pmc.model.PMCModel.with_missingness` returns a copy of a model
 with another mechanism (or ``None``).
 
-Estimation. ICE and SEM (:mod:`pmcprg.pmc.ice`, :mod:`pmcprg.pmc.sem`) carry
-the mechanism of the initial model unchanged: its parameters are held fixed
-and every E-step uses the posteriors given (y_obs, m). They are not
-estimated in this version.
+Estimation
+----------
+ICE and SEM (:mod:`pmcprg.pmc.ice`, :mod:`pmcprg.pmc.sem`) read the config
+key ``missingness``: ``"model"`` (default) carries the mechanism of the
+initial model with its parameters fixed, ``"ignorable"`` drops it, and
+``"state"`` / ``"state-markov"`` estimate it. Every E-step gives posteriors
+given (y_obs, m); the mask factors e_n(x_n) involve no other parameter, so
+the other M-step formulas are unchanged, and the mechanism's M-step
+maximises Σ_n Σ_i γ_n(i) log e_n(i) (ICE: the exact γ, with either
+``missing_strategy``; SEM: the one-hot drawn path) —
+:func:`estimate_mechanism`:
+
+* ``"state"`` — π_i = Σ_n γ_n(i) m_n / Σ_n γ_n(i) (:func:`estimate_state`).
+* ``"state-markov"`` — for n ≥ 1 the transitions split on m_{n−1}:
+  a_i = Σ_{n: m_{n−1}=0} γ_n(i) m_n / Σ_{n: m_{n−1}=0} γ_n(i), b_i the same
+  over m_{n−1} = 1. The n = 0 term γ_0(i) log p(m_0 | s_i), s_i = a_i /
+  (1 − b_i + a_i), couples a_i and b_i; it is maximised exactly, per state,
+  from that closed form (:func:`estimate_state_markov`, two parameters,
+  L-BFGS-B on the logits). Measured (``report/missing_state/design_measurements.py``,
+  HMC-IN, a = (0.005, 0.03), b = (0.7, 0.9), 100 ICE runs each): dropping
+  the term moves the estimates by 4–7 % of their standard deviation at
+  N = 500 and ≤ 4 % at N = 2000, with no systematic shift (|mean Δ| ≤ 0.02
+  sd); the log-likelihood reached is higher with the exact step by a median
+  0.002 nat — but by more than 0.1 nat in 11 runs of 100 at N = 500, up to
+  2.5 nat: a series that starts inside a long burst, where log s_i is the
+  only term that ties a small a_i to a b_i near 1 (â_0 = 9.7e-4 exact
+  against 9.2e-5 without). The exact step costs K small optimisations per
+  iteration (8 % of an HMC-IN ICE iteration at N = 2000).
+
+**Start.** A mechanism of the estimated kind carried by the initial model is
+the start (a ``"state"`` π becomes a = b = π for ``"state-markov"``);
+otherwise the start is the state-independent MLE of the mask
+(:func:`common_mechanism`: π = M / N, or the common Markov chain). Its
+factors do not depend on the state, so the first E-step gives the ignorable
+posteriors and the first M-step estimates the mechanism from them. That
+start is not a fixed point on data with a real state dependence: from π =
+(0.16, 0.16) the first M-step gives (0.055, 0.27) on average and ICE
+converges to the truth (0.02, 0.30) (50 runs, N = 2000). Where the states are
+i.i.d. (A with equal rows) π is not identified — only the observed mixture
+weights ∝ p_i (1 − π_i) and Σ p_i π_i are — and the estimates wander
+(sd 0.06–0.08 around (0.14, 0.19) for the same truth).
+
+**Boundary guard.** A rate at 0 or 1 makes its state impossible at every
+missing (or observed) row, so the posterior weight that would move it is 0:
+an absorbing state for EM. Each M-step therefore adds c = :data:`PSEUDO_COUNT`
+= 1 pseudo-observation at the pooled rate of the mask (π̄ = (M + ½)/(N + 1);
+ā, b̄ from the transition counts the same way) — the posterior mode under a
+Beta prior worth one observation, which also gives a state without weight
+the pooled rate instead of 0/0. Measured (same script, 100 runs per cell,
+c ∈ {0, 0.1, 1, 10}): from a start π_0 = 0 (truth 0.05) the estimate stays
+exactly 0 without the guard in all 50 runs, 58 nat below the fit from the
+common start at N = 2000; with c = 1 it recovers in 6–9 iterations to the
+same log-likelihood. On π = (0.02, 0.3) and (0, 0.2) c = 1 changes bias and
+RMSE by at most 0.001 (c = 10 biases the small rate by +0.008 at N = 500);
+for the persistence of a state with one or two bursts (b = 0.5, a = 0.002)
+it trades bias (+0.21 at N = 500, +0.09 at N = 2000) for a lower RMSE (0.29
+against 0.37, 0.19 against 0.29). c = 0.1 already leaves rates of 1e-6.
+Not a config key: nothing measured calls for another value.
+
+**Complete Y.** m = 0 everywhere: the MLE is π̂ = 0 (â = 0, b̂ unidentified),
+whose factors are all 1 — the ignorable model. ICE and SEM then log a
+WARNING and fit with ``missingness = "ignorable"``.
+
+The likelihood-ratio test of a state-independent against a state-dependent
+mechanism is :func:`pmcprg.pmc.missingness_lr.missingness_lr_test`.
 
 References
 ----------
@@ -93,10 +154,16 @@ import numpy as np
 
 __all__ = [
     "MECHANISMS",
+    "PSEUDO_COUNT",
     "StateMissingness",
     "StateMarkovMissingness",
     "parse_missingness",
     "as_missingness",
+    "estimate_state",
+    "estimate_state_markov",
+    "estimate_mechanism",
+    "common_mechanism",
+    "mask_log_likelihood",
 ]
 
 #: Values of ``[missingness].mechanism``; ``"ignorable"`` is the absence of a
@@ -308,3 +375,218 @@ def as_missingness(spec, K: int):
         f"missingness must be None, a StateMissingness / StateMarkovMissingness "
         f"or a [missingness] table (dict), got {type(spec).__name__}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Estimation — M-steps of ICE / SEM and the state-independent (null) MLE
+# ---------------------------------------------------------------------------
+
+#: Pseudo-count c of the boundary guard of :func:`estimate_mechanism` (module
+#: docstring, "Estimation"): every rate is the posterior mode under a Beta
+#: prior worth c observations centred on the pooled rate of the mask.
+PSEUDO_COUNT: float = 1.0
+
+#: Bound on the logits of the numerical "state-markov" M-step: a rate is kept
+#: in [σ(−36), σ(36)] = [2.3e-16, 1 − 2.3e-16]. Reached only by the unguarded
+#: (c = 0) state-independent MLE when a count is zero — e.g. no burst of two
+#: missing rows, b̂ = 0 — where the log-likelihood lost is below 1e-13.
+_LOGIT_MAX: float = 36.0
+
+
+def _gamma(gamma, N: int) -> np.ndarray:
+    g = np.asarray(gamma, dtype=float)
+    if g.ndim != 2 or g.shape[0] != N:
+        raise ValueError(
+            f"the state posteriors must have shape (N, K) with N = {N} (the mask "
+            f"length), got {g.shape}."
+        )
+    return g
+
+
+def _pooled(k, n) -> float:
+    """(k + ½) / (n + 1): a pooled rate of the mask, never 0 or 1 (the target
+    of the guard; Jeffreys' Beta(½, ½) posterior mean)."""
+    return (float(k) + 0.5) / (float(n) + 1.0)
+
+
+def _ratio(num, den, fallback):
+    """num / den where den > 0, ``fallback`` elsewhere, clipped to [0, 1]."""
+    num, den = np.asarray(num, dtype=float), np.asarray(den, dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = np.where(den > 0.0, num / np.where(den > 0.0, den, 1.0), fallback)
+    return np.clip(out, 0.0, 1.0)
+
+
+def estimate_state(gamma, miss, *, pseudo_count: float | None = None) -> StateMissingness:
+    """M-step of ``"state"``: π_i = (Σ_n γ_n(i) m_n + c π̄) / (Σ_n γ_n(i) + c).
+
+    ``gamma`` (N, K) are the state posteriors given (y_obs, m) — soft for ICE,
+    the one-hot drawn path for SEM — and ``miss`` the mask m. With c = 0 this
+    is the exact maximiser of the expected complete-data log-likelihood
+    Σ_n Σ_i γ_n(i) [m_n log π_i + (1 − m_n) log(1 − π_i)]; c > 0 adds c
+    pseudo-observations at the pooled rate π̄ = (M + ½)/(N + 1), M = Σ m_n,
+    which keeps every π_i in (0, 1) (module docstring, "Estimation"). A state
+    of zero weight gets π̄.
+    """
+    miss = _mask(miss)
+    g = _gamma(gamma, miss.size)
+    c = PSEUDO_COUNT if pseudo_count is None else float(pseudo_count)
+    target = _pooled(miss.sum(), miss.size)
+    S, S1 = g.sum(axis=0), g[miss].sum(axis=0)
+    rates = _ratio(S1 + c * target, S + c, target)
+    return StateMissingness(rates=tuple(float(r) for r in rates))
+
+
+def _markov_counts(g: np.ndarray, miss: np.ndarray):
+    """Posterior-weighted transition counts of the mask, n ≥ 1, per state."""
+    prev, cur, gn = miss[:-1], miss[1:], g[1:]
+    return (gn[~prev & cur].sum(axis=0), gn[~prev & ~cur].sum(axis=0),     # onset: 1, 0
+            gn[prev & cur].sum(axis=0), gn[prev & ~cur].sum(axis=0))       # persistence: 1, 0
+
+
+def _log_sigmoid(u):
+    """log σ(u) = −log(1 + e^{−u}), stable for any sign of u."""
+    return -np.logaddexp(0.0, -u)
+
+
+def _markov_maximise(na1: float, na0: float, nb1: float, nb0: float, g0: float,
+                     start: tuple[float, float]) -> tuple[float, float]:
+    """(a, b) maximising the per-state objective of the ``"state-markov"`` M-step
+
+        F(a, b) = na1 log a + na0 log(1 − a) + nb1 log b + nb0 log(1 − b)
+                  − g0 log(1 − b + a),
+
+    in which the initial term γ_0(i) log p(m_0 | s_i), s = a / (1 − b + a),
+    has been split: its numerator γ_0 m_0 log a or γ_0 (1 − m_0) log(1 − b)
+    is already counted in na1 or nb0, and −γ_0 log(1 − b + a) couples a and
+    b. L-BFGS-B on the logits (u, v) = (logit a, logit b), analytic gradient
+
+        ∂F/∂u = na1 (1 − a) − na0 a − g0 a (1 − a) / (1 − b + a),
+        ∂F/∂v = nb1 (1 − b) − nb0 b + g0 b (1 − b) / (1 − b + a),
+
+    started from ``start``; logits bounded by ±:data:`_LOGIT_MAX`.
+    """
+    from scipy.optimize import minimize
+
+    scale = max(na1 + na0 + nb1 + nb0 + g0, 1e-300)
+
+    def neg(z):
+        u, v = z
+        la, l1a = _log_sigmoid(u), _log_sigmoid(-u)
+        lb, l1b = _log_sigmoid(v), _log_sigmoid(-v)
+        a, b = math.exp(la), math.exp(lb)
+        one_b = math.exp(l1b)
+        den = one_b + a
+        F = na1 * la + na0 * l1a + nb1 * lb + nb0 * l1b - g0 * math.log(den)
+        da = a * (1.0 - a)
+        db = b * one_b
+        gu = na1 * (1.0 - a) - na0 * a - g0 * da / den
+        gv = nb1 * one_b - nb0 * b + g0 * db / den
+        return -F / scale, np.array([-gu / scale, -gv / scale])
+
+    def logit(p):
+        p = min(max(float(p), 1e-300), 1.0)
+        if p >= 1.0:
+            return _LOGIT_MAX
+        return float(np.clip(math.log(p) - math.log1p(-p), -_LOGIT_MAX, _LOGIT_MAX))
+
+    z0 = np.array([logit(start[0]), logit(start[1])])
+    res = minimize(neg, z0, jac=True, method="L-BFGS-B",
+                   bounds=[(-_LOGIT_MAX, _LOGIT_MAX)] * 2,
+                   options={"ftol": 1e-15, "gtol": 1e-12, "maxiter": 500})
+    u, v = (res.x if np.all(np.isfinite(res.x)) and res.fun <= neg(z0)[0] else z0)
+    return 1.0 / (1.0 + math.exp(-u)), 1.0 / (1.0 + math.exp(-v))
+
+
+def estimate_state_markov(gamma, miss, *,
+                          pseudo_count: float | None = None) -> StateMarkovMissingness:
+    """M-step of ``"state-markov"`` — exact per state (module docstring, "Estimation").
+
+    Per state i the expected complete-data log-likelihood of the mask is
+
+        Σ_{n ≥ 1} γ_n(i) log p(m_n | m_{n−1}, a_i, b_i) + γ_0(i) log p(m_0 | s_i),
+
+    plus c pseudo-observations at the pooled onset and persistence rates ā, b̄
+    of the mask (the guard; ā = (#{0→1} + ½) / (#{0→·} + 1), b̄ likewise).
+    Without the initial term it is maximised in closed form,
+
+        a_i = (Σ_{n ≥ 1: m_{n−1} = 0} γ_n(i) m_n + c ā) / (Σ_{n ≥ 1: m_{n−1} = 0} γ_n(i) + c),
+        b_i = the same sum over n ≥ 1 with m_{n−1} = 1;
+
+    the initial term couples a_i and b_i through s_i = a_i / (1 − b_i + a_i),
+    so :func:`_markov_maximise` maximises the exact objective from that closed
+    form (two parameters per state; skipped when γ_0(i) = 0, where the closed
+    form is exact).
+    """
+    miss = _mask(miss)
+    g = _gamma(gamma, miss.size)
+    K = g.shape[1]
+    c = PSEUDO_COUNT if pseudo_count is None else float(pseudo_count)
+    na1, na0, nb1, nb0 = _markov_counts(g, miss)
+    prev, cur = miss[:-1], miss[1:]
+    a_bar = _pooled((~prev & cur).sum(), (~prev).sum())
+    b_bar = _pooled((prev & cur).sum(), prev.sum())
+    na1, na0 = na1 + c * a_bar, na0 + c * (1.0 - a_bar)
+    nb1, nb0 = nb1 + c * b_bar, nb0 + c * (1.0 - b_bar)
+    a_cf = _ratio(na1, na1 + na0, a_bar)
+    b_cf = _ratio(nb1, nb1 + nb0, b_bar)
+    onset, persistence = [], []
+    m0 = bool(miss[0]) if miss.size else False
+    for i in range(K):
+        g0 = float(g[0, i]) if miss.size else 0.0
+        if g0 <= 0.0:
+            a, b = float(a_cf[i]), float(b_cf[i])
+        else:
+            a, b = _markov_maximise(float(na1[i]) + g0 * m0, float(na0[i]),
+                                    float(nb1[i]), float(nb0[i]) + g0 * (not m0), g0,
+                                    (float(a_cf[i]), float(b_cf[i])))
+        onset.append(a)
+        persistence.append(b)
+    return StateMarkovMissingness(onset=tuple(onset), persistence=tuple(persistence))
+
+
+def estimate_mechanism(mechanism: str, gamma, miss, *, pseudo_count: float | None = None):
+    """The M-step of ``mechanism`` (``"state"`` or ``"state-markov"``) given the
+    state posteriors ``gamma`` (N, K) and the mask ``miss`` (module docstring,
+    "Estimation"): :func:`estimate_state` or :func:`estimate_state_markov`."""
+    if mechanism == "state":
+        return estimate_state(gamma, miss, pseudo_count=pseudo_count)
+    if mechanism == "state-markov":
+        return estimate_state_markov(gamma, miss, pseudo_count=pseudo_count)
+    raise ValueError(f"Cannot estimate mechanism {mechanism!r}: 'state' or 'state-markov'.")
+
+
+def common_mechanism(mechanism: str, miss, K: int):
+    """Maximum-likelihood state-independent mechanism of the mask ``miss``.
+
+    The null of :func:`pmcprg.pmc.missingness_lr.missingness_lr_test`: the
+    rates do not depend on the state, so the mask is independent of X and its
+    likelihood p(m) is maximised on the mask alone.
+
+    * ``"state"`` — π_i = M / N for every i (M missing rows of N).
+    * ``"state-markov"`` — the two-state Markov chain with stationary start:
+      (a, b) maximises log p(m_0 | s) + Σ_{n ≥ 1} log p(m_n | m_{n−1}), the
+      objective of :func:`estimate_state_markov` with γ ≡ 1 and no guard,
+      from its closed form without the initial term.
+
+    Returns the K-state mechanism with these common values. Its evidence
+    factors do not depend on the state: every posterior is the ignorable one
+    and log p(y_obs, m) = log p(y_obs) + log p(m).
+    """
+    miss = _mask(miss)
+    N, M = miss.size, int(miss.sum())
+    if mechanism == "state":
+        return StateMissingness(rates=(M / N if N else 0.0,) * int(K))
+    if mechanism != "state-markov":
+        raise ValueError(f"Unknown mechanism {mechanism!r}: 'state' or 'state-markov'.")
+    fit = estimate_state_markov(np.ones((N, 1)), miss, pseudo_count=0.0)
+    return StateMarkovMissingness(onset=fit.onset * int(K), persistence=fit.persistence * int(K))
+
+
+def mask_log_likelihood(mechanism, miss) -> float:
+    """log p(m) of a **state-independent** mechanism (every state the same
+    factors — e.g. :func:`common_mechanism`): Σ_n log e_n(i) for any i."""
+    le = mechanism.log_evidence(miss)
+    if le.size and not np.allclose(le, le[:, :1], rtol=0.0, atol=0.0, equal_nan=True):
+        raise ValueError("mask_log_likelihood needs a state-independent mechanism.")
+    return float(le[:, 0].sum()) if le.size else 0.0

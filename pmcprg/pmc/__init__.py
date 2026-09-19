@@ -31,7 +31,10 @@ forecast  : h-step predictive law of (x_{N+k}, y_{N+k}) given Y.
 gap_posterior : α̂, β̂, γ, ξ and log-likelihood of a sequence with missing values.
 StateMissingness, StateMarkovMissingness : non-ignorable missingness mechanisms
             (``PMCModel.missingness``, TOML ``[missingness]``) — the mask is
-            evidence on the hidden states.
+            evidence on the hidden states; ICE / SEM estimate them with the
+            config key ``missingness``.
+missingness_lr_test : likelihood-ratio test of state-dependent missingness
+            (asymptotic χ² and parametric bootstrap).
 ice       : unsupervised ICE parameter estimation (DerrodePieczynski_CSDA2013 §4 +
             DerrodePieczynski_SP2016 §3 GICE).
 sem       : unsupervised Stochastic-EM parameter estimation (sister of ICE).
@@ -59,6 +62,7 @@ from pmcprg.pmc.ice           import (
     ice_image,
 )
 from pmcprg.pmc.sem           import SemResult, SemTrace, sem, sem_image
+from pmcprg.pmc.missingness_lr import MissingnessLRTest, missingness_lr_test
 from pmcprg.pmc.peano         import (
     peano_path,
     image_to_signal,
@@ -98,6 +102,8 @@ __all__ = [
     # non-ignorable missingness mechanisms (PMCModel.missingness)
     "StateMissingness",
     "StateMarkovMissingness",
+    "missingness_lr_test",
+    "MissingnessLRTest",
     # unsupervised estimation
     "ice",
     "ice_image",
