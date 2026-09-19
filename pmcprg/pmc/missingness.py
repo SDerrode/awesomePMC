@@ -164,6 +164,7 @@ __all__ = [
     "estimate_mechanism",
     "common_mechanism",
     "mask_log_likelihood",
+    "describe_mechanism",
 ]
 
 #: Values of ``[missingness].mechanism``; ``"ignorable"`` is the absence of a
@@ -590,3 +591,19 @@ def mask_log_likelihood(mechanism, miss) -> float:
     if le.size and not np.allclose(le, le[:, :1], rtol=0.0, atol=0.0, equal_nan=True):
         raise ValueError("mask_log_likelihood needs a state-independent mechanism.")
     return float(le[:, 0].sum()) if le.size else 0.0
+
+
+def describe_mechanism(mechanism) -> str | None:
+    """A one-line summary of a mechanism's ``[missingness]`` table, e.g.
+    ``"state  (rates = [0.05, 0.30])"`` — shared by the CLI ('estimate') and
+    the GUI (the estimation-result log) to report a carried or estimated
+    mechanism next to a fit's other parameters. ``None`` (ignorable) returns
+    ``None``; the caller decides whether/how to report that case."""
+    if mechanism is None:
+        return None
+    tbl = mechanism.to_table()
+    detail = ", ".join(
+        f"{k} = [{', '.join(f'{v:.4g}' for v in tbl[k])}]"
+        for k in ("rates", "onset", "persistence") if k in tbl
+    )
+    return f"{tbl['mechanism']}  ({detail})"

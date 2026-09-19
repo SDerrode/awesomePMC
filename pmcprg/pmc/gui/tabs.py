@@ -42,8 +42,11 @@ from pmcprg.copulas._base   import CopulaEnum
 from pmcprg.pmc             import ice_estim_defaults, sem_estim_defaults
 from pmcprg.pmc._estim_common import (
     MAX_SWEEP_COMBINATIONS, MULTISTART_FAMILY_MODES, ice_missing_defaults,
+    missingness_defaults,
 )
-from pmcprg.pmc.ice         import MARGIN_SELECTION_RULES, MISSING_STRATEGIES, SELECTION_CRITERIA
+from pmcprg.pmc.ice         import (
+    MARGIN_SELECTION_RULES, MISSING_STRATEGIES, MISSINGNESS_MODES, SELECTION_CRITERIA,
+)
 from pmcprg.pmc.gui.dialogs import _CopulaDialog, _MarginDialog
 from pmcprg.pmc.model       import PMCModel, Variant
 
@@ -53,6 +56,10 @@ from pmcprg.pmc.model       import PMCModel, Variant
 _ICE_DEFAULTS = ice_estim_defaults()
 _SEM_DEFAULTS = sem_estim_defaults()
 _MISSING_DEFAULTS = ice_missing_defaults()
+# Kept out of _ICE_DEFAULTS / _SEM_DEFAULTS on purpose (P6, like
+# copula_margins) — see missingness_defaults()'s docstring and the
+# test_ice_tab_exposes_every_api_config_key contract.
+_MISSINGNESS_DEFAULTS = missingness_defaults()
 
 
 class PriorTabError(ValueError):
@@ -670,8 +677,9 @@ class _IceTab(QWidget):
     ``init``, ``kmeans_seed``, ``n_starts``, ``multistart_seed``,
     ``multistart_jitter``, ``multistart_workers``, ``multistart_families``,
     ``selection_criterion``, ``margin_selection_rule``,
-    ``missing_strategy``, ``missing_draws``, ``missing_seed``) and adds the
-    algorithm switch ``algorithm`` plus
+    ``missing_strategy``, ``missing_draws``, ``missing_seed``,
+    ``missingness`` — P6, :data:`~pmcprg.pmc.ice.MISSINGNESS_MODES`) and adds
+    the algorithm switch ``algorithm`` plus
     its companion ``sem_seed`` for the SEM stochastic completion (see
     :func:`pmcprg.pmc.sem._parse_sem_cfg`).
 
@@ -941,6 +949,25 @@ class _IceTab(QWidget):
             "missing_seed + s."
         )
 
+        # ── Missingness mechanism (P6) — is the mask itself evidence on X? ──
+        # Driven by MISSINGNESS_MODES, same rationale as the criterion and
+        # missing_strategy combos above.
+        self._combo_missingness = QComboBox()
+        self._combo_missingness.addItems(list(MISSINGNESS_MODES))
+        self._combo_missingness.setCurrentText(_MISSINGNESS_DEFAULTS["missingness"])
+        self._combo_missingness.setToolTip(
+            "Handling of the model's [missingness] mechanism (pmcprg.pmc."
+            "missingness) — not the same question as 'Strategy' above, which "
+            "assumes the mask carries no information on X:\n"
+            "  model        — keep the loaded model's own mechanism fixed\n"
+            "                 (or none — the historical default)\n"
+            "  ignorable    — drop it: the mask is treated as MCAR/MAR\n"
+            "  state        — estimate π_i = P(row missing | x_n = i)\n"
+            "  state-markov — estimate onset a_i / persistence b_i (bursts\n"
+            "                 of gaps whose length depends on the state)"
+        )
+        self._combo_missingness.currentTextChanged.connect(self.changed)
+
         # ── Layout ────────────────────────────────────────────────────
         lay.addRow(QLabel("<b>Algorithm</b>"))
         lay.addRow("Estimator:",              self._combo_algorithm)
@@ -967,6 +994,8 @@ class _IceTab(QWidget):
         lay.addRow("Strategy:",               self._combo_missing_strategy)
         lay.addRow("Imputation draws:",       self._spn_missing_draws)
         lay.addRow("Imputation seed:",        self._spn_missing_seed)
+        lay.addRow(QLabel("<b>Missingness mechanism</b>"))
+        lay.addRow("Mechanism:",              self._combo_missingness)
 
         # Disable multistart widgets initially (n_starts=1) and the K-means
         # seed (init=model). The SEM seed defaults to disabled too — only
@@ -1148,6 +1177,11 @@ class _IceTab(QWidget):
                 self._spn_missing_seed, cfg.get("missing_seed", _MISSING_DEFAULTS["missing_seed"]),
                 _MISSING_DEFAULTS["missing_seed"], cast=int))
             self._on_missing_strategy_changed(self._combo_missing_strategy.currentText())
+
+            missingness = str(cfg.get("missingness", _MISSINGNESS_DEFAULTS["missingness"]))
+            if missingness not in MISSINGNESS_MODES:
+                missingness = _MISSINGNESS_DEFAULTS["missingness"]
+            self._combo_missingness.setCurrentText(missingness)
         finally:
             self.blockSignals(False)
 
@@ -1173,4 +1207,5 @@ class _IceTab(QWidget):
             "missing_strategy":  self._combo_missing_strategy.currentText(),
             "missing_draws":     self._spn_missing_draws.value(),
             "missing_seed":      self._spn_missing_seed.value(),
+            "missingness":       self._combo_missingness.currentText(),
         }

@@ -773,6 +773,64 @@ print(metrics.error_rate_split(X, X_hat, mask))  # error on missing / observed p
   MI, Pearson, CRPS, interval coverage) and classification on missing vs
   observed positions.
 
+#### State-dependent missingness
+
+Everything above treats the mask as **ignorable** (MCAR/MAR): it carries no
+information on the states. Use a **state-dependent** mechanism instead when
+dropouts track the hidden regime — e.g. sensor windows go missing far more
+often during high-intensity activity than at rest, as observed on PAMAP2
+(`report/real_series/README.md`, "Missingness is state-dependent"). A
+`[missingness]` table on the model (`pmcprg.pmc.missingness`) then makes the
+mask evidence on the states, `m ⟂ y | x`:
+
+```toml
+[missingness]
+mechanism = "state"          # per-state rates, independent rows
+rates = [0.01, 0.3]          # π_i = P(row missing | x_n = i)
+
+# or, for bursts of gaps whose length depends on the state:
+# [missingness]
+# mechanism = "state-markov"
+# onset = [0.002, 0.02]        # a_i: P(gap starts | x_n = i)
+# persistence = [0.8, 0.95]    # b_i: P(gap continues | x_n = i)
+```
+
+```python
+from pmcprg.pmc import PMCModel, StateMissingness
+
+mdl = PMCModel("pmcprg/pmc/models/hmc_in_gauss_k2.toml")
+mdl_mnar = mdl.with_missingness(StateMissingness(rates=(0.02, 0.3)))
+```
+
+ICE and SEM estimate the mechanism with the `missingness` config key
+(`"model"`, default, carries it fixed; `"ignorable"` drops it; `"state"` /
+`"state-markov"` estimate it — also `pmc estimate --missingness`):
+
+```python
+from pmcprg.pmc import ice
+
+fitted, trace = ice(mdl, Y_gap, ice_cfg={"missingness": "state"})
+print(fitted.missingness)              # StateMissingness(rates=(...))
+print(trace.missingness_history[-1])   # its [missingness] table
+```
+
+`missingness_lr_test` is a likelihood-ratio test of a state-dependent
+mechanism (H1) against a state-independent one of the same kind (H0), fitted
+by ICE, with an asymptotic χ² p-value and an optional parametric bootstrap
+(also `pmc missingness-lr-test`):
+
+```python
+from pmcprg.pmc import missingness_lr_test
+
+test = missingness_lr_test(mdl, Y_gap, alternative="state", n_bootstrap=200, seed=0)
+print(test.summary())
+```
+
+Documented limit: when the hidden states are close to i.i.d. (a transition
+matrix with near-equal rows) the per-state rates are not identified from the
+observed mixture alone, and the ICE estimates wander instead of converging
+(`pmcprg/pmc/missingness.py`, section "Estimation").
+
 ### Command-line interface
 
 ```
@@ -784,8 +842,9 @@ pmc COMMAND [options]            # or: python -m pmcprg.pmc COMMAND [options]
 | `simulate` | Generate a synthetic (X, Y) sequence |
 | `classify` | Supervised MPM classification of a 1-D signal |
 | `classify-image` | Supervised MPM classification of a 2-D image (generalised Hilbert path) |
-| `estimate` | Unsupervised parameter estimation — `--algorithm {ice,sem}` (default `ice`) |
+| `estimate` | Unsupervised parameter estimation — `--algorithm {ice,sem}` (default `ice`); `--missingness {model,ignorable,state,state-markov}` |
 | `estimate-image` | Unsupervised estimation on a 2-D image — `--algorithm {ice,sem}` |
+| `missingness-lr-test` | Likelihood-ratio test of state-dependent missingness (`--alternative`, `--null`, `--bootstrap`) |
 | `gui` | Launch the PyQt6 graphical interface |
 
 `pmc COMMAND --help` lists the options of each command.
@@ -814,6 +873,12 @@ pmc estimate \
 # Image: estimate from the image, then segment it (needs the [image] extra)
 pmc estimate-image --model init.toml --image photo.png --fit-margins --out fitted.toml
 pmc classify-image --model fitted.toml --image photo.png --out segmentation.png
+
+# State-dependent missingness: estimate the mechanism, then test it
+pmc estimate --model pmcprg/pmc/models/hmc_in_gauss_k2.toml --data gaps.csv \
+    --missingness state --out fitted.toml
+pmc missingness-lr-test --model pmcprg/pmc/models/hmc_in_gauss_k2.toml \
+    --data gaps.csv --alternative state --bootstrap 200
 
 # Launch GUI (with optional startup model)
 pmc gui pmcprg/pmc/models/pmc_gauss_k2.toml
@@ -849,7 +914,7 @@ The window is divided into a **model editor** (left) and a **result viewer** (ri
 
 - **File menu**: open / save TOML models; load data (CSV) or an image; save
   data, segmentation, results and plots
-- **Analysis menu**: τ confidence intervals, margin adequacy (KS)
+- **Analysis menu**: τ confidence intervals, margin adequacy (KS), missingness LR test
 - **Double-click** any Margins or Copulas cell to edit the distribution or copula parameters
 - Long-running operations (simulate, classify, estimate) run in a background thread — the GUI stays responsive
 

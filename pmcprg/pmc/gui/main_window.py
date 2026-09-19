@@ -110,6 +110,7 @@ from pmcprg.pmc.gui.tabs    import PriorTabError, _CopulaTab, _IceTab, _MarginTa
 from pmcprg.pmc.gui.worker  import _Worker                        # noqa: E402
 from pmcprg.pmc             import IceTrace, SemResult            # noqa: E402
 from pmcprg.pmc.inference   import error_rate                     # noqa: E402
+from pmcprg.pmc.missingness import describe_mechanism as missingness_summary  # noqa: E402
 from pmcprg.pmc.model       import PMCModel                       # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -392,6 +393,19 @@ class PMCMainWindow(QMainWindow):
         )
         self._act_margin_ks.triggered.connect(self._on_margin_ks)
         self._analysis_actions = [self._act_tau_ci, self._act_margin_ks]
+
+        # P6: unlike τ CI / margin KS, this applies to every variant — the
+        # mask is evidence on the states whether or not the model uses
+        # copulas — so it is enabled separately, not through
+        # ``_analysis_actions`` (which requires ``uses_copula``).
+        self._act_missingness_lr = analysis.addAction("Missingness LR test…")
+        self._act_missingness_lr.setToolTip(
+            "Likelihood-ratio test of state-dependent missingness "
+            "(pmcprg.pmc.missingness_lr_test): 'state' (π_i per state) "
+            "against a common (state-independent) rate. Needs data with "
+            "both missing and observed rows."
+        )
+        self._act_missingness_lr.triggered.connect(self._on_missingness_lr_test)
 
         hlp = bar.addMenu("&Help")
         hlp.addAction("About").triggered.connect(self._on_about)
@@ -1174,6 +1188,9 @@ class PMCMainWindow(QMainWindow):
                 enabled and self._model is not None
                 and self._model.variant.uses_copula
             )
+        # The missingness LR test applies to every variant, copula or not.
+        if hasattr(self, "_act_missingness_lr"):
+            self._act_missingness_lr.setEnabled(enabled and self._model is not None)
 
     def _set_busy(self, busy: bool):
         """Lock or release every entry point that mutates state (audit S-1).
@@ -1896,6 +1913,12 @@ class PMCMainWindow(QMainWindow):
                 f"⚠ {algo_label}: degenerate fitted model — "
                 + "; ".join(str(f) for f in degenerate)
             )
+        # P6: the fitted [missingness] mechanism, alongside the other
+        # estimated parameters (log-lik, degenerate states above) — silent
+        # when ignorable (``fitted.missingness is None``, most models).
+        mech_summary = missingness_summary(self._model.missingness)
+        if mech_summary is not None:
+            self._log_append(f"Missingness: {mech_summary}")
         # Refresh the View selector (ICE/SEM views just became available)
         # and auto-switch to the dashboard.
         self._populate_view_selector()
@@ -1981,6 +2004,55 @@ class PMCMainWindow(QMainWindow):
         self._margin_ks_state = list(rows)
         self._populate_view_selector()
         self._switch_view(_VIEW_MARGIN_KS)
+
+    # ------------------------------------------------------------------
+    # Action: Missingness LR test (P6) — text-only result, no dedicated view.
+    # ------------------------------------------------------------------
+
+    def _on_missingness_lr_test(self):
+        if self._last_Y is None:
+            QMessageBox.warning(self, "No data",
+                                "Run Simulate first or load a CSV data file.")
+            return
+        from pmcprg.pmc.gaps import missing_mask
+        Y = self._last_Y
+        miss = missing_mask(Y)
+        if not (0 < int(miss.sum()) < len(miss)):
+            QMessageBox.information(
+                self, "Not applicable",
+                "The missingness LR test needs data with both missing "
+                "and observed rows (none here).",
+            )
+            return
+        try:
+            mdl = self._rebuild_model_from_widgets()
+        except PriorTabError as exc:
+            QMessageBox.warning(self, "Invalid prior", str(exc))
+            return
+        except Exception as exc:
+            logger.exception("Model rebuild failed before the missingness LR test")
+            QMessageBox.critical(self, "Model Error", str(exc))
+            return
+        self._start_worker(
+            self._do_missingness_lr_test, mdl, Y,
+            on_done=self._on_missingness_lr_test_done,
+            forward_progress=False,
+            progress_label="Missingness LR",
+        )
+
+    @staticmethod
+    def _do_missingness_lr_test(mdl, Y, *, progress_cb=None):
+        """Worker entry: the default test, 'state' (H1) vs a common rate (H0).
+
+        No bootstrap (``n_bootstrap=0``, the asymptotic χ² p-value only) —
+        a bootstrap run costs 2×B extra ICE fits, better driven from a script
+        (``pmcprg.pmc.missingness_lr_test``) than a blocking menu action.
+        """
+        from pmcprg.pmc.missingness_lr import missingness_lr_test
+        return missingness_lr_test(mdl, Y, progress_cb=progress_cb)
+
+    def _on_missingness_lr_test_done(self, result):
+        self._log_append(result.summary())
 
     def _on_tau_ci(self):
         if self._last_Y is None:

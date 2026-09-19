@@ -5,9 +5,10 @@ Usage
 -----
   python -m pmcprg.pmc simulate       --model MODEL.toml [--N 5000] [--seed 42] [--out seq.csv]
   python -m pmcprg.pmc classify       --model MODEL.toml --data seq.csv  [--out res.csv] [--ref ref_col]
-  python -m pmcprg.pmc estimate       --model INIT.toml  --data seq.csv  [--out fitted.toml]
+  python -m pmcprg.pmc estimate       --model INIT.toml  --data seq.csv  [--out fitted.toml] [--missingness MODE]
   python -m pmcprg.pmc classify-image --model MODEL.toml --image img.png [--out seg.png] [--ref-image ref.png]
   python -m pmcprg.pmc estimate-image --model INIT.toml  --image img.png [--out fitted.toml]
+  python -m pmcprg.pmc missingness-lr-test --model MODEL.toml --data seq.csv [--alternative state] [--null common] [--bootstrap 0]
   python -m pmcprg.pmc gui [MODEL.toml]
   python -m pmcprg.pmc --help
 
@@ -36,6 +37,17 @@ Image I/O
   JPG, BMP, TIFF, …). Images are converted to grayscale (PIL ``L`` mode)
   and linearised along the Generalized Hilbert ("gilbert") path before
   being passed to the same forward-backward / ICE machinery as 1D signals.
+
+Missingness mechanism (P6, pmcprg.pmc.missingness)
+----------------------------------------------------
+  'estimate --missingness {model,ignorable,state,state-markov}' controls how
+  the missing (NaN) rows of Y are handled: 'model' (default) keeps the
+  model's own [missingness] table fixed, 'ignorable' drops it, and 'state' /
+  'state-markov' estimate it by ICE or SEM. The fitted mechanism, if any, is
+  printed and written to --out (its TOML [missingness] table).
+  'missingness-lr-test' runs the likelihood-ratio test of state-dependent
+  missingness (pmcprg.pmc.missingness_lr_test) on a model and a data file and
+  prints its summary().
 """
 
 import argparse
@@ -147,6 +159,13 @@ def _read_observations(
 #: model with pair-indexed margins.
 EXIT_PAIR_ESTIMATION_FAILED = 2
 
+#: Values of 'estimate --missingness' (P6) — mirrors
+#: :data:`pmcprg.pmc.ice.MISSINGNESS_MODES`, hardcoded here (like the
+#: 'estimate --algorithm' choices) so building the parser — and so
+#: '--help' — does not pull in ICE's heavier import graph. A contract test
+#: in test_cli.py checks the two stay in sync.
+_MISSINGNESS_MODES = ("model", "ignorable", "state", "state-markov")
+
 
 def _is_pair(mdl) -> bool:
     return getattr(mdl, "margin_structure", "state") == "pair"
@@ -218,6 +237,18 @@ def _print_fit_summary(trace) -> None:
     if degenerate:
         where = ", ".join(dict.fromkeys(f.where for f in degenerate))
         print(f"  Degenerate    : {where}  (see the WARNING on stderr)")
+
+
+def _print_missingness(fitted) -> None:
+    """The fitted model's ``[missingness]`` mechanism, on stdout (P6).
+
+    Silent when the mechanism is ignorable (``fitted.missingness is None``),
+    i.e. the historical case — most models have none.
+    """
+    from pmcprg.pmc.missingness import describe_mechanism
+    summary = describe_mechanism(fitted.missingness)
+    if summary is not None:
+        print(f"  Missingness   : {summary}")
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +352,8 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         cfg["sem_seed"] = args.sem_seed
     if getattr(args, "best_iterate", False):
         cfg["return_best_iterate"] = True
+    if getattr(args, "missingness", None) is not None:
+        cfg["missingness"] = args.missingness
 
     algorithm = getattr(args, "algorithm", "ice")
     label     = algorithm.upper()
@@ -333,6 +366,7 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         return EXIT_PAIR_ESTIMATION_FAILED
     fitted, trace = result
     _print_fit_summary(trace)
+    _print_missingness(fitted)
 
     if X_ref is not None:
         X_hat, _, _ = classify(fitted, Y)
@@ -455,6 +489,40 @@ def cmd_estimate_image(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Sub-command: missingness-lr-test (P6)
+# ---------------------------------------------------------------------------
+
+def cmd_missingness_lr_test(args: argparse.Namespace) -> int:
+    from pmcprg.pmc.missingness_lr import missingness_lr_test
+    from pmcprg.pmc.model         import PMCModel
+
+    mdl = PMCModel(args.model)
+
+    try:
+        Y, _ = _read_observations(args.data, ref_col="")
+    except CSVLoadError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Running the missingness LR test ({args.alternative} vs {args.null}) "
+        f"on {mdl.name}  ({_model_tag(mdl, N=len(Y))}) …"
+    )
+    try:
+        result = missingness_lr_test(
+            mdl, Y,
+            alternative=args.alternative, null=args.null,
+            n_bootstrap=args.bootstrap, seed=args.seed,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    print(result.summary())
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -566,6 +634,15 @@ def build_parser() -> argparse.ArgumentParser:
              "last one (config key return_best_iterate).",
     )
     p_est.add_argument(
+        "--missingness", choices=_MISSINGNESS_MODES, default=None, metavar="MODE",
+        help="Missingness-mechanism handling of Y's missing (NaN) rows "
+             "(config key 'missingness', pmcprg.pmc.missingness): 'model' "
+             "(default) keeps the model's own [missingness] mechanism fixed; "
+             "'ignorable' drops it (observed-data likelihood only); 'state' "
+             "and 'state-markov' estimate it from the data. The fitted "
+             "mechanism, if any, is printed and saved to --out.",
+    )
+    p_est.add_argument(
         "--ref", default="X", metavar="COL",
         help="Reference label column for error rate (default: 'X'). Pass '' to skip.",
     )
@@ -650,6 +727,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force RGB load (default: auto — RGB if model.d > 1 else grayscale).",
     )
     p_esti.set_defaults(func=cmd_estimate_image)
+
+    # ── missingness-lr-test ──────────────────────────────────────────────
+    p_mlr = sub.add_parser(
+        "missingness-lr-test",
+        help="Likelihood-ratio test of state-dependent missingness "
+             "(pmcprg.pmc.missingness_lr_test).",
+    )
+    p_mlr.add_argument(
+        "--model", "-m", required=True, metavar="MODEL.toml",
+        help="Path to the TOML model file (starting point of the null fit).",
+    )
+    p_mlr.add_argument(
+        "--data", "-d", required=True, metavar="DATA.csv",
+        help="CSV file with the observation sequence (column 'Y'); it must "
+             "hold both missing and observed rows.",
+    )
+    p_mlr.add_argument(
+        "--alternative", choices=("state", "state-markov"), default="state",
+        help="H1 mechanism: 'state' (π_i per state, default) or "
+             "'state-markov' (onset a_i, persistence b_i per state).",
+    )
+    p_mlr.add_argument(
+        "--null", choices=("common", "state"), default="common",
+        help="H0: 'common' (a state-independent mechanism of the same kind, "
+             "default) or 'state' (only against --alternative state-markov).",
+    )
+    p_mlr.add_argument(
+        "--bootstrap", type=int, default=0, metavar="B",
+        help="Parametric-bootstrap replicates (default: 0, asymptotic "
+             "chi2 p-value only). Each replicate costs two ICE fits.",
+    )
+    p_mlr.add_argument(
+        "--seed", type=int, default=0, metavar="SEED",
+        help="Seed of the bootstrap (separate streams for the paths and masks).",
+    )
+    p_mlr.set_defaults(func=cmd_missingness_lr_test)
 
     # ── gui ───────────────────────────────────────────────────────────────
     p_gui = sub.add_parser(

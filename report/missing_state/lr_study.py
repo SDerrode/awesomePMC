@@ -35,14 +35,28 @@ replication.
 Seeds: ``zlib.crc32`` of named tuples; the path, the mask and the bootstrap
 path and mask of a replication have four distinct seeds.
 
+The statistic. ``results/lr_study.csv`` and ``results/lr_direct.csv`` were
+measured when the statistic was the difference of the two ICE fits,
+2 (LL1(θ̂1, φ̂1) − LL0(θ̂0)) — now ``statistic_fits`` (column ``LR`` there).
+``--profile`` reruns the cells of ``PROFILE_PLAN`` with the same seeds and
+the profile statistic of :mod:`pmcprg.pmc.missingness_lr` (column ``LR``;
+``LR_fits`` is the fits' difference, bit-identical to the first study's
+``LR``), for a paired comparison (``summarise_profile``). ``--direct-study``
+runs a genuine B = 99 bootstrap on replications of the HMC-DN Markov null of
+the study (``DIRECT_STUDY_R``). Why: ``lr_diagnosis.py`` and ``README.md``,
+"Diagnosis".
+
 Run (from the repository root)::
 
     .venv/bin/python report/missing_state/lr_study.py --jobs 6            # everything
     .venv/bin/python report/missing_state/lr_study.py --jobs 6 --direct   # warp-speed check
+    .venv/bin/python report/missing_state/lr_study.py --jobs 6 --profile  # paired rerun
+    .venv/bin/python report/missing_state/lr_study.py --jobs 6 --direct-study
     .venv/bin/python report/missing_state/lr_study.py --summarise         # tables only
 
-Writes ``results/lr_study.csv`` (one row per replication) and
-``results/lr_direct.csv``, and prints the tables of ``README.md``.
+Writes ``results/lr_study.csv`` (one row per replication),
+``results/lr_direct.csv``, ``results/lr_study_profile.csv`` and
+``results/lr_direct_dn.csv``, and prints the tables of ``README.md``.
 
 References
 ----------
@@ -103,6 +117,22 @@ PLAN = {
     ("hmc_in", "markov-both@5000"): ((5000,), 100),
 }
 
+#: The cells rerun with the profile statistic (``--profile``): HMC-IN at
+#: N = 500, every scenario (the three tests), and the HMC-DN Markov test at
+#: N = 500 and 1000 — same seeds as ``PLAN``, so paired with ``lr_study.csv``.
+PROFILE_PLAN = {
+    **{("hmc_in", s): ((500,), R) for (m, s), (_, R) in PLAN.items()
+       if m == "hmc_in" and "@" not in s},
+    **{("hmc_dn", s): ((500, 1000), R) for (m, s), (_, R) in PLAN.items()
+       if m == "hmc_dn" and s.startswith("markov")},
+}
+
+#: Replications of the HMC-DN Markov null (N = 500) given a genuine B = 99
+#: bootstrap (``--direct-study``): the four largest statistics of the study
+#: (LR of the fits 11.1–16.6; 10.6–14.0 by direct maximisation) and the
+#: first two.
+DIRECT_STUDY_R = (78, 197, 11, 198, 0, 1)
+
 
 def _seed(*parts) -> int:
     return zlib.crc32(repr(parts).encode()) % 2**31
@@ -156,6 +186,8 @@ def _job(args):
         return row
     row.update(LR=res.statistic, df=res.df, p_asym=res.p_value,
                ll0=res.log_lik_null, ll1=res.log_lik_alt,
+               LR_fits=res.statistic_fits, sup0=res.sup_log_lik_null, sup1=res.sup_log_lik_alt,
+               **{f"prof_{k}": v for k, v in res.profile_log_liks.items()},
                **_flat("true_", params), **_flat("alt_", res.alt_params),
                **_flat("null_", res.null_params))
     if warp:
@@ -169,7 +201,11 @@ def _job(args):
 
 
 def _job_direct(args):
-    model_name, scen, N, r, B = args
+    """A genuine B-replicate bootstrap. ``tag`` "direct": data of their own
+    (seeds "direct-sim", "direct-mask"); "study": the data of replication r
+    of the study (seeds "sim", "mask" — the same series and mask as
+    ``_job``)."""
+    model_name, scen, N, r, B, tag = args
     import logging as _lg
     _lg.disable(_lg.WARNING)
     from pmcprg.pmc import simulate
@@ -177,13 +213,18 @@ def _job_direct(args):
     mech, params, (alt, null), role = SCENARIOS[scen]
     m = _model(model_name)
     t0 = time.time()
-    X, Y = simulate(m, N=N, seed=_seed("direct-sim", model_name, scen, N, r))
-    Yn = _mask(Y, X, mech, params, _seed("direct-mask", model_name, scen, N, r))
+    pre = "direct-" if tag == "direct" else ""
+    X, Y = simulate(m, N=N, seed=_seed(f"{pre}sim", model_name, scen, N, r))
+    Yn = _mask(Y, X, mech, params, _seed(f"{pre}mask", model_name, scen, N, r))
     res = missingness_lr_test(m, Yn, alternative=alt, null=null, ice_cfg=ICE_CFG[model_name],
                               n_bootstrap=B, seed=_seed("direct-boot", model_name, scen, N, r))
-    return {"model": model_name, "scenario": scen, "N": N, "r": r, "B": B,
-            "LR": res.statistic, "p_asym": res.p_value, "p_boot": res.p_value_bootstrap,
-            "B_valid": res.n_bootstrap_valid, "seconds": time.time() - t0}
+    boot = np.asarray(res.bootstrap_statistics, dtype=float)
+    return {"model": model_name, "scenario": scen, "N": N, "r": r, "B": B, "data": tag,
+            "LR": res.statistic, "LR_fits": res.statistic_fits, "p_asym": res.p_value,
+            "p_boot": res.p_value_bootstrap, "B_valid": res.n_bootstrap_valid,
+            "boot_q95": float(np.quantile(boot, 0.95)) if boot.size else np.nan,
+            "boot_mean": float(boot.mean()) if boot.size else np.nan,
+            "seconds": time.time() - t0}
 
 
 def _run(fn, jobs, workers, path):
@@ -279,6 +320,56 @@ def summarise(path=OUT / "lr_study.csv", direct=OUT / "lr_direct.csv"):
                   f"{b:.3f} ± {sb:.3f} | {np.mean([r['B_valid'] for r in rs]):.1f} |")
 
 
+def summarise_profile(path=OUT / "lr_study_profile.csv", before=OUT / "lr_study.csv",
+                      direct=OUT / "lr_direct_dn.csv"):
+    """Paired table: the fits' statistic (``lr_study.csv``, same seeds) against
+    the profile statistic (``lr_study_profile.csv``)."""
+    if not Path(path).exists():
+        return
+    old = {(r["model"], r["scenario"], int(r["N"]), int(r["r"])): r for r in _read(before)}
+    cells = {}
+    for r in _read(path):
+        cells.setdefault((r["model"], r["scenario"], int(r["N"])), []).append(r)
+    print("\n### Before (difference of the fits) and after (profile statistic), paired\n")
+    print("| model | test | scenario | N | R | fits: mean LR, #<0 | reject χ² | reject boot (crit) "
+          "| profile: mean LR, min | reject χ² | reject boot (crit) | max \\|LR − fits\\| | fits bit-identical |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    order = lambda kv: (kv[0][0], list(SCENARIOS).index(kv[0][1]), kv[0][2])   # noqa: E731
+    for (mdl, scen, N), rs in sorted(cells.items(), key=order):
+        pre = [old[(mdl, scen, N, int(r["r"]))] for r in rs]
+        df = int(rs[0]["df"])
+        q = _chi2q(df)
+        lr_old = np.array([p["LR"] for p in pre])
+        lr_fit = np.array([r["LR_fits"] for r in rs])
+        lr_new = np.array([r["LR"] for r in rs])
+        same = int(np.sum(lr_old == lr_fit))
+
+        def boot(lr, warp):
+            w = np.asarray(warp, dtype=float)
+            w = w[np.isfinite(w)]
+            if not w.size:
+                return "—"
+            c = float(np.quantile(w, 0.95))
+            b, sb = _rate(lr > c)
+            return f"{b:.3f} ± {sb:.3f} ({c:.2f})"
+        a0, s0 = _rate(lr_old > q)
+        a1, s1 = _rate(lr_new > q)
+        print(f"| {mdl} | {rs[0]['alternative']} vs {rs[0]['null']} | {scen} | {N} | {len(rs)} | "
+              f"{lr_old.mean():.2f}, {int((lr_old < 0).sum())} | {a0:.3f} ± {s0:.3f} | "
+              f"{boot(lr_old, [p.get('LR_warp', np.nan) for p in pre])} | "
+              f"{lr_new.mean():.2f}, {lr_new.min():.2g} | {a1:.3f} ± {s1:.3f} | "
+              f"{boot(lr_new, [r.get('LR_warp', np.nan) for r in rs])} | "
+              f"{np.max(np.abs(lr_new - lr_fit)):.3g} | {same}/{len(rs)} |")
+    if Path(direct).exists():
+        print("\n### Genuine bootstrap, B = 99, study replications (profile statistic)\n")
+        print("| r | LR (fits) | LR | p χ² | p bootstrap | bootstrap q95 | bootstrap mean | B valid |")
+        print("|---|---|---|---|---|---|---|---|")
+        for r in sorted(_read(direct), key=lambda d: -d["LR"]):
+            print(f"| {int(r['r'])} | {r['LR_fits']:.2f} | {r['LR']:.2f} | {r['p_asym']:.4f} | "
+                  f"{r['p_boot']:.2f} | {r['boot_q95']:.2f} | {r['boot_mean']:.2f} | "
+                  f"{int(r['B_valid'])} |")
+
+
 def _chi2q(df):
     from scipy.stats import chi2
     return float(chi2.ppf(0.95, df))
@@ -291,19 +382,30 @@ def main():
     ap.add_argument("--direct", action="store_true", help="the B = 99 check only")
     ap.add_argument("--summarise", action="store_true", help="tables from the CSV files only")
     ap.add_argument("--only", default="", help="comma-separated models (hmc_in, hmc_dn)")
+    ap.add_argument("--profile", action="store_true",
+                    help="the cells of PROFILE_PLAN → results/lr_study_profile.csv")
+    ap.add_argument("--direct-study", action="store_true",
+                    help="B = 99 on replications of the study's HMC-DN Markov null, N = 500")
     args = ap.parse_args()
     logging.disable(logging.WARNING)
     if args.summarise:
         summarise()
+        summarise_profile()
         return
     if args.direct:
-        jobs = [("hmc_in", "state-null", 500, r, 99) for r in range(200)]
+        jobs = [("hmc_in", "state-null", 500, r, 99, "direct") for r in range(200)]
         _run(_job_direct, jobs, args.jobs, OUT / "lr_direct.csv")
         summarise()
         return
+    if args.direct_study:
+        jobs = [("hmc_dn", "markov-null", 500, r, 99, "study") for r in DIRECT_STUDY_R]
+        _run(_job_direct, jobs, args.jobs, OUT / "lr_direct_dn.csv")
+        summarise()
+        return
     only = set(filter(None, args.only.split(",")))
+    plan = PROFILE_PLAN if args.profile else PLAN
     jobs = []
-    for (mdl, scen), (Ns, R) in PLAN.items():
+    for (mdl, scen), (Ns, R) in plan.items():
         if only and mdl not in only:
             continue
         for N in Ns:
@@ -311,7 +413,8 @@ def main():
                 jobs.append((mdl, scen, N, r, "@" not in scen))
     # the slow cells first, so the pool stays busy
     jobs.sort(key=lambda j: -(j[2] * (8 if j[0] == "hmc_dn" else 1)))
-    path = OUT / ("lr_study_quick.csv" if args.quick else "lr_study.csv")
+    name = "lr_study_profile" if args.profile else "lr_study"
+    path = OUT / (f"{name}_quick.csv" if args.quick else f"{name}.csv")
     _run(_job, jobs, args.jobs, path)
     summarise(path)
 

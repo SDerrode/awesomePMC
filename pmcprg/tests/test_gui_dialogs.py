@@ -1775,6 +1775,96 @@ def test_ice_tab_missing_draws_and_seed_disabled_unless_impute(qapp):
 
 
 # ---------------------------------------------------------------------------
+# _IceTab — missingness-mechanism widget (config key ``missingness``, P6)
+# ---------------------------------------------------------------------------
+
+def test_ice_tab_missingness_widget_default_from_missingness_defaults(qapp):
+    """The combobox exists, offers every mode, and starts at the default."""
+    from pmcprg.pmc._estim_common import missingness_defaults
+    from pmcprg.pmc.gui.tabs import _IceTab
+    from pmcprg.pmc.ice import MISSINGNESS_MODES
+
+    defaults = missingness_defaults()
+    tab = _IceTab()
+    assert set(tab._combo_missingness.itemText(i)
+               for i in range(tab._combo_missingness.count())) == set(MISSINGNESS_MODES)
+    assert tab._combo_missingness.currentText() == defaults["missingness"]
+    cfg = tab.get_cfg()
+    assert cfg["missingness"] == defaults["missingness"]
+
+
+@pytest.mark.parametrize("mode", ["model", "ignorable", "state", "state-markov"])
+def test_ice_tab_missingness_widget_round_trip(qapp, mode):
+    """load() -> get_cfg() preserves each of the four modes."""
+    from pmcprg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    tab.load({"missingness": mode})
+    assert tab.get_cfg()["missingness"] == mode
+
+
+def test_ice_tab_missingness_widget_falls_back_on_a_bad_value(qapp):
+    """An invalid TOML value falls back to the default rather than raising —
+    same guard as ``init`` / ``missing_strategy`` in ``load()``."""
+    from pmcprg.pmc._estim_common import missingness_defaults
+    from pmcprg.pmc.gui.tabs import _IceTab
+
+    tab = _IceTab()
+    tab.load({"missingness": "nonsense"})
+    assert tab.get_cfg()["missingness"] == missingness_defaults()["missingness"]
+
+
+def test_ice_tab_missingness_reaches_the_estimator_config(qapp):
+    """A mode picked in the GUI must survive into the merged ice cfg."""
+    import pathlib
+
+    from pmcprg.pmc.gui.tabs import _IceTab
+    from pmcprg.pmc.ice import _parse_ice_cfg
+    from pmcprg.pmc.model import PMCModel
+
+    tab = _IceTab()
+    tab._combo_missingness.setCurrentText("state")
+    mdl = PMCModel(pathlib.Path("pmcprg/pmc/models/pmc_gauss_k2.toml"))
+    cfg = _parse_ice_cfg(mdl, tab.get_cfg())
+    assert cfg["missingness"] == "state"
+
+
+# ---------------------------------------------------------------------------
+# A model's own [missingness] table survives GUI edits and a save round trip
+# ---------------------------------------------------------------------------
+
+def test_a_models_missingness_table_survives_gui_edit_and_save(qapp, tmp_path):
+    """Loading a model with a ``[missingness]`` table, editing an unrelated
+    widget and saving keeps the table — ``_rebuild_model_from_widgets`` never
+    touches ``raw["missingness"]`` (unlike ``raw["ice"]``, which the ICE tab
+    rebuilds from its own widgets)."""
+    import pathlib
+
+    from pmcprg.pmc.gui.main_window import PMCMainWindow
+    from pmcprg.pmc.missingness import StateMissingness
+    from pmcprg.pmc.model import PMCModel
+
+    src = PMCModel(pathlib.Path("pmcprg/pmc/models/hmc_in_gauss_k2.toml"))
+    mdl = src.with_missingness(StateMissingness(rates=(0.05, 0.3)))
+
+    win = PMCMainWindow()
+    win._model = mdl
+    win._sync_widgets_from_model()
+    # Touch an unrelated widget, as a real edit would.
+    win._spn_N.setValue(win._spn_N.value() + 1)
+
+    rebuilt = win._rebuild_model_from_widgets()
+    assert isinstance(rebuilt.missingness, StateMissingness)
+    assert rebuilt.missingness.rates == mdl.missingness.rates
+
+    out = tmp_path / "roundtrip.toml"
+    rebuilt.save(out)
+    reloaded = PMCModel(out)
+    assert isinstance(reloaded.missingness, StateMissingness)
+    assert reloaded.missingness.rates == mdl.missingness.rates
+
+
+# ---------------------------------------------------------------------------
 # Multivariate observations (d ≥ 2) — audit G-4, G-5, G-6
 # ---------------------------------------------------------------------------
 
@@ -3197,6 +3287,53 @@ def test_margin_ks_reaches_the_diagnostics_subpackage(qapp):
     # The view must redraw the very sample the statistic was computed on.
     Y_used, X_draw = w._margin_ks_sample
     assert Y_used is not None and len(X_draw) == len(Y_used)
+
+
+def test_missingness_lr_test_action_exists_and_is_not_copula_gated(qapp):
+    """Analysis > Missingness LR test — unlike τ CI / margin KS, this applies
+    to every variant (the mask is evidence on the states whether or not the
+    model uses copulas), so it must not be gated by ``uses_copula`` (P6)."""
+    import pathlib
+
+    from pmcprg.pmc.gui.main_window import PMCMainWindow
+    from pmcprg.pmc.model import PMCModel
+
+    w = PMCMainWindow(_MODEL_A)
+    assert any(a.text() == "&Analysis" for a in w.menuBar().actions())
+    assert hasattr(w, "_act_missingness_lr")
+    assert w._act_missingness_lr not in w._analysis_actions
+
+    # A non-copula (HMC-IN) model still enables it — τ CI / margin KS do not.
+    hmc = PMCModel(pathlib.Path("pmcprg/pmc/models/hmc_in_gauss_k2.toml"))
+    assert not hmc.variant.uses_copula
+    w._model = hmc
+    w._set_buttons_enabled(True)
+    assert w._act_missingness_lr.isEnabled()
+    assert not w._act_tau_ci.isEnabled()
+
+
+def test_missingness_lr_test_worker_entry_logs_the_test_summary(qapp):
+    """The worker entry (default test: 'state' vs a common rate) and
+    ``_on_missingness_lr_test_done`` log ``summary()`` — same pattern as
+    ``_do_tau_ci`` / ``_on_tau_ci_done`` (no dedicated view, P6 report)."""
+    import pathlib
+
+    from pmcprg.missing.patterns import state_dependent
+    from pmcprg.pmc.gui.main_window import PMCMainWindow
+    from pmcprg.pmc.missingness_lr import MissingnessLRTest
+    from pmcprg.pmc.model    import PMCModel
+    from pmcprg.pmc.simulate import simulate
+
+    mdl = PMCModel(pathlib.Path("pmcprg/pmc/models/hmc_in_gauss_k2.toml"))
+    X, Y = simulate(mdl, N=200, seed=0)
+    Yn, _ = state_dependent(Y, X, (0.05, 0.3), seed=1)
+
+    w = PMCMainWindow()
+    result = PMCMainWindow._do_missingness_lr_test(mdl, Yn)
+    assert isinstance(result, MissingnessLRTest)
+    w._on_missingness_lr_test_done(result)
+    assert "Likelihood-ratio test of state-dependent missingness" in w._log.toPlainText()
+    assert f"LR = {result.statistic:.4f}" in w._log.toPlainText()
 
 
 @pytest.mark.slow

@@ -6,6 +6,9 @@
   optimiser), the ``"state"`` fit for the nested test;
 * the alternative's log-likelihood, the statistic, the degrees of freedom and
   the χ² p-value;
+* the profile statistic: ℓ_h(θ) at the θ of both fits against a generic
+  optimiser, the suprema, LR ≥ 0; on HMC-DN, a series whose fits' difference
+  is negative (a replication of ``report/missing_state/lr_study.py``);
 * the parametric bootstrap: p-value formula, reproducibility, separate seed
   streams for the paths and the masks, the null mechanism of the masks;
 * validation, ``summary``;
@@ -86,6 +89,48 @@ def _max_mask_markov(m):
 _REL = 1e-13
 _FIT = {"fit_margins": True}
 
+# The profiles ℓ_h(θ) stop as ICE does (a step gaining < 1e-8 |LL|). Measured
+# against a Nelder–Mead maximisation of the definition on the data sets of
+# the three tests below (HMC-IN, N = 600, both θ of each test): the profile is
+# below the reference by 3e-7 to 2.6e-6 nat, ≤ 2.9e-9 relative. 1e-8 relative
+# is 3.5× that.
+_PROFILE_REL = 1e-8
+
+_sig = lambda z: 1.0 / (1.0 + np.exp(-np.asarray(z, dtype=float)))       # noqa: E731
+_logit = lambda p: np.log(np.asarray(p, dtype=float)) - np.log1p(-np.asarray(p, dtype=float))  # noqa: E731
+
+
+def _reference_profile(theta_model, Yn, kind, starts):
+    """max over the mechanism of log p(y_obs, m | θ, mechanism), θ of
+    ``theta_model`` fixed — Nelder–Mead on the logits, from the definition
+    (the forward pass of ``gap_posterior``), best of ``starts``."""
+    K = theta_model.K
+
+    def nll(z):
+        z = np.clip(z, -30.0, 30.0)
+        mech = (StateMissingness(rates=tuple(_sig(z))) if kind == "state" else
+                StateMarkovMissingness(onset=tuple(_sig(z[:K])), persistence=tuple(_sig(z[K:]))))
+        return -gaps.gap_posterior(theta_model.with_missingness(mech), Yn, xi=False).log_lik
+    best = min((minimize(nll, np.asarray(z0, dtype=float), method="Nelder-Mead",
+                         options={"xatol": 1e-10, "fatol": 1e-12, "maxiter": 20000,
+                                  "maxfev": 40000}) for z0 in starts), key=lambda r: r.fun)
+    return -best.fun
+
+
+def _check_sup(r):
+    """The statistic from the profile log-likelihoods (module docstring)."""
+    P = r.profile_log_liks
+    assert set(P) == set(LR._PROFILE_KEYS)
+    assert r.sup_log_lik_null == max(P["null_at_null_theta"], P["null_at_alt_theta"])
+    assert r.sup_log_lik_alt == max(P["alt_at_null_theta"], P["alt_at_alt_theta"],
+                                    r.sup_log_lik_null)
+    assert r.statistic == 2 * (r.sup_log_lik_alt - r.sup_log_lik_null) >= 0.0
+    assert r.statistic_fits == 2 * (r.log_lik_alt - r.log_lik_null)
+    # the profiles start at the fits' mechanisms: never below the fits
+    assert P["alt_at_alt_theta"] >= r.log_lik_alt
+    assert P["alt_at_null_theta"] >= P["null_at_null_theta"]
+    assert P["null_at_null_theta"] >= r.log_lik_null
+
 
 def test_state_against_common_rate():
     m = _hmc_in()
@@ -101,7 +146,17 @@ def test_state_against_common_rate():
     assert r.log_lik_alt == pytest.approx(gaps.gap_posterior(r.alt_model, Yn).log_lik, rel=_REL)
     assert r.null_params == {"mechanism": "state", "rates": [M / N, M / N]}
     assert r.alt_params == r.alt_model.missingness.to_table()
-    assert r.statistic == 2 * (r.log_lik_alt - r.log_lik_null)
+    _check_sup(r)
+    # ℓ0(θ) of a common rate: the ignorable log-likelihood at θ + the mask's
+    P = r.profile_log_liks
+    assert P["null_at_null_theta"] == r.log_lik_null
+    ll_ign1 = gaps.gap_posterior(r.alt_model.with_missingness(None), Yn).log_lik
+    assert P["null_at_alt_theta"] == pytest.approx(ll_ign1 + mask, rel=_REL)
+    # ℓ1(θ) is the maximum over π at θ (reference optimiser; see _PROFILE_REL)
+    starts = (_logit(r.alt_params["rates"]), (-2.0, -2.0))
+    for key, mdl in (("alt_at_alt_theta", r.alt_model), ("alt_at_null_theta", r.null_model)):
+        assert P[key] == pytest.approx(_reference_profile(mdl, Yn, "state", starts),
+                                       rel=_PROFILE_REL)
     assert r.df == 1 and r.p_value == chi2.sf(r.statistic, 1)
     assert r.statistic > 10.0 and r.alt_params["rates"][1] > r.alt_params["rates"][0]
     assert math.isnan(r.p_value_bootstrap) and r.n_bootstrap == 0
@@ -119,6 +174,12 @@ def test_state_markov_against_a_common_chain():
     assert r.null_params["mechanism"] == "state-markov"
     assert len(set(r.null_params["onset"])) == 1 and len(set(r.null_params["persistence"])) == 1
     assert r.log_lik_alt == pytest.approx(gaps.gap_posterior(r.alt_model, Yn).log_lik, rel=_REL)
+    _check_sup(r)
+    a = r.alt_params
+    starts = (np.concatenate([_logit(a["onset"]), _logit(a["persistence"])]),
+              (-4.0, -4.0, 1.0, 1.0))
+    assert r.profile_log_liks["alt_at_alt_theta"] == pytest.approx(
+        _reference_profile(r.alt_model, Yn, "state-markov", starts), rel=_PROFILE_REL)
     assert r.df == 2 and r.p_value == chi2.sf(r.statistic, 2)
     assert isinstance(r.alt_model.missingness, StateMarkovMissingness)
 
@@ -129,25 +190,57 @@ def test_state_markov_against_state():
     r = missingness_lr_test(m, Yn, alternative="state-markov", null="state", ice_cfg=_FIT)
     assert isinstance(r.null_model.missingness, StateMissingness)
     assert r.log_lik_null == pytest.approx(gaps.gap_posterior(r.null_model, Yn).log_lik, rel=_REL)
+    _check_sup(r)
+    # ℓ0(θ) of the "state" null is the maximum over π at θ: above the guarded
+    # null fit (by 0.059 nat here), at the reference optimiser's value
+    P = r.profile_log_liks
+    assert P["null_at_null_theta"] > r.log_lik_null
+    starts = (_logit(r.null_params["rates"]), (-2.0, -2.0))
+    for key, mdl in (("null_at_null_theta", r.null_model), ("null_at_alt_theta", r.alt_model)):
+        assert P[key] == pytest.approx(_reference_profile(mdl, Yn, "state", starts),
+                                       rel=_PROFILE_REL)
     assert r.df == 2
     # bursts of mean length 2.5 and 10: a Markov mask the "state" null misses
     assert r.statistic > 20.0 and r.p_value < 1e-4
 
 
-def test_hmc_in_statistic_is_not_negative_under_the_null():
-    # HMC-IN: ICE is EM up to the SR symmetrisation of the prior, so the
-    # alternative started at the null fit does not lose likelihood: smallest
-    # LR measured over the 1 200 null replications of lr_study.py ("state"
-    # vs common, N = 500–2000) 5.7e-6. (The nested test can end slightly
-    # below its start — min −0.096 at N = 500: the guard's pseudo-counts
-    # target other pooled rates for "state" and "state-markov", so the two
-    # fits maximise different penalised likelihoods; rerun without the guard
-    # the five negative replications give LR = 0.007 to 0.21.)
+def test_statistic_is_not_negative_and_the_fits_are_on_hmc_in():
+    # The statistic is ≥ 0 by construction (the null's points are the
+    # alternative's). The fits' difference alone is too on HMC-IN, where ICE
+    # is EM up to the SR symmetrisation of the prior: smallest over the 1 200
+    # "state"-vs-common null replications of lr_study.py (N = 500–2000):
+    # 5.7e-6.
     m = _hmc_in()
     for k in range(3):
         Yn = _data(m, 400, ("null", k), rates=(0.1, 0.1))
         r = missingness_lr_test(m, Yn, ice_cfg=_FIT)
-        assert r.statistic > -1e-3
+        assert r.statistic >= 0.0 and r.statistic_fits > -1e-3
+
+
+@pytest.mark.slow
+def test_hmc_dn_fits_that_are_not_maxima():
+    # Replication 111 of the HMC-DN Markov null of lr_study.py (N = 500; the
+    # same seeds): the alternative's ICE run climbs 2.3 nat above its start
+    # (the null fit) in 17 iterations, then drifts to a fixed point at
+    # another θ, 0.71 nat BELOW its start — the fits' difference is −1.42.
+    # The profile of the Markov mechanism at the null's θ gives 3.93; a
+    # direct maximisation of the observed-data log-likelihood over all 14
+    # parameters (report/missing_state/lr_diagnosis.py) gives LR = 4.73.
+    # Measured −1.4201 and 3.9311 on macOS arm64; the bounds assert the sign
+    # and which point wins, not the digits (a 130-iteration ICE path on
+    # another platform's rounding).
+    m = PMCModel(MODELS / "hmc_dn_gauss_k2.toml")
+    X, Y = simulate(m, N=500, seed=_seed("sim", "hmc_dn", "markov-null", 500, 111))
+    Yn = state_markov(Y, X, (0.02, 0.02), (0.8, 0.8),
+                      seed=_seed("mask", "hmc_dn", "markov-null", 500, 111))[0]
+    r = missingness_lr_test(m, Yn, alternative="state-markov",
+                            ice_cfg={"fit_margins": True, "candidates": ["Gauss"]})
+    _check_sup(r)
+    P = r.profile_log_liks
+    assert r.statistic_fits < -1.0
+    assert 3.5 < r.statistic < 4.5
+    assert r.sup_log_lik_alt == P["alt_at_null_theta"]
+    assert r.sup_log_lik_null == P["null_at_null_theta"] == r.log_lik_null
 
 
 @pytest.mark.parametrize("alternative,null,df", [("state", "common", 2),
@@ -253,8 +346,9 @@ def test_monte_carlo_size_and_power_hmc_in():
 
     Size: 200 masks with π = (0.1, 0.1). The full study (lr_study.py,
     400 replications per N) measured the χ² rejection rate at 5 %:
-    0.058 / 0.045 / 0.060 (± 0.012) at N = 500 / 1000 / 2000 — HMC-IN is EM,
-    Wilks applies. Here the bound is the binomial 99.9 % band of 0.05 at
+    0.058 / 0.045 / 0.060 (± 0.012) at N = 500 / 1000 / 2000 with the fits'
+    statistic, 0.058 at N = 500 with the profile statistic (paired rerun) —
+    HMC-IN is EM, Wilks applies. Here the bound is the binomial 99.9 % band of 0.05 at
     R = 200: [0.010, 0.105]. Power: 60 masks with π = (0.025, 0.175);
     measured 200 / 200 at N = 500 — asserted ≥ 0.85 (probability of fewer
     than 51 of 60 at a power of 0.99: 5e-10).

@@ -350,6 +350,58 @@ def test_gui_estimation_entry_point_accepts_missing_values(algo, missing_strateg
     assert w._model is result.fitted_model
 
 
+def test_gui_estimation_result_shows_the_estimated_missingness_mechanism(monkeypatch):
+    """The 'Missingness mechanism' combobox set to 'state' logs the fitted
+    mechanism next to the other estimated parameters (P6) — same log panel
+    as 'Degenerate' / the LL summary in ``_on_est_done``."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    from pmcprg.missing.patterns import state_dependent
+    from pmcprg.pmc.gui.main_window import PMCMainWindow
+    from pmcprg.pmc.missingness import StateMissingness
+
+    app = QApplication.instance() or QApplication([])   # noqa: F841 — kept alive
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    path = MODELS / "hmc_in_gauss_k2.toml"
+    mdl = _model(path.name)
+    X, Y = simulate(mdl, N=200, seed=0)
+    Yn, _ = state_dependent(Y, X, (0.05, 0.3), seed=1)
+
+    w = PMCMainWindow(str(path))
+    w._tab_ice._combo_missingness.setCurrentText("state")
+    cfg = w._tab_ice.get_cfg()
+    assert cfg["missingness"] == "state"
+    cfg.update(max_iter=5, algorithm="ice")
+    result = PMCMainWindow._do_estimate(mdl, Yn, cfg)
+    w._on_est_done(result)
+    assert isinstance(w._model.missingness, StateMissingness)
+    assert "Missingness: state" in w._log.toPlainText()
+
+
+def test_gui_estimation_result_is_silent_without_a_mechanism(monkeypatch):
+    """No mechanism carried or estimated: no new 'Missingness' log line —
+    the default stays exactly as it was before P6."""
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    from pmcprg.pmc.gui.main_window import PMCMainWindow
+
+    app = QApplication.instance() or QApplication([])   # noqa: F841 — kept alive
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    path = MODELS / "hmc_in_gauss_k2.toml"
+    mdl, _, _, Ym = _data(path.name, N=150)
+    w = PMCMainWindow(str(path))
+    cfg = w._tab_ice.get_cfg()
+    cfg.update(max_iter=3, algorithm="ice")
+    result = PMCMainWindow._do_estimate(mdl, Ym, cfg)
+    w._on_est_done(result)
+    assert w._model.missingness is None
+    assert "Missingness" not in w._log.toPlainText()
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("algo", ["ice", "sem"])
 def test_multistart_with_gaps_parallel_matches_sequential(algo):

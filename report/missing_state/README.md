@@ -1,11 +1,12 @@
 # State-dependent missingness: estimation and likelihood-ratio test (P6)
 
-Two scripts, both run from the repository root with the repo venv.
+Three scripts, run from the repository root with the repo venv.
 
-| script | what | time (6 processes, loaded Apple arm64 laptop) |
+| script | what | time (loaded Apple arm64 laptop) |
 |---|---|---|
-| `design_measurements.py` | the design choices of the mechanism M-step of ICE/SEM: initial term of `"state-markov"`, boundary guard, starts | 5 min |
-| `lr_study.py` | size, power (asymptotic χ² and parametric bootstrap) of `missingness_lr_test`, recovery of π̂, â, b̂ | 59 min (`--direct`: see below) |
+| `design_measurements.py` | the design choices of the mechanism M-step of ICE/SEM: initial term of `"state-markov"`, boundary guard, starts | 5 min (6 processes) |
+| `lr_study.py` | size, power (asymptotic χ² and parametric bootstrap) of `missingness_lr_test`, recovery of π̂, â, b̂ | 59 min (6 processes; `--direct`, `--profile`, `--direct-study`: see below) |
+| `lr_diagnosis.py` | why the Markov test was too wide on HMC-DN at N = 500: decomposition of the statistic, direct maximisation of the likelihood | 5 + 15 min (5 processes) |
 
 Every seed is a `zlib.crc32` of a named tuple; a path and its mask never share
 a seed. Results (one row per replication) are in `results/`.
@@ -13,10 +14,22 @@ a seed. Results (one row per replication) are in `results/`.
 ```bash
 .venv/bin/python report/missing_state/design_measurements.py --jobs 6
 .venv/bin/python report/missing_state/lr_study.py --jobs 4 --quick    # smoke: 4 per cell → results/lr_study_quick.csv (not versioned)
-.venv/bin/python report/missing_state/lr_study.py --jobs 6            # full study
+.venv/bin/python report/missing_state/lr_study.py --jobs 6            # full study (the fits' statistic, see below)
 .venv/bin/python report/missing_state/lr_study.py --jobs 6 --direct   # B = 99 bootstrap check
+.venv/bin/python report/missing_state/lr_study.py --jobs 6 --profile  # paired rerun, profile statistic
+.venv/bin/python report/missing_state/lr_study.py --jobs 6 --direct-study   # B = 99 on HMC-DN nulls
 .venv/bin/python report/missing_state/lr_study.py --summarise         # tables from the CSV files
+.venv/bin/python report/missing_state/lr_diagnosis.py --decompose --jobs 6
+.venv/bin/python report/missing_state/lr_diagnosis.py --mle --jobs 5 --r 111,78,197,11,198,89,7,143,$(seq -s, 0 29)
 ```
+
+**The statistic.** The first study (`results/lr_study.csv`, `lr_direct.csv`,
+the "Size and power" table) was measured when the statistic was the
+difference of the two ICE fits, 2 (LL1(θ̂1, φ̂1) − LL0(θ̂0)) — now the
+result field `statistic_fits`. The test now uses the profile statistic
+(`pmcprg.pmc.missingness_lr`, "The statistic"; "Diagnosis" below for why);
+`--profile` reran HMC-IN at N = 500 and the HMC-DN Markov cells with it, same
+seeds (`results/lr_study_profile.csv`, the "paired" table).
 
 ## Design measurements
 
@@ -147,10 +160,12 @@ machine): HMC-IN 0.37 / 0.52 / 0.88 s at N = 500 / 1000 / 2000, 1.1 s at
 5000 (test only); HMC-DN 9.4 / 14.4 s at N = 500 / 1000. The full study:
 8 800 replications, 21 000 CPU-seconds, 59 min on 6 processes.
 
-### Size and power at the 5 % level (`results/lr_study.csv`)
+### Size and power at the 5 % level (`results/lr_study.csv`; the fits' statistic)
 
 Rejection rate ± binomial standard error; "crit" is the warp-speed
-bootstrap critical value (χ²: 3.84 for df = 1, 5.99 for df = 2).
+bootstrap critical value (χ²: 3.84 for df = 1, 5.99 for df = 2). The
+statistic is the difference of the fits (above); the paired table after this
+one gives the profile statistic on the rerun cells.
 
 | model | test | masks | N | R | mean M | mean LR (df) | reject χ² | reject bootstrap (crit) |
 |---|---|---|---|---|---|---|---|---|
@@ -197,7 +212,7 @@ Reading:
   (never negative). The nested test has 5 slightly negative LR at N = 500
   (min −0.096): the guard's pseudo-counts pull "state" and "state-markov"
   towards different pooled rates (without the guard those replications
-  give 0.007 to 0.21).
+  give 0.007 to 0.21; the profile statistic, unguarded, has none).
 * **Power.** A difference of 5 points in the missing rate (7.5 % vs 12.5 %)
   needs N ≈ 2000 on HMC-IN; 10 points is detected at N = 500 (0.885). A
   Markov mask whose onset alone depends on the state (1.3 % vs 2.7 %) is
@@ -210,12 +225,61 @@ Reading:
   **anticonservative at N = 500** under both references (0.135 and 0.175):
   its null distribution has a heavier tail than χ²(2) (95 % quantile of LR
   8.05 against 5.99) and than its bootstrap (5.06). 9 of the 200 null LR
-  are negative (min −1.42) and the largest is 16.6: in some replications
-  the two ICE fixed points differ by more than the mechanism's contribution,
-  and the bootstrap world (simulated from the fitted θ̂0, ~9 bursts per
-  series) does not reproduce that tail. The cause was not isolated. At
-  N = 1000 the test is conservative (0.030 / 0.015) and its power low
-  (0.24). Use the Markov test on grid variants with care below ~20 bursts.
+  are negative (min −1.42) and the largest is 16.6. Taken apart in
+  "Diagnosis" below: the negative values are the two ICE fixed points
+  optimising θ unequally (fixed by the profile statistic), the excess of
+  rejections is the likelihood ratio's own at that N. At N = 1000 the test
+  is conservative (0.030 / 0.015) and its power low (0.24).
+
+### The profile statistic, paired (`results/lr_study_profile.csv`)
+
+`lr_study.py --profile`: HMC-IN at N = 500 (every scenario, the three
+tests) and the HMC-DN Markov cells at N = 500 and 1000, the seeds of the
+table above — the fits are bit-identical to it (3 000 of 3 000 replications:
+`LR_fits` equals the first study's `LR`), so the two statistics are compared
+on the same series, masks and warp-speed replicates' seeds. 36 min on 6
+processes on a heavily loaded machine.
+
+| model | test | masks | N | R | fits: mean LR (# < 0) | reject χ² | reject bootstrap (crit) | profile: mean LR (min) | reject χ² | reject bootstrap (crit) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| HMC-IN | state vs common | **H0** π = (0.1, 0.1) | 500 | 400 | 1.07 (0) | 0.058 ± 0.012 | 0.050 ± 0.011 (3.97) | 1.07 (4e-6) | 0.058 ± 0.012 | 0.050 ± 0.011 (3.97) |
+| | | π = (0.075, 0.125) | 500 | 200 | 3.70 (0) | 0.365 ± 0.034 | 0.380 ± 0.034 (3.75) | 3.70 | 0.365 ± 0.034 | 0.380 ± 0.034 (3.75) |
+| | | π = (0.05, 0.15) | 500 | 200 | 11.46 (0) | 0.885 ± 0.023 | 0.910 ± 0.020 (3.14) | 11.46 | 0.885 ± 0.023 | 0.910 ± 0.020 (3.15) |
+| | | π = (0.025, 0.175) | 500 | 200 | 27.71 (0) | 1.000 | 1.000 (3.35) | 27.71 | 1.000 | 1.000 (3.35) |
+| HMC-IN | state-markov vs common | **H0** a = 0.02, b = 0.8 | 500 | 400 | 2.07 (0) | 0.045 ± 0.010 | 0.043 ± 0.010 (6.56) | 2.16 (0.008) | 0.052 ± 0.011 | 0.035 ± 0.009 (6.93) |
+| | | onset | 500 | 200 | 2.82 (0) | 0.135 ± 0.024 | 0.085 ± 0.020 (6.76) | 2.91 | 0.140 ± 0.025 | 0.080 ± 0.019 (7.06) |
+| | | both | 500 | 200 | 4.36 (0) | 0.255 ± 0.031 | 0.255 ± 0.031 (5.96) | 4.56 | 0.290 ± 0.032 | 0.270 ± 0.031 (6.26) |
+| HMC-IN | state-markov vs state | **H0** π = (0.05, 0.15) | 500 | 400 | 1.67 (5) | 0.020 ± 0.007 | 0.022 ± 0.007 (5.82) | 1.79 (0.007) | 0.020 ± 0.007 | 0.020 ± 0.007 (5.94) |
+| | | both | 500 | 200 | 161.2 (0) | 0.990 ± 0.007 | 0.995 ± 0.005 (4.66) | 161.2 | 0.995 ± 0.005 | 0.995 ± 0.005 (4.74) |
+| HMC-DN | state-markov vs common | **H0** a = 0.02, b = 0.8 | 500 | 200 | 2.73 (9) | **0.135 ± 0.024** | **0.175 ± 0.027** (5.06) | 2.83 (0.0005) | **0.125 ± 0.023** | **0.150 ± 0.025** (5.31) |
+| | | | 1000 | 200 | 1.96 (1) | 0.030 ± 0.012 | 0.015 ± 0.009 (6.58) | 2.04 (0.024) | 0.045 ± 0.015 | 0.010 ± 0.007 (7.01) |
+| | | both | 500 | 100 | 3.60 (0) | 0.210 ± 0.041 | 0.170 ± 0.038 (6.51) | 3.81 | 0.220 ± 0.041 | 0.270 ± 0.044 (5.51) |
+| | | | 1000 | 100 | 4.38 (0) | 0.240 ± 0.043 | 0.210 ± 0.041 (7.51) | 4.37 | 0.200 ± 0.040 | 0.200 ± 0.040 (5.92) |
+
+Reading:
+
+* **HMC-IN is not hurt.** The "state" test is unchanged (|LR − fits| ≤ 0.017
+  under H0). On the Markov tests the profile statistic is larger by a median
+  0.008 (common null) and 0.098 (nested), up to 2.1 and 0.43: that is the
+  boundary guard, which the fits carry (posterior modes) and the profiles do
+  not — 2 (ℓ1(θ̂1) − LL1) accounts for the largest difference (2.14; a state
+  with one or two bursts, whose b̂ the guard shrinks), while the θ-part has
+  an sd of 0.06. Sizes 0.052 / 0.035 and 0.020 / 0.020; the power of the
+  Markov test against onset and persistence rises from 0.255 to 0.290. No
+  negative value: the nested test's five (min −0.096) are gone.
+* **HMC-DN.** No negative value (the fits' statistic: 9 at N = 500, down to
+  −1.42); |LR − fits| up to 5.4 at N = 500 and 2.6 at N = 1000. At N = 500
+  the size is still 0.125 (χ²) and 0.150 (warp-speed bootstrap): the tail is
+  the likelihood ratio's own, see "Diagnosis". At N = 1000 χ² holds the level
+  (0.045 ± 0.015; the fits gave 0.030), the bootstrap is conservative
+  (0.010), and the power against onset and persistence differences is 0.20.
+* Not rerun: HMC-IN at N = 1000, 2000 and the HMC-DN "state" test (the fits'
+  statistic in the first table). On HMC-IN at N = 500 the two statistics'
+  χ² decisions differ on 0, 3 and 0 of the 400 null series of the three
+  tests (on HMC-DN: 8 of 200 at N = 500, 3 of 200 at N = 1000).
+* Cost of the profiles (two EM runs over the mechanism, θ fixed; CPU time,
+  4 series each): 17 % of the test on HMC-DN, N = 500 (2.35 s); 38–45 % on
+  HMC-IN (0.19–0.23 s), where ICE converges in few iterations.
 
 ### Recovery of the mechanism (the alternative's fit; bias / RMSE)
 
@@ -273,6 +337,108 @@ n_bootstrap=99)`; every replicate valid), 510 s on 6 processes.
 | warp-speed (table above, other seeds) | 400 | 0.058 ± 0.012 | 0.050 ± 0.011 |
 
 The two estimates of the bootstrap test's size agree (0.050 and 0.050).
+
+## Diagnosis: the Markov test on HMC-DN at N = 500 (`lr_diagnosis.py`)
+
+The cell "HMC-DN, `"state-markov"` vs common, H0, N = 500" of the first
+table, taken apart on its 200 null replications (same seeds; the fits are
+bit-identical to the study's). At the time the statistic was the difference
+of the two ICE fixed points, LL1(θ̂1, φ̂1) − LL0(θ̂0). ℓ_h(θ) is the
+log-likelihood maximised over hypothesis h's mechanism at θ fixed (here
+L-BFGS-B on the logits with the exact gradient, no guard), so ℓ0(θ) =
+LL_ignorable(θ) + log p(m | common MLE).
+
+`results/lr_decompose_hmc_dn_markov-null_500.csv` (5 min on 5 processes):
+
+| statistic (× 2) | mean | sd | min | 95 % quantile | max | # < 0 | reject at χ²(2) 5.99 |
+|---|---|---|---|---|---|---|---|
+| fits: LL1(θ̂1, φ̂1) − LL0(θ̂0) | 2.73 | 2.68 | −1.42 | 8.05 | 16.63 | 9 | 0.135 |
+| its θ-part: LL0(θ̂1) − LL0(θ̂0) | −0.09 | 0.90 | −5.87 | 0.76 | 4.73 | 135 | — |
+| its mechanism part: LL1(θ̂1, φ̂1) − LL0(θ̂1) | 2.82 | 2.52 | 0.001 | 8.17 | 14.30 | 0 | 0.120 |
+| mechanism at θ̂0: ℓ1(θ̂0) − ℓ0(θ̂0) | 2.52 | 2.27 | 0.001 | 7.20 | 11.13 | 0 | 0.105 |
+| mechanism at θ̂1: ℓ1(θ̂1) − ℓ0(θ̂1) | 2.98 | 2.63 | 0.001 | 8.58 | 14.31 | 0 | 0.135 |
+| one guarded mechanism M-step at θ̂0 | 1.38 | 1.47 | 0.000 | 4.11 | 9.94 | 0 | 0.015 |
+| **profile statistic** (below) | 2.83 | 2.53 | 0.0005 | 8.24 | 14.31 | 0 | 0.125 |
+| χ²(2) | 2 | 2 | 0 | 5.99 | | | 0.05 |
+
+`results/lr_mle_hmc_dn_markov-null_500.csv`: a direct maximisation of
+log p(y_obs, m) over all the parameters (A, two Gaussian margins, four
+Gaussian copulas; + a_i, b_i: 10 and 14 parameters), L-BFGS-B with
+forward-difference gradients, best of three starts per hypothesis (null: θ̂0,
+θ̂1, the true θ; alternative: the alternative fit, ICE's best iterate, the
+null maximum with the common mask). 36 replications — 0 to 29, and 78, 197,
+198 (largest fits' statistics with 11) and 89, 111, 143 (most negative, with
+7); 15 min on 5 processes. Error of each statistic against that LR:
+
+| statistic | mean \|err\| | rms | max \|err\| | mean err | # \|err\| > 1 |
+|---|---|---|---|---|---|
+| fits (the study's) | 1.02 | 1.71 | 6.15 | −0.31 | 13 |
+| fits + the null at θ̂1 | 0.82 | 1.46 | 4.73 | −0.42 | 10 |
+| mechanism at θ̂0 only | 1.11 | 1.88 | 6.30 | −0.69 | 13 |
+| **profile statistic** | 0.61 | 1.12 | 3.88 | −0.08 | 9 |
+
+(a) **The two fits differ in how well they optimise θ.** ICE on HMC-DN is
+not EM (copula step on the pairs with both ends observed, margin step without
+the copula): its fixed points are below the maxima — the null fit a median
+0.27 nat below the direct maximum, the alternative 0.51, both up to 4.6. The
+alternative's run, started at the null fit, can climb and then drift to a
+fixed point at another θ: replication 111 gains 2.29 nat in 17 iterations,
+then ends 0.71 nat *below* its start (fits' statistic −1.42, exact LR 4.73;
+the state-0 mean moved from −0.92 to +0.07). The alternative ends ≥ 0.1 nat
+below its own best iterate in 15 of 200 runs (max 3.0), the ignorable null
+in 48 (max 2.3); the alternative's margins move by more than 0.3 (sum of
+|Δμ_i|) in 17 runs. The θ-part (sd 0.90) explains every negative value
+(the mechanism part is ≥ 0.001) and adds spread both ways.
+
+(b) **Not maximising is not what makes the tail.** The exact LR of the
+first 30 replications has a mean of 3.40 — against 2 for χ²(2) — and 5 of 30
+exceed 5.99 (the fits: mean 3.23, 5 of 30). The four largest fits'
+statistics (11.1–16.6) are confirmed by the exact LR (10.6–14.0). The
+mechanism's LR at θ̂0 alone, where no θ-difference enters, still rejects
+0.105.
+
+(c) **Not few bursts, not the guard.** The rejection rate of the fits'
+statistic grows with the number of bursts: 0.034 with 3–7 bursts (59
+series), 0.190 with 8–9 (58), 0.137 with 10–11 (51), 0.219 with 12–15 (32).
+The guard lowers the statistic: ℓ1(θ̂1) − LL1 (the alternative fit is a
+posterior mode) is 0.16 on average (× 2), up to 1.5. In 12 of the 36 exact
+alternatives one state has no onset (â_i < 1e-4): a boundary maximum, which
+shrinks an LR rather than inflating it.
+
+(d) **The warp-speed bootstrap.** In the same cell its replicates LR*,
+simulated from each fitted null θ̂0, have a mean of 1.99 and exceed 5.99 in
+0.030 of the replications, against 2.73 and 0.135 for LR: the bootstrap world
+does not reproduce the tail of the real one, and its critical value (5.06)
+is below χ²'s. A **genuine** bootstrap (B = 99 per replication, the profile
+statistic, `results/lr_direct_dn.csv`, `lr_study.py --direct-study`; 13–23
+min per replication on the loaded machine) on the four largest null values
+and on replications 0 and 1:
+
+| r | LR (fits) | LR (profile) | p χ² | p bootstrap | bootstrap 95 % quantile | bootstrap mean |
+|---|---|---|---|---|---|---|
+| 78 | 16.63 | 14.31 | 0.0008 | 0.010 | 6.25 | 2.24 |
+| 198 | 11.09 | 11.43 | 0.0033 | 0.010 | 5.74 | 1.98 |
+| 197 | 11.85 | 11.24 | 0.0036 | 0.010 | 6.94 | 2.73 |
+| 11 | 11.72 | 10.60 | 0.0050 | 0.010 | 5.16 | 2.09 |
+| 0 | 6.20 | 6.27 | 0.0436 | 0.050 | 5.92 | 2.01 |
+| 1 | 1.22 | 1.27 | 0.5309 | 0.680 | 6.73 | 2.45 |
+
+Every replicate valid. Each series' own bootstrap distribution is close to
+χ²(2) (95 % quantiles 5.2–6.9), and none of the 99 replicates reaches any of
+the four largest values: the genuine bootstrap rejects them at p = 0.01,
+like χ² — it does not fix the size either. Series simulated from the fitted
+null do not have the real series' tail.
+
+**Conclusion.** The negative values and part of the spread were the fits'
+unequal optimisation of θ — the profile statistic removes them. The excess of
+rejections is the likelihood ratio's own at N = 500 on this model (~9
+bursts): neither a better maximiser nor the bootstrap, warp-speed or
+genuine, removes it. At N = 1000 (~18 bursts) χ² holds the level with the
+profile statistic (0.045 ± 0.015, paired table). **Use the Markov test on a
+grid variant from ~20 bursts (here N ≈ 1000) on; below, a rejection is not
+evidence at the nominal level.** The cause of the tail was not isolated
+further: it is not the number of bursts alone (the rate grows with it at
+N = 500), not ICE, not the guard.
 
 ### Reference
 

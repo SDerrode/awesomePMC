@@ -293,6 +293,106 @@ def test_cli_estimate_accepts_missing_values_with_a_warning(tmp_path: Path):
     assert len((tmp_path / "cls.csv").read_text().splitlines()) == 121
 
 
+# ---------------------------------------------------------------------------
+# Missingness mechanism (P6) — 'estimate --missingness' / 'missingness-lr-test'
+# ---------------------------------------------------------------------------
+
+def _blank_cells(csv_path: Path, out_path: Path, rows) -> None:
+    """Write ``csv_path`` to ``out_path`` with the ``Y`` cell of each row in
+    ``rows`` (0-based data rows, i.e. CSV line ``k + 1``) emptied — same
+    fixed-row-index technique as ``test_cli_estimate_accepts_missing_values_
+    with_a_warning``, so no RNG is needed for a deterministic gap pattern."""
+    lines = csv_path.read_text().splitlines()
+    header = lines[0].split(",")
+    iy = header.index("Y")
+    for k in rows:
+        cells = lines[k + 1].split(",")
+        cells[iy] = ""
+        lines[k + 1] = ",".join(cells)
+    out_path.write_text("\n".join(lines) + "\n")
+
+
+def _simulate_with_gaps(tmp_path: Path, model: Path, N: int = 200) -> Path:
+    """A simulated CSV under ``model`` with every 5th row's Y blanked."""
+    sim_csv = tmp_path / "sim.csv"
+    _run("simulate", "-m", str(model), "--N", str(N), "--seed", "0",
+         "--out", str(sim_csv), cwd=tmp_path)
+    gap_csv = tmp_path / "gaps.csv"
+    _blank_cells(sim_csv, gap_csv, range(2, N, 5))
+    return gap_csv
+
+
+@pytest.mark.parametrize("mode", ["state", "state-markov"])
+def test_cli_estimate_missingness_option(tmp_path: Path, mode):
+    """``estimate --missingness {state,state-markov}`` estimates the mechanism,
+    prints it, and saves it in the output TOML's ``[missingness]`` table."""
+    from pmcprg.pmc.model import PMCModel
+
+    model = MODELS_DIR / "hmc_in_gauss_k2.toml"
+    gap_csv = _simulate_with_gaps(tmp_path, model)
+    out_toml = tmp_path / "fit.toml"
+    res = _run("estimate", "-m", str(model), "-d", str(gap_csv),
+               "--out", str(out_toml), "--max-iter", "5",
+               "--missingness", mode, cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "Traceback" not in res.stderr
+    assert f"Missingness   : {mode}" in res.stdout
+    fitted = PMCModel(out_toml)
+    assert fitted.missingness is not None
+    assert fitted.missingness.mechanism == mode
+
+
+def test_cli_estimate_without_missingness_option_prints_nothing_new(tmp_path: Path):
+    """No ``--missingness`` and no ``[missingness]`` table: no new output line —
+    the default ('model', ignorable here) must stay silent, as before P6."""
+    model = MODELS_DIR / "hmc_in_gauss_k2.toml"
+    gap_csv = _simulate_with_gaps(tmp_path, model)
+    res = _run("estimate", "-m", str(model), "-d", str(gap_csv),
+               "--out", str(tmp_path / "fit.toml"), "--max-iter", "3", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "Missingness" not in res.stdout
+
+
+def test_cli_missingness_lr_test(tmp_path: Path):
+    """``missingness-lr-test`` prints the test's ``summary()``."""
+    model = MODELS_DIR / "hmc_in_gauss_k2.toml"
+    gap_csv = _simulate_with_gaps(tmp_path, model)
+    res = _run("missingness-lr-test", "-m", str(model), "-d", str(gap_csv),
+               "--alternative", "state", "--null", "common",
+               "--bootstrap", "2", "--seed", "0", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "Traceback" not in res.stderr
+    assert "Likelihood-ratio test of state-dependent missingness" in res.stdout
+    assert "LR =" in res.stdout and "df = 1" in res.stdout
+    assert "p (bootstrap, 2/2 replicates)" in res.stdout
+
+
+def test_cli_missingness_lr_test_needs_missing_and_observed_rows(tmp_path: Path):
+    """A complete-data CSV (no missing rows) is a clean one-line error, not a crash."""
+    model = MODELS_DIR / "hmc_in_gauss_k2.toml"
+    sim_csv = tmp_path / "sim.csv"
+    _run("simulate", "-m", str(model), "--N", "50", "--seed", "0",
+         "--out", str(sim_csv), cwd=tmp_path)
+    res = _run("missingness-lr-test", "-m", str(model), "-d", str(sim_csv), cwd=tmp_path)
+    assert res.returncode == 1
+    assert "Traceback" not in res.stderr
+    assert "ERROR:" in res.stderr
+
+
+def test_cli_help_lists_the_missingness_lr_test_subcommand(tmp_path: Path):
+    res = _run("--help", cwd=tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert "missingness-lr-test" in res.stdout
+
+
+def test_cli_missingness_modes_match_the_estimator(tmp_path: Path):
+    """The hardcoded ``--missingness`` choices must not drift from the API."""
+    from pmcprg.pmc.cli import _MISSINGNESS_MODES
+    from pmcprg.pmc.ice import MISSINGNESS_MODES
+
+    assert _MISSINGNESS_MODES == MISSINGNESS_MODES
+
+
 @pytest.mark.parametrize(("argv0", "prog"), [
     ("/usr/local/bin/pmc", "pmc"),
     (str(REPO_ROOT / "pmcprg" / "pmc" / "__main__.py"), "python -m pmcprg.pmc"),

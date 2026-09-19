@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — state-dependent missingness in the CLI, the GUI and the README (P6)
+
+- **CLI.** `pmc estimate --missingness {model,ignorable,state,state-markov}`
+  sets the ICE/SEM `missingness` key and prints the fitted mechanism, which
+  is also saved in the output model's `[missingness]` table. A new
+  subcommand, `pmc missingness-lr-test --model --data [--alternative]
+  [--null] [--bootstrap] [--seed]`, runs `missingness_lr_test` and prints its
+  `summary()`.
+- **GUI.** The ICE/SEM tab gets a "Missingness mechanism" combobox (the four
+  modes, with tooltips); the estimation log shows the fitted mechanism; the
+  Analysis menu gets "Missingness LR test…" (the default test, `"state"`
+  against a common rate, run in the worker thread, `summary()` in the log).
+  A model's own `[missingness]` table survives GUI edits and saves.
+- **README.** A "State-dependent missingness" subsection: when to use it, the
+  TOML table, estimation with ICE and the test, each with a runnable snippet.
+- `pmcprg.pmc.missingness.describe_mechanism` gives the one-line summary the
+  CLI and the GUI print.
+
 ### Added — estimating the missingness mechanism, and testing it (P6, wave 2)
 
 - **Why.** The pilot below made the mask evidence on the states, but its
@@ -37,6 +55,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"state-markov"` vs `"state"` (df = K). Asymptotic χ² and a parametric
   bootstrap (paths and masks from the fitted null, separate seed streams,
   both models refitted); both fits run to ICE's fixed point.
+- **What — the statistic.** LR = 2 (sup_H1 − sup_H0), each supremum
+  approximated by the best its hypothesis reaches at the θ of either fit:
+  ℓ_h(θ), the log-likelihood maximised over hypothesis h's mechanism with θ
+  fixed (EM over the mechanism alone, exact M-step without the boundary
+  guard), sup_H0 ≈ max(ℓ0(θ̂0), ℓ0(θ̂1)), sup_H1 ≈ max(ℓ1(θ̂0), ℓ1(θ̂1),
+  sup_H0). LR ≥ 0 by construction, without clipping. Where ICE is not EM
+  (the grid variants) the difference of the two fixed points mixed how well
+  each fit optimised θ with the mechanism's effect: on HMC-DN, N = 500,
+  Markov null, 9 of 200 values were negative (min −1.42, whose LR by a
+  direct maximisation over all 14 parameters is 4.73), and the error against
+  that direct LR (36 replications) had a mean 1.02 and a max 6.2 — 0.61 and
+  3.9 with the profile statistic. New result fields `sup_log_lik_null`,
+  `sup_log_lik_alt`, `profile_log_liks`, and `statistic_fits` (the
+  difference of the fits, a diagnostic); `log_lik_null`, `log_lik_alt`
+  remain those of the fits. Cost: 17 % of the test's CPU on HMC-DN
+  (N = 500), 38–45 % on HMC-IN (0.2 s per test).
 - **Measured — design** (`report/missing_state/design_measurements.py`,
   HMC-IN, 100 runs per cell). *Initial term*: dropping it moves the
   estimates by 4–7 % of an sd at N = 500 with no systematic shift, but loses
@@ -49,20 +83,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (not a config key). *Start*: the common rate is left at the first M-step
   ((0.16, 0.16) → (0.055, 0.27), truth (0.02, 0.30)); with i.i.d. states π is
   not identified.
-- **Measured — test** (`report/missing_state/lr_study.py`, 8 800
-  replications, K = 2, 5 % level; bootstrap by the warp-speed method).
-  Size on HMC-IN (ICE is EM): 0.045–0.060 (χ²) and 0.045–0.065 (bootstrap)
-  for `"state"`, 0.028–0.050 / 0.028–0.058 for `"state-markov"`,
-  0.020–0.048 / 0.022–0.072 nested, N = 500–2000. On HMC-DN (grid, ICE not
-  EM) `"state"` holds (0.060 / 0.040–0.060), `"state-markov"` does not at
-  N = 500 (0.135 χ², 0.175 bootstrap; ~9 bursts per series) and is
-  conservative at N = 1000 (0.030 / 0.015). Power of `"state"` on HMC-IN:
-  0.37 / 0.62 / 0.94 at N = 500 / 1000 / 2000 for rates 7.5 % vs 12.5 %,
-  0.885 / 0.995 / 1 for 5 % vs 15 %; of `"state-markov"` against onset and
-  persistence differences 0.26 / 0.49 / 0.81. Recovery: π̂ and â unbiased to
-  a tenth of their RMSE (π̂_1 = 0.15: 0.025, 0.017, 0.013, 0.008 at N = 500,
-  1000, 2000, 5000); b̂ biased down by 0.01–0.06 at N ≤ 1000, RMSE 0.10 at
-  N = 5000 for a state with 1 % onsets.
+- **Measured — test** (`report/missing_state/lr_study.py`, K = 2, 5 %
+  level; bootstrap by the warp-speed method). First study, 8 800
+  replications, with the difference of the fits as the statistic: size on
+  HMC-IN (ICE is EM) 0.045–0.060 (χ²) and 0.045–0.065 (bootstrap) for
+  `"state"`, 0.028–0.050 / 0.028–0.058 for `"state-markov"`, 0.020–0.048 /
+  0.022–0.072 nested, N = 500–2000; on HMC-DN (grid, ICE not EM) `"state"`
+  0.060 / 0.040–0.060, `"state-markov"` 0.135 / 0.175 at N = 500 (~9 bursts
+  per series) and 0.030 / 0.015 at N = 1000. Rerun with the profile
+  statistic, same seeds (HMC-IN at N = 500, the HMC-DN Markov cells; 3 000
+  replications, the fits bit-identical): HMC-IN 0.058 / 0.050 (`"state"`),
+  0.052 / 0.035 (`"state-markov"`), 0.020 / 0.020 (nested), no negative
+  value (the fits' statistic: 5 in the nested test); HMC-DN Markov 0.125 /
+  0.150 at N = 500, 0.045 / 0.010 at N = 1000, no negative value (the fits':
+  9 at N = 500). Power of `"state"` on HMC-IN: 0.37 / 0.62 / 0.94 at N = 500
+  / 1000 / 2000 for rates 7.5 % vs 12.5 %, 0.885 / 0.995 / 1 for 5 % vs
+  15 % (the fits' statistic; unchanged at N = 500 with the profile one); of
+  `"state-markov"` against onset and persistence differences 0.26 / 0.49 /
+  0.81 (0.29 at N = 500 with the profile statistic). Recovery: π̂ and â
+  unbiased to a tenth of their RMSE (π̂_1 = 0.15: 0.025, 0.017, 0.013, 0.008
+  at N = 500, 1000, 2000, 5000); b̂ biased down by 0.01–0.06 at N ≤ 1000,
+  RMSE 0.10 at N = 5000 for a state with 1 % onsets.
+- **Measured — limit** (`report/missing_state/lr_diagnosis.py`, README
+  "Diagnosis"). The Markov test's excess of rejections on HMC-DN at N = 500
+  is the likelihood ratio's own: a direct maximisation of the likelihood over
+  all parameters gives an LR of mean 3.40 (χ²(2): 2) on 30 null series, 5
+  above the 5 % point; a genuine bootstrap (B = 99) rejects the four largest
+  null values at p = 0.01 (its own distributions χ²-like, 95 % quantiles
+  5.2–6.9). Use the Markov test on grid variants from ~20 bursts (N ≈ 1000
+  here) on.
 - **Unchanged by default.** `missingness = "model"` is bit-identical to the
   previous `ice.py` / `sem.py` (loaded from git: ICE with both strategies,
   SEM, with and without a mechanism, gaps and complete Y); the 90 golden
