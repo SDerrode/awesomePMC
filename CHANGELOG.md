@@ -32,8 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `slow` tests pass in **19 min 27 s**, 10 of them minutes each (the
   Rosenblatt, Lystig–Hughes and dependent-multiplier Monte-Carlo studies).
   No test failed for lack of isolation under xdist. On GitHub's runners
-  (4 vCPU, slower per core) expect minutes rather than hours for a push; the
-  first runs after this change will say by how much.
+  (4 vCPU, slower per core) a push now takes about **10 minutes end to end**
+  (jobs run in parallel: fast suite 9–10 min, minimum-versions 10 min, lint and
+  smoke under 1 min), against about 2 h 30 before.
 - `pytest-xdist` joins the `dev` extra; the `slow` marker's description now says
   when CI runs those tests. `README.md` and `RELEASING.md` give the parallel
   commands. No test was removed or skipped: the same tests run, less often.
