@@ -31,7 +31,10 @@ N rows, M of them missing (mask m), K states.
 The fits
 --------
 Both hypotheses are fitted by ICE. The alternative is fitted from the null
-fit: θ̂0 with the null mechanism is its starting point. Both runs go to
+fit: θ̂0 with the null mechanism is its starting point. A ``"state"`` null
+is itself fitted from the ignorable fit, not from the model given: from
+``start`` directly it could settle in a worse basin (PAMAP2, subject 102,
+report/missing_state/pamap2: 41 nat lower, LR 665 instead of 735). Both runs go to
 ICE's fixed point (the test's defaults, :data:`_LR_DEFAULTS`: ``tol =
 1e-8``, and ``patience`` large enough never to stop them). ICE's default
 ``patience = 3`` would stop both runs a few iterations in, as soon as the
@@ -358,7 +361,12 @@ def _fits(start, Y, miss, alternative: str, null: str, cfg: dict) -> _Fits:
         ll0 = _log_lik(fit0, Y, miss, cfg) + mask_ll
         null_model = fit0.with_missingness(mech0)
     else:                                   # null == "state"
-        null_model, _ = ice(start, Y, {**cfg, "missingness": "state"})
+        # From the ignorable fit, as H1 is from H0's: fitted from ``start``
+        # directly, the "state" null could settle in a worse basin — measured
+        # on PAMAP2 (report/missing_state/pamap2), 33–41 nat below, giving
+        # LR 665 and 287 where the better basins give 735 and 520.
+        fit_ign, _ = ice(start, Y, {**cfg, "missingness": "ignorable"})
+        null_model, _ = ice(fit_ign, Y, {**cfg, "missingness": "state", "init": "model"})
         ll0 = _log_lik(null_model, Y, miss, cfg)
     # H1 from the null fit: its first log-likelihood is LL0 (the null
     # mechanism is its start — "state" π becomes a = b = π).
@@ -462,7 +470,8 @@ def missingness_lr_test(
         ICE settings of the fits, over the model's ``[ice]`` table and the
         test's defaults (``tol = 1e-8``, ``max_iter = 500``, ``patience =
         500``: ICE's fixed points). ``missingness`` is set by the test, and
-        the alternative starts from the null fit (``init = "model"``).
+        the alternative starts from the null fit (``init = "model"``), a
+        ``"state"`` null from the ignorable fit.
     n_bootstrap : int
         Parametric-bootstrap replicates B (0: asymptotic p-value only). Each
         costs two ICE fits.

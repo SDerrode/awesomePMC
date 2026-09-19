@@ -1,0 +1,87 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llrrrrrrrrr}
+\toprule
+rule & mask & K & fit & model & variant & M & RMSE & CRPS & cov90 & width90 \\
+\midrule
+ge10 & state & 2 & oracle & hmc\_in & ignorable & 125 & 0.7770 & 0.4502 & 0.978 & 3.358 \\
+ge10 & state & 2 & oracle & hmc\_in & state & 125 & 0.8119 & 0.4637 & 0.971 & 3.324 \\
+ge10 & state & 2 & oracle & hmc\_in & state-markov & 125 & 0.8126 & 0.4615 & 0.969 & 3.326 \\
+ge10 & state & 2 & unsupervised & hmc\_in & ignorable & 125 & 0.8020 & 0.4493 & 0.902 & 2.819 \\
+ge10 & state & 2 & unsupervised & hmc\_in & state & 125 & 0.8013 & 0.4454 & 0.903 & 2.784 \\
+ge10 & state & 2 & unsupervised & hmc\_in & state-markov & 125 & 0.7967 & 0.4459 & 0.903 & 2.781 \\
+ge10 & state & 2 & unsupervised & hmc\_in & state (warm) & 125 & 0.8122 & 0.4524 & 0.900 & 2.822 \\
+ge10 & state & 2 & unsupervised & hmc\_in & state-markov (warm) & 125 & 0.8091 & 0.4499 & 0.900 & 2.822 \\
+ge10 & state & 3 & oracle & hmc\_in & ignorable & 128 & 0.6208 & 0.3553 & 0.988 & 2.897 \\
+ge10 & state & 3 & oracle & hmc\_in & state & 128 & 0.6337 & 0.3589 & 0.986 & 2.871 \\
+ge10 & state & 3 & oracle & hmc\_in & state-markov & 128 & 0.6335 & 0.3590 & 0.986 & 2.869 \\
+ge10 & state & 3 & oracle & pmc\_pair & ignorable & 128 & 0.4577 & 0.2441 & 0.853 & 1.196 \\
+ge10 & state & 3 & oracle & pmc\_pair & state & 128 & 0.4687 & 0.2491 & 0.847 & 1.189 \\
+ge10 & state & 3 & oracle & pmc\_pair & state-markov & 128 & 0.4650 & 0.2474 & 0.847 & 1.185 \\
+ge10 & state & 3 & unsupervised & hmc\_in & ignorable & 128 & 0.6643 & 0.3730 & 0.897 & 2.236 \\
+ge10 & state & 3 & unsupervised & hmc\_in & state & 128 & 0.6769 & 0.3792 & 0.892 & 2.208 \\
+ge10 & state & 3 & unsupervised & hmc\_in & state-markov & 128 & 0.6772 & 0.3798 & 0.892 & 2.207 \\
+ge10 & state & 3 & unsupervised & hmc\_in & state (warm) & 128 & 0.6780 & 0.3781 & 0.894 & 2.213 \\
+ge10 & state & 3 & unsupervised & hmc\_in & state-markov (warm) & 128 & 0.6781 & 0.3792 & 0.893 & 2.214 \\
+ge10 & state-markov & 2 & oracle & hmc\_in & ignorable & 127 & 0.7770 & 0.4438 & 0.971 & 3.363 \\
+ge10 & state-markov & 2 & oracle & hmc\_in & state & 127 & 0.8778 & 0.4833 & 0.951 & 3.314 \\
+ge10 & state-markov & 2 & oracle & hmc\_in & state-markov & 127 & 0.8159 & 0.4561 & 0.965 & 3.329 \\
+ge10 & state-markov & 2 & unsupervised & hmc\_in & ignorable & 127 & 0.8012 & 0.4446 & 0.899 & 2.813 \\
+ge10 & state-markov & 2 & unsupervised & hmc\_in & state & 127 & 0.8580 & 0.4734 & 0.883 & 2.796 \\
+ge10 & state-markov & 2 & unsupervised & hmc\_in & state-markov & 127 & 0.8046 & 0.4447 & 0.898 & 2.788 \\
+ge10 & state-markov & 2 & unsupervised & hmc\_in & state (warm) & 127 & 0.8379 & 0.4616 & 0.890 & 2.820 \\
+ge10 & state-markov & 2 & unsupervised & hmc\_in & state-markov (warm) & 127 & 0.8100 & 0.4480 & 0.896 & 2.801 \\
+ge10 & state-markov & 3 & oracle & hmc\_in & ignorable & 123 & 0.6328 & 0.3639 & 0.981 & 2.899 \\
+ge10 & state-markov & 3 & oracle & hmc\_in & state & 123 & 0.6670 & 0.3763 & 0.974 & 2.860 \\
+ge10 & state-markov & 3 & oracle & hmc\_in & state-markov & 123 & 0.6503 & 0.3722 & 0.976 & 2.866 \\
+ge10 & state-markov & 3 & oracle & pmc\_pair & ignorable & 123 & 0.4768 & 0.2557 & 0.864 & 1.280 \\
+ge10 & state-markov & 3 & oracle & pmc\_pair & state & 123 & 0.5164 & 0.2686 & 0.852 & 1.262 \\
+ge10 & state-markov & 3 & oracle & pmc\_pair & state-markov & 123 & 0.4873 & 0.2595 & 0.855 & 1.261 \\
+ge10 & state-markov & 3 & unsupervised & hmc\_in & ignorable & 123 & 0.6764 & 0.3826 & 0.896 & 2.285 \\
+ge10 & state-markov & 3 & unsupervised & hmc\_in & state & 123 & 0.7031 & 0.3974 & 0.894 & 2.254 \\
+ge10 & state-markov & 3 & unsupervised & hmc\_in & state-markov & 123 & 0.6872 & 0.3899 & 0.896 & 2.261 \\
+ge10 & state-markov & 3 & unsupervised & hmc\_in & state (warm) & 123 & 0.7039 & 0.3975 & 0.894 & 2.259 \\
+ge10 & state-markov & 3 & unsupervised & hmc\_in & state-markov (warm) & 123 & 0.6885 & 0.3905 & 0.895 & 2.266 \\
+any & state & 2 & oracle & hmc\_in & ignorable & 768 & 0.7955 & 0.4562 & 0.971 & 3.348 \\
+any & state & 2 & oracle & hmc\_in & state & 768 & 0.8238 & 0.4667 & 0.966 & 3.319 \\
+any & state & 2 & oracle & hmc\_in & state-markov & 768 & 0.8232 & 0.4663 & 0.966 & 3.320 \\
+any & state & 2 & unsupervised & hmc\_in & ignorable & 768 & 0.8437 & 0.4726 & 0.897 & 2.898 \\
+any & state & 2 & unsupervised & hmc\_in & state & 768 & 0.8502 & 0.4746 & 0.896 & 2.863 \\
+any & state & 2 & unsupervised & hmc\_in & state-markov & 768 & 0.8463 & 0.4713 & 0.897 & 2.862 \\
+any & state & 2 & unsupervised & hmc\_in & state (warm) & 768 & 0.8652 & 0.4820 & 0.895 & 2.906 \\
+any & state & 2 & unsupervised & hmc\_in & state-markov (warm) & 768 & 0.8614 & 0.4803 & 0.896 & 2.904 \\
+any & state & 3 & oracle & hmc\_in & ignorable & 773 & 0.6636 & 0.3723 & 0.978 & 2.938 \\
+any & state & 3 & oracle & hmc\_in & state & 773 & 0.6822 & 0.3788 & 0.974 & 2.897 \\
+any & state & 3 & oracle & hmc\_in & state-markov & 773 & 0.6809 & 0.3782 & 0.974 & 2.897 \\
+any & state & 3 & oracle & pmc\_pair & ignorable & 773 & 0.4791 & 0.2522 & 0.865 & 1.305 \\
+any & state & 3 & oracle & pmc\_pair & state & 773 & 0.4890 & 0.2551 & 0.861 & 1.281 \\
+any & state & 3 & oracle & pmc\_pair & state-markov & 773 & 0.4894 & 0.2552 & 0.861 & 1.280 \\
+any & state & 3 & unsupervised & hmc\_in & ignorable & 773 & 0.7090 & 0.3984 & 0.880 & 2.233 \\
+any & state & 3 & unsupervised & hmc\_in & state & 773 & 0.7193 & 0.4032 & 0.877 & 2.206 \\
+any & state & 3 & unsupervised & hmc\_in & state-markov & 773 & 0.7176 & 0.4029 & 0.877 & 2.208 \\
+any & state & 3 & unsupervised & hmc\_in & state (warm) & 773 & 0.7217 & 0.4051 & 0.876 & 2.212 \\
+any & state & 3 & unsupervised & hmc\_in & state-markov (warm) & 773 & 0.7201 & 0.4044 & 0.876 & 2.214 \\
+any & state-markov & 2 & oracle & hmc\_in & ignorable & 779 & 0.7925 & 0.4536 & 0.971 & 3.366 \\
+any & state-markov & 2 & oracle & hmc\_in & state & 779 & 0.8601 & 0.4803 & 0.956 & 3.302 \\
+any & state-markov & 2 & oracle & hmc\_in & state-markov & 779 & 0.8502 & 0.4770 & 0.959 & 3.309 \\
+any & state-markov & 2 & unsupervised & hmc\_in & ignorable & 779 & 0.8599 & 0.4805 & 0.894 & 2.944 \\
+any & state-markov & 2 & unsupervised & hmc\_in & state & 779 & 0.8992 & 0.4956 & 0.886 & 2.879 \\
+any & state-markov & 2 & unsupervised & hmc\_in & state-markov & 779 & 0.8812 & 0.4887 & 0.891 & 2.921 \\
+any & state-markov & 2 & unsupervised & hmc\_in & state (warm) & 779 & 0.9169 & 0.5056 & 0.885 & 2.943 \\
+any & state-markov & 2 & unsupervised & hmc\_in & state-markov (warm) & 779 & 0.8841 & 0.4910 & 0.892 & 2.936 \\
+any & state-markov & 3 & oracle & hmc\_in & ignorable & 791 & 0.6583 & 0.3716 & 0.979 & 2.966 \\
+any & state-markov & 3 & oracle & hmc\_in & state & 791 & 0.7447 & 0.4019 & 0.962 & 2.893 \\
+any & state-markov & 3 & oracle & hmc\_in & state-markov & 791 & 0.7281 & 0.3970 & 0.962 & 2.891 \\
+any & state-markov & 3 & oracle & pmc\_pair & ignorable & 791 & 0.4963 & 0.2621 & 0.879 & 1.457 \\
+any & state-markov & 3 & oracle & pmc\_pair & state & 791 & 0.5725 & 0.2868 & 0.862 & 1.439 \\
+any & state-markov & 3 & oracle & pmc\_pair & state-markov & 791 & 0.5492 & 0.2806 & 0.865 & 1.429 \\
+any & state-markov & 3 & unsupervised & hmc\_in & ignorable & 791 & 0.7192 & 0.4045 & 0.882 & 2.257 \\
+any & state-markov & 3 & unsupervised & hmc\_in & state & 791 & 0.7692 & 0.4265 & 0.866 & 2.221 \\
+any & state-markov & 3 & unsupervised & hmc\_in & state-markov & 791 & 0.7335 & 0.4107 & 0.877 & 2.235 \\
+any & state-markov & 3 & unsupervised & hmc\_in & state (warm) & 791 & 0.7693 & 0.4265 & 0.866 & 2.222 \\
+any & state-markov & 3 & unsupervised & hmc\_in & state-markov (warm) & 791 & 0.7340 & 0.4110 & 0.878 & 2.235 \\
+\bottomrule
+\end{tabular}
+\caption{Imputation of the simulated gaps}
+\end{table}

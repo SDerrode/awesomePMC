@@ -1,0 +1,18 @@
+{
+ "parts": [
+  "describe",
+  "test",
+  "real",
+  "controlled"
+ ],
+ "jobs": 4,
+ "boot": 99,
+ "boot_any": 19,
+ "seeds": 5,
+ "wall_s": 2061.6128730420023,
+ "task_wall_s": 8205.974017836874,
+ "task_cpu_s": 3888.778823,
+ "python": "3.14.7",
+ "machine": "arm64",
+ "numpy": "2.5.3"
+}

@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — state-dependent missingness on real data: PAMAP2 (P6, study)
+
+- **Why.** The work on state-dependent missingness was motivated by PAMAP2's
+  activity-dependent hand-IMU dropouts. This study measures them, tests them
+  with `missingness_lr_test`, and asks whether modelling them helps
+  classification and imputation.
+- **What.** `report/missing_state/pamap2/` (`run_pamap2.py`, `summarise.py`,
+  `pm_common.py`). It reuses the three subjects, windows, groups, gap rules,
+  oracles and ICE settings of the real-series study, and covers:
+  - the real gaps, described at 100 Hz and 2 Hz;
+  - LR tests based on the labels and on ICE (HMC-IN, profile statistic);
+  - classification on the real gaps, and on masks drawn by
+    `state_dependent` / `state_markov` on the true groups at the real rates;
+  - imputation of the simulated gaps.
+  No raw data is committed.
+- **Measured.**
+  - **The gaps.** The dependence holds in all three subjects: rest against
+    active, label LR 11–1118. Its K = 3 ordering is subject-specific. The
+    gaps are bursty: `"state"` is rejected by the run lengths, and
+    `"state-markov"` fits them but not their clustering over 10 s.
+  - **ICE-based tests.** LR 30–170 (≥ 10 % rule) and 70–827 ("any") for
+    subjects 102 and 105, nested LR 61–735. Subject 108 is borderline
+    (p 0.018, bootstrap 0.03).
+  - **Classification.** The mask cuts the oracle error at the missing windows
+    by 1.2–5.2 points when the dropout is homogeneous within each state
+    (simulated masks). It changes nothing at K = 2 on the real gaps and hurts
+    at K = 3 (102: 2.1 → 34 %): walking has the dropout of the vigorous group,
+    and whole bouts flip.
+  - **Starts.** Estimated from a fresh start, up to 17 % of unsupervised fits
+    end in a worse basin than the ignorable fit (down to −100 nat).
+    Estimated from the ignorable fit, none do.
+  - **Imputation** is slightly worse with the mask: 53 of 56 comparisons,
+    RMSE up to +0.10.
+  - **Calibration.** Posteriors at the missing windows are 5–70×
+    overconfident, with or without the mask.
+- **Advice.** Use the mask with states whose dropout rates are homogeneous,
+  estimate it from the ignorable fit, and check segmentation and calibration
+  against the ignorable model.
+
+### Fixed — the nested missingness test fits its `"state"` null from the ignorable fit (P6)
+
+- `missingness_lr_test(alternative="state-markov", null="state")` used to fit
+  the `"state"` null directly from the model it was given. On PAMAP2 it
+  settled in worse basins in 2 of 12 cells (33–41 nat lower), and the nested
+  LR came out at 665 and 287. The null is now fitted from the ignorable fit,
+  as the alternatives already were from their null. The two cells now give
+  **735.0 and 520.1**, the best-fit values; the null of subject 102 ends at
+  −11 963.46, the `"state"` fit of the `"state"` vs common test. This costs
+  one more ICE fit.
+
 ### Added — state-dependent missingness in the CLI, the GUI and the README (P6)
 
 - **CLI.** `pmc estimate --missingness {model,ignorable,state,state-markov}`

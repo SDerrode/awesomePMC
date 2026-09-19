@@ -113,6 +113,16 @@ i.i.d. (A with equal rows) π is not identified — only the observed mixture
 weights ∝ p_i (1 − π_i) and Σ p_i π_i are — and the estimates wander
 (sd 0.06–0.08 around (0.14, 0.19) for the same truth).
 
+**On real data, start from the ignorable fit.** On PAMAP2
+(``report/missing_state/pamap2``), up to 17 % of unsupervised HMC-IN fits
+that estimated the mechanism from a k-means start ended in a worse basin
+than "ignorable fit + common mask" (down to −100 nat, and in one case 5 % →
+72 % error at the missing windows); from the ignorable fit
+(``ice(fit_ignorable, Y, {"missingness": ..., "init": "model"})``) every fit
+gained. The mask also helps only when the dropout rate is homogeneous within
+each state: there, a model state that mixed activities with different
+dropout rates (walking in "locomotion") flipped whole bouts at K = 3.
+
 **Boundary guard.** A rate at 0 or 1 makes its state impossible at every
 missing (or observed) row, so the posterior weight that would move it is 0:
 an absorbing state for EM. Each M-step therefore adds c = :data:`PSEUDO_COUNT`

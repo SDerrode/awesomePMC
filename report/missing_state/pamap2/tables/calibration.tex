@@ -1,0 +1,43 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llrrrrrrrr}
+\toprule
+setting & rule & fit & variant & series & predicted err \% & observed err \% & ratio obs/pred & log-loss & Brier \\
+\midrule
+controlled & ge10 & oracle & ignorable & 60 & 1.06 & 6.96 & 6.5 & 0.663 & 0.123 \\
+controlled & ge10 & oracle & state & 60 & 0.77 & 4.96 & 6.4 & 0.475 & 0.095 \\
+controlled & ge10 & oracle & state-markov & 60 & 0.69 & 5.23 & 7.5 & 0.491 & 0.100 \\
+controlled & ge10 & unsupervised & ignorable & 60 & 2.15 & 27.51 & 12.8 & 1.755 & 0.526 \\
+controlled & ge10 & unsupervised & state & 60 & 1.45 & 26.22 & 18.1 & 2.009 & 0.506 \\
+controlled & ge10 & unsupervised & state-markov & 60 & 1.53 & 26.48 & 17.3 & 1.987 & 0.512 \\
+controlled & ge10 & unsupervised & state (warm) & 60 & 1.47 & 26.06 & 17.7 & 1.992 & 0.504 \\
+controlled & ge10 & unsupervised & state-markov (warm) & 60 & 1.54 & 26.43 & 17.1 & 1.973 & 0.512 \\
+controlled & any & oracle & ignorable & 60 & 1.35 & 7.15 & 5.3 & 0.655 & 0.126 \\
+controlled & any & oracle & state & 60 & 0.73 & 4.92 & 6.7 & 0.447 & 0.091 \\
+controlled & any & oracle & state-markov & 60 & 0.68 & 4.79 & 7.0 & 0.452 & 0.090 \\
+controlled & any & unsupervised & ignorable & 60 & 2.25 & 28.08 & 12.5 & 1.972 & 0.535 \\
+controlled & any & unsupervised & state & 60 & 1.47 & 26.80 & 18.2 & 2.322 & 0.521 \\
+controlled & any & unsupervised & state-markov & 60 & 1.64 & 27.25 & 16.6 & 2.261 & 0.528 \\
+controlled & any & unsupervised & state (warm) & 60 & 1.44 & 26.54 & 18.4 & 2.274 & 0.516 \\
+controlled & any & unsupervised & state-markov (warm) & 60 & 1.63 & 26.87 & 16.5 & 2.196 & 0.521 \\
+real & ge10 & oracle & ignorable & 6 & 0.06 & 1.45 & 25.4 & 0.082 & 0.027 \\
+real & ge10 & oracle & state & 6 & 0.31 & 2.92 & 9.4 & 0.142 & 0.051 \\
+real & ge10 & oracle & state-markov & 6 & 0.17 & 1.45 & 8.5 & 0.109 & 0.029 \\
+real & ge10 & unsupervised & ignorable & 6 & 1.07 & 20.44 & 19.2 & 1.330 & 0.397 \\
+real & ge10 & unsupervised & state & 6 & 0.83 & 21.72 & 26.1 & 1.952 & 0.410 \\
+real & ge10 & unsupervised & state-markov & 6 & 1.36 & 20.12 & 14.8 & 1.591 & 0.382 \\
+real & ge10 & unsupervised & state (warm) & 6 & 0.85 & 21.72 & 25.7 & 1.863 & 0.409 \\
+real & ge10 & unsupervised & state-markov (warm) & 6 & 0.89 & 21.17 & 23.7 & 1.650 & 0.403 \\
+real & any & oracle & ignorable & 6 & 0.42 & 2.46 & 5.8 & 0.181 & 0.042 \\
+real & any & oracle & state & 6 & 0.84 & 7.55 & 9.0 & 0.766 & 0.145 \\
+real & any & oracle & state-markov & 6 & 0.50 & 7.54 & 15.0 & 0.625 & 0.142 \\
+real & any & unsupervised & ignorable & 6 & 1.06 & 22.07 & 20.9 & 1.267 & 0.429 \\
+real & any & unsupervised & state & 6 & 0.48 & 33.25 & 68.7 & 2.816 & 0.657 \\
+real & any & unsupervised & state-markov & 6 & 0.40 & 25.47 & 64.3 & 2.567 & 0.504 \\
+real & any & unsupervised & state (warm) & 6 & 0.40 & 22.22 & 55.7 & 1.802 & 0.439 \\
+real & any & unsupervised & state-markov (warm) & 6 & 0.40 & 22.15 & 55.7 & 1.668 & 0.438 \\
+\bottomrule
+\end{tabular}
+\caption{Calibration at the missing windows}
+\end{table}

@@ -1,0 +1,15 @@
+{
+ "parts": [
+  "test"
+ ],
+ "jobs": 4,
+ "boot": 99,
+ "boot_any": 0,
+ "seeds": 5,
+ "wall_s": 401.98310162500275,
+ "task_wall_s": 1316.920011999995,
+ "task_cpu_s": 1008.1384780000001,
+ "python": "3.14.7",
+ "machine": "arm64",
+ "numpy": "2.5.3"
+}

@@ -830,6 +830,11 @@ Documented limit: when the hidden states are close to i.i.d. (a transition
 matrix with near-equal rows) the per-state rates are not identified from the
 observed mixture alone, and the ICE estimates wander instead of converging
 (`pmcprg/pmc/missingness.py`, section "Estimation").
+On real data (PAMAP2, `report/missing_state/pamap2/README.md`) the mask
+helped classification only where each state's dropout rate was homogeneous,
+and estimating the mechanism from the ignorable fit (`init = "model"`)
+avoided the worse basins a fresh start could reach: compare segmentation and
+calibration with the ignorable model before relying on it.
 
 ### Command-line interface
 
