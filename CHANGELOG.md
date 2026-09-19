@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   53 CI runs between 13 and 18 September, **11 were green, 22 red and 20
   cancelled** — several reds were noticed hours late, and the near-bit-exact
   tolerance failures had to be found by waiting for a whole matrix.
-- **Now** (`.github/workflows/ci.yml`, mirrored in `.gitlab-ci.yml`):
+- **Now** (`.github/workflows/ci.yml`; `.gitlab-ci.yml` is removed — the GitLab
+  server has no runner, so GitLab is a code mirror only and GitHub is the CI):
   - *push / pull request* — lint, smoke, minimum-versions and the **fast**
     suite (`-m "not slow"`, `pytest -n auto`) on Python 3.11 and 3.14;
   - *release tag `v*`, weekly schedule (Mondays 03:23 UTC), manual run* — the

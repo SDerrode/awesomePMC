@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------------
-# GitHub Actions CI for awesomePMC  (mirror of .gitlab-ci.yml)
+# GitHub Actions CI for awesomePMC  (the only CI: GitLab has no runner)
 #
 # What runs when — the suite is 7 100 tests, 458 of them `slow` (Monte-Carlo
 # size/power studies, multistart, notebooks). Run whole, one process, on four

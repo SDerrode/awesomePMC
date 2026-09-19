@@ -62,7 +62,7 @@ On the GitLab working copy (`main`):
    tar tzf dist/awesomepmc-X.Y.Z.tar.gz   # only pmcprg/ (no tests), README.md, LICENSE, pyproject.toml, PKG-INFO, .gitignore
    ```
 
-6. Commit (`chore(release): X.Y.Z`), push to `origin`, wait for GitLab CI.
+6. Commit (`chore(release): X.Y.Z`), push to `origin` (GitLab has no CI; the GitHub run comes after the export, step 7).
 
 Export and publish:
 
