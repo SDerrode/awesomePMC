@@ -43,6 +43,31 @@ def _run_from_repo_root():
         os.chdir(prev)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _qt_application():
+    """One ``QApplication`` for the whole session, created before any test.
+
+    ``pmcprg.pmc.gui.main_window`` switches matplotlib to the ``QtAgg`` backend
+    when it is first imported, and matplotlib refuses that backend on a
+    headless Linux (no display) unless a ``QApplication`` already exists — as
+    it always does when the GUI really starts. A test that imports the window
+    *before* building an application therefore passed or failed depending on
+    which test ran first in its xdist worker: green on every push (the fast
+    suite happens to import it after another test built one), red on Python
+    3.13 in the full suite, where ``test_estim_missing`` came first. Building
+    the application here removes the order dependence for every GUI test.
+    Without PyQt6 (the ``gui`` extra is optional) it does nothing.
+    """
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:
+        yield None
+        return
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
 @pytest.fixture()
 def venv_kernel_manager():
     """A Jupyter ``KernelManager`` pinned to *this* interpreter's ipykernel.

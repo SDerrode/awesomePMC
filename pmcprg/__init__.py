@@ -44,7 +44,7 @@ After ``pip install -e .``:
     pmc gui      [model.toml]      # PyQt6 GUI (extra: pip install awesomepmc[gui])
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def configure_logging(*args, **kwargs):

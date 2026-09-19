@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] - 2026-09-19
+
 ### Changed — CI: the fast suite on every push, the full suite on tags, weekly and on demand
 
 - **The problem, measured.** Every push ran the whole suite (7 100 tests) in
@@ -36,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (4 vCPU, slower per core) a push now takes about **10 minutes end to end**
   (jobs run in parallel: fast suite 9–10 min, minimum-versions 10 min, lint and
   smoke under 1 min), against about 2 h 30 before.
+- **First full run on GitHub found an order-dependent test failure** (Python 3.13,
+  4 tests of `test_estim_missing.py`): importing the GUI window before a
+  `QApplication` exists makes matplotlib refuse the `QtAgg` backend on a headless
+  Linux. It passed whenever another test had built an application earlier in the
+  same xdist worker, hence green on every push. The suite now creates one
+  `QApplication` for the session (`pmcprg/tests/conftest.py`); reproduced by
+  simulating a headless matplotlib, fixed, and checked on the 211 GUI tests. The
+  four failures were the only ones on 3.11–3.14 (7 051 passed); the full suite
+  takes 47–70 min per Python version on GitHub's runners.
 - `pytest-xdist` joins the `dev` extra; the `slow` marker's description now says
   when CI runs those tests. `README.md` and `RELEASING.md` give the parallel
   commands. No test was removed or skipped: the same tests run, less often.
