@@ -5,8 +5,9 @@ observation of the pair (i, j) by its posterior ξ_n(i, j): a weighted
 Kendall τ (:func:`~pmcprg.pmc.ice._weighted_kendall_tau`, the start value and
 fallback), a weighted MLE (:func:`~pmcprg.pmc.ice._fit_copula_params`) and a
 weighted selection criterion (:func:`~pmcprg.pmc.ice._select_and_fit_copula`).
-These are internal functions — FR-12, a public weighted ``fit()``, is not
-done — and are tested here as ICE calls them, against
+They are tested here as ICE calls them and, since FR-12 made them public,
+through ``CopulaVirt.fit(..., weights=…)`` and ``fit_best`` — the same engine
+(the last section below) — against
 
 * pyvinecopulib 1.0.0 (``Bicop.fit`` with ``FitControlsBicop(weights=…)``,
   ``pyvinecopulib.utils.wdm``);
@@ -22,14 +23,15 @@ w = k/2²⁰), so R, Python and this module read the same doubles.
 
 Definitions compared
 --------------------
-* **Weighted Kendall τ.** pmcprg: the product-weight coefficient
-  Σ_{i<j} wᵢwⱼ sgn(Δu) sgn(Δv) / Σ_{i<j} wᵢwⱼ — a weighted τ-a. pyvinecopulib
-  (``wdm``) and VineCopula (``TauMatrix``, which ``BiCopEst``'s ``emptau``
-  and itau use) compute the same numerator over
-  √(Σ wᵢwⱼ sgn(Δu)² · Σ wᵢwⱼ sgn(Δv)²) — a weighted τ-b. **Without ties the
-  three are the same number** (measured below); with ties they differ by
-  definition (−5.1·10⁻² on an 8 × 8 grid, :func:`test_references_weight_tau_b_on_ties`).
-  ICE's pseudo-observations come from continuous margins: no ties.
+* **Weighted Kendall τ.** pyvinecopulib (``wdm``) and VineCopula
+  (``TauMatrix``, which ``BiCopEst``'s ``emptau`` and itau use) compute
+  Σ_{i<j} wᵢwⱼ sgn(Δu) sgn(Δv) over √(Σ wᵢwⱼ sgn(Δu)² · Σ wᵢwⱼ sgn(Δv)²) — a
+  weighted τ-b. pmcprg computed the weighted τ-a (the same numerator over
+  Σ_{i<j} wᵢwⱼ) until FR-12, and computes the τ-b since: **without ties the
+  two are the same number** (measured below; the τ-a code is kept for that
+  case, bit for bit), with ties τ-b is 4.6·10⁻² to 5.1·10⁻² above τ-a on an
+  8 × 8 grid (:func:`test_references_weight_tau_b_on_ties`). ICE's
+  pseudo-observations come from continuous margins: no ties.
 * **Weighted log-likelihood.** pmcprg (``_weighted_log_likelihood``, the
   selection scores and the joint MLE): the **total** Σ wᵢ log c(uᵢ, vᵢ);
   the one-parameter search minimises the same sum divided by Σw (same
@@ -88,7 +90,8 @@ decisions do not hang on rounding (same under the minimum versions).
 
 Discrepancies, each explained
 -----------------------------
-* τ-a against τ-b on ties — definitions (above).
+* τ-a against τ-b on ties — definitions (above); resolved by FR-12, pmcprg
+  computes the references' τ-b.
 * The log-likelihood each package reports — definitions (above).
 * BIC's sample size — definitions; the one differing decision.
 * References' precision: VineCopula's one-parameter MLE (3.0·10⁻⁸ nat short),
@@ -118,7 +121,7 @@ import pytest
 import scipy
 from scipy.optimize import minimize, minimize_scalar
 
-from pmcprg.copulas import CopulaEnum
+from pmcprg.copulas import CopulaEnum, CopulaVirt
 from pmcprg.copulas.archimedean.frank import kendall_tau_frank
 from pmcprg.copulas.archimedean.joe import _joe_tau_from_theta
 from pmcprg.pmc.ice import (
@@ -462,10 +465,13 @@ def test_tables_carry_provenance_and_the_data_they_read():
 
 @pytest.mark.parametrize("dataset", list(_weighted_data()))
 def test_weighted_tau_is_the_product_weight_coefficient(dataset):
-    """pmcprg's O(N log N) weighted τ equals the exact O(n²) τ-a, at every weighting and scale."""
+    """pmcprg's O(N log N) weighted τ equals the exact O(n²) coefficient, at every weighting and scale.
+
+    τ-a on the samples without ties, τ-b on the tied grid (FR-12).
+    """
     for scheme in SCHEMES:
         u, v, w, k = _scheme(dataset, scheme)
-        exact = _exact_tau(u, v, k)
+        exact = _exact_tau(u, v, k, tau_b=(dataset == "gaussian_ties"))
         for c in (1.0, 1 / 3, 7.0, 1e3, 1e6, 2.0 ** -20, 1e-6):
             got = _weighted_kendall_tau(u, v, w * c)
             assert abs(got - exact) <= TOL_TAU["pmcprg"], (scheme, c, got, exact)
@@ -494,19 +500,24 @@ def test_weighted_tau_parity(reference, dataset):
 
 
 def test_references_weight_tau_b_on_ties():
-    """With ties the definitions part: pmcprg's weighted τ-a, the references' weighted τ-b.
+    """With ties pmcprg computes the references' weighted τ-b (FR-12; τ-a before).
 
-    On the 8 × 8 grid (``gaussian_ties``) the two differ by 4.6·10⁻² to
-    5.1·10⁻² — a definition, not an error: each implementation meets its own
-    to the tolerances above.
+    On the 8 × 8 grid (``gaussian_ties``) τ-b and τ-a differ by 4.6·10⁻² to
+    5.1·10⁻², a definition. pmcprg's weighted τ is now the τ-b: measured
+    5.6·10⁻¹⁷ from the exact value, 0 from pyvinecopulib, 1.3·10⁻¹⁴ from
+    VineCopula (its own 1.8·10⁻¹³ error), and 6.1·10⁻¹⁶ with the weights
+    scaled — the tolerances above.
     """
     for scheme in SCHEMES:
         u, v, w, k = _scheme("gaussian_ties", scheme)
         exact_a, exact_b = _exact_tau(u, v, k), _exact_tau(u, v, k, tau_b=True)
         assert 4e-2 < exact_b - exact_a < 6e-2, (scheme, exact_a, exact_b)
-        assert abs(_weighted_kendall_tau(u, v, w) - exact_a) <= TOL_TAU["pmcprg"]
+        ours = _weighted_kendall_tau(u, v, w)
+        assert abs(ours - exact_b) <= TOL_TAU["pmcprg"]
         for reference in REFERENCES:
-            assert abs(_ref_kendall(reference, "gaussian_ties", scheme) - exact_b) <= TOL_TAU[reference]
+            ref = _ref_kendall(reference, "gaussian_ties", scheme)
+            assert abs(ref - exact_b) <= TOL_TAU[reference]
+            assert abs(ours - ref) <= TOL_TAU["pmcprg"] + TOL_TAU[reference], (scheme, reference)
 
 
 @pytest.mark.parametrize("reference", REFERENCES)
@@ -766,3 +777,113 @@ def test_selection_penalties_match_vinecopula_parameter_counts():
         assert np.isfinite(ll)
         assert _score_aic(cls, entry, p, u, v, w) == 2.0 * ll - 2.0 * npars[code]
         assert _score_bic(cls, entry, p, u, v, w) == 2.0 * ll - npars[code] * np.log(w.sum())
+
+
+# ---------------------------------------------------------------------------
+# The public API is the same engine (FR-12)
+# ---------------------------------------------------------------------------
+#
+# ``CopulaVirt.fit(uv, method, weights=w, pseudo_obs=True)`` runs ICE's
+# functions above for generic weights, bit for bit; unit and {0, 1} weights
+# are the unweighted fit of the kept rows (bit for bit,
+# ``test_fr12_weighted_fit.py``), whose one-parameter search stops at Brent's
+# default ``xatol`` 1e-5 and whose Student/BB1 optimisers are their own:
+# measured 9.3e-10 nat below the polished maximum at most (Clayton 90°, unit).
+SHORTFALL_UNWEIGHTED_PATH = 5e-9
+
+# itau of Student: ν by a Brent search in 1/ν at ρ(τ̂) (``xatol`` 1e-6) — a
+# profile maximum, as pyvinecopulib's itau finds it. Measured against
+# pyvinecopulib: ν 1.0e-6 relative, the log-likelihood at pmcprg's τ̂ within
+# 7.8e-13 nat either way (the same maximum). VineCopula searches ν in [2, 10]
+# at tol = 1: up to 5.4e-2 nat below (the {0, 1} scheme, ν̂ 9.44 against 11.89).
+TOL_ITAU_NU_REL = 1e-5
+TOL_ITAU_PROFILE = 1e-11
+
+
+def _entry_of(dataset: str):
+    return ENTRY.get(dataset, CopulaEnum.GAUSSIAN)        # the tie grid is Gaussian
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("dataset", WEIGHTED_SETS)
+def test_public_weighted_mle_is_the_engine(dataset, scheme):
+    entry = ENTRY[dataset]
+    cls = entry.klass
+    u, v, w, _ = _scheme(dataset, scheme)
+    r = cls.fit(np.column_stack([u, v]), method="mle", weights=w, pseudo_obs=True)
+    engine = _pmcprg_fit(dataset, u, v, w)
+    params = dict(r.copula.params)
+    ll = _weighted_log_likelihood(cls, params, u, v, w)
+    if scheme == "gen":
+        # Generic weights: ICE's weighted MLE itself, and its log-likelihood.
+        assert r.weights is not None and params == engine
+        assert r.log_likelihood == ll and r.converged
+    else:
+        # Unit or {0, 1} weights: the unweighted fit of the kept rows.
+        assert r.weights is None and r.n_obs == int(np.count_nonzero(w))
+        best = _optimum(entry, u, v, w, [engine, params])
+        assert 0.0 <= best - ll <= SHORTFALL_UNWEIGHTED_PATH, best - ll
+
+
+@pytest.mark.parametrize("dataset", list(_weighted_data()))
+def test_public_itau_inverts_the_references_weighted_tau(dataset):
+    """``fit(method='tau', weights=…)`` inverts the weighted τ-b — the tie grid included."""
+    entry = _entry_of(dataset)
+    lo, hi = entry.constructible_tau_range()
+    for scheme in SCHEMES:
+        u, v, w, _ = _scheme(dataset, scheme)
+        r = entry.klass.fit(np.column_stack([u, v]), method="tau", weights=w, pseudo_obs=True)
+        for reference in REFERENCES:
+            ref = float(np.clip(_ref_kendall(reference, dataset, scheme), lo, hi))
+            assert abs(r.tau_k - ref) <= TOL_TAU["pmcprg"] + TOL_TAU[reference], (scheme, reference)
+
+
+def test_public_student_itau_nu_is_the_profile_maximum():
+    """Student's itau ν is pyvinecopulib's (weighted) profile maximum; VineCopula stops short."""
+    entry = ENTRY["student"]
+    for scheme in SCHEMES:
+        u, v, w, _ = _scheme("student", scheme)
+        r = entry.klass.fit(np.column_stack([u, v]), method="tau", weights=w, pseudo_obs=True)
+        assert r.method == "tau" and r.converged
+        ours = _weighted_log_likelihood(entry.klass, dict(r.copula.params), u, v, w)
+        pv = _params_of_key("Student", _ref_fit("pyvinecopulib", "student", scheme, "itau")["pars"])
+        vc = _params_of_key("Student", _ref_fit("VineCopula", "student", scheme, "itau")["pars"])
+        assert abs(r.tau_k - pv["tau_k"]) <= TOL_ITAU
+        assert abs(r.copula.df - pv["df"]) <= TOL_ITAU_NU_REL * pv["df"], (scheme, r.copula.df)
+        ll_pv = _weighted_log_likelihood(entry.klass, {"tau_k": r.tau_k, "df": pv["df"]}, u, v, w)
+        ll_vc = _weighted_log_likelihood(entry.klass, {"tau_k": r.tau_k, "df": vc["df"]}, u, v, w)
+        assert abs(ours - ll_pv) <= TOL_ITAU_PROFILE, (scheme, ours - ll_pv)
+        assert ours - ll_vc >= -TOL_ITAU_PROFILE, (scheme, ours - ll_vc)
+
+
+@pytest.mark.parametrize("dataset", SELECTION_SETS)
+def test_public_fit_best_selects_as_the_engine(dataset):
+    """``fit_best(method='mle', weights=w, criterion=…)`` makes ICE's decisions (seeds 1–5).
+
+    With the deterministic weights the winner's parameters are the engine's bit
+    for bit; with unit weights the fits are the unweighted ones and only the
+    decisions are compared (all agree).
+    """
+    cands = _candidates(dataset)
+    classes = [CopulaEnum.from_short_name(s).klass for s in cands]
+    problems = []
+    for r in _selection_rows():
+        seed = int(r["seed"])
+        if r["dataset"] != dataset or seed not in FAST_SEEDS:
+            continue
+        for weighting in ("unit", "formula"):
+            u, v, w = _selection_sample(r, weighting)
+            for crit, ice_crit in (("aic", "aic"), ("bic", "bic"), ("loglik", "mle")):
+                fb = CopulaVirt.fit_best(np.column_stack([u, v]), families=classes, method="mle",
+                                         weights=w, criterion=crit, pseudo_obs=True)
+                blk = _select_and_fit_copula(cands, u, v, w, criterion=ice_crit)
+                best = fb[0].copula
+                if best.copula_enum.value.SHORT_NAME != blk["name"]:
+                    problems.append((seed, weighting, crit, best.copula_enum.value.SHORT_NAME,
+                                     blk["name"]))
+                elif weighting == "formula" and (
+                        best.params["tau_k"] != blk["tau"]
+                        or any(best.params[k] != val for k, val in blk.items()
+                               if k not in ("name", "tau"))):
+                    problems.append((seed, weighting, crit, "parameters", dict(best.params), blk))
+    assert not problems, problems

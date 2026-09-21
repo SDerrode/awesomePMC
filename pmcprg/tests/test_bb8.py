@@ -30,7 +30,7 @@ specific to this family:
 * that ``delta8`` takes **its own** branch of ``_two_parameter_spec`` and
   neither BB1's ``delta`` nor BB6's ``delta6`` branch, which carry those
   families' τ maps;
-* recovery of τ by ``fit``, the ``method='tau'`` fallback, and the ICE
+* recovery of τ by ``fit``, ``method='tau'`` (itau, FR-12), and the ICE
   integration path.
 
 Every seed below is an integer literal or ``zlib.crc32`` of a repr — never
@@ -615,12 +615,27 @@ def test_sample_margins_and_monte_carlo_tau(tau, delta):
 # Fitting
 # --------------------------------------------------------------------------
 
-def test_fit_tau_method_falls_back_to_mle(caplog):
+def test_fit_tau_method_is_itau_with_a_profile_mle(caplog):
+    """FR-12: ``'tau'`` inverts Kendall's τ and fits δ by MLE at that τ.
+
+    It used to log "cannot identify delta8" and run the joint MLE.
+    """
     uv = CopulaBB8(tau_k=0.5, delta8=0.4).sample(n=400, seed=5)
     with caplog.at_level(logging.WARNING, logger="pmcprg.copulas.archimedean.bb8"):
         res = CopulaBB8.fit(uv, method="tau")
-    assert res.method == "mle"
-    assert "cannot identify delta8" in caplog.text
+    assert res.method == "tau" and res.converged
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert res.tau_k == kendalltau(uv[:, 0], uv[:, 1])[0]      # itau: τ̂ itself
+    # delta8 is the maximum of the likelihood at that τ (a profile MLE) …
+    for h in (-1e-3, 1e-3):
+        try:
+            cop = CopulaBB8(tau_k=res.tau_k, delta8=res.copula.delta8 + h)
+        except CopulaParameterError:
+            continue
+        assert float(np.sum(cop.logpdf_array(res.uv))) <= res.log_likelihood + 1e-9
+    # … and not the joint MLE, which it used to be.
+    mle = CopulaBB8.fit(uv, method="mle")
+    assert mle.log_likelihood >= res.log_likelihood and mle.tau_k != res.tau_k
 
 
 @pytest.mark.parametrize("tau,delta", [(0.3, 0.5), (0.5, 0.2), (0.7, 1.0), (0.8, 0.7)])

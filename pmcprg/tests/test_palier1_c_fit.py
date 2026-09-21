@@ -217,18 +217,25 @@ class _Failing(CopulaVirt):
 
 
 def test_fit_best_ranks_like_with_like_and_reports_failures(caplog):
+    """Every fit is ranked with the method asked for; failures are reported.
+
+    Since FR-12 Student answers ``'tau'`` by itau (ν by MLE at the τ̂ of
+    Kendall) and is ranked with the other τ-inversions; before, it fitted by
+    joint MLE and went to ``other_method``.
+    """
     data = CopulaStudent(tau_k=0.5, df=3.0).sample(n=120, seed=5)
     with caplog.at_level(logging.WARNING, logger="pmcprg.copulas._base"):
         res = CopulaVirt.fit_best(data, families=[CopulaGaussian, CopulaStudent,
                                                   CopulaClayton, _Failing], method="tau")
     assert isinstance(res, FitBestResults) and isinstance(res, list)
-    assert [r.method for r in res] == ["tau", "tau"]
-    assert {type(r.copula).__name__ for r in res} == {"CopulaGaussian", "CopulaClayton"}
+    assert [r.method for r in res] == ["tau", "tau", "tau"]
+    assert {type(r.copula).__name__ for r in res} == {"CopulaGaussian", "CopulaStudent",
+                                                      "CopulaClayton"}
     assert [r.aic for r in res] == sorted(r.aic for r in res)
-    assert [type(r.copula).__name__ for r in res.other_method] == ["CopulaStudent"]
+    assert res.other_method == [] and res.criterion == "aic"
     assert res.failures == [("_Failing", "RuntimeError: deliberate failure")]
     assert any("_Failing" in rec.message for rec in caplog.records)
-    assert any("other_method" in rec.message for rec in caplog.records)
+    assert not any("other_method" in rec.message for rec in caplog.records)
 
     res_mle = CopulaVirt.fit_best(data, families=[CopulaGaussian, CopulaStudent], method="mle")
     assert {type(r.copula).__name__ for r in res_mle} == {"CopulaGaussian", "CopulaStudent"}

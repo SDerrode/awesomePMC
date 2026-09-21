@@ -285,8 +285,10 @@ Tawn's arrangement, for BB6's reason (per-point Brent takes minutes to sample
 
 Fitting
 -------
-``fit`` is always the joint two-parameter MLE; τ alone cannot identify δ, so
-``method='tau'`` warns and falls back (BB1's, BB6's and Tawn's precedent).
+``fit`` is the joint two-parameter MLE by default; τ alone cannot identify δ,
+so ``method='tau'`` is itau — τ̂ from Kendall's τ, then δ by maximum
+likelihood at that τ, a profile likelihood (FR-12; it used to warn and fall
+back to the joint MLE).
 ``_two_parameter_spec``'s ``delta8`` branch optimises in ``(ln(θ − 1), δ)``,
 whose box **is** the admissible set, and maps back through the memoised
 ``_tau_of`` so the constructor gets the very θ the optimiser proposed instead
@@ -883,19 +885,16 @@ class CopulaBB8(CopulaVirt):
     # ------------------------------------------------------------------
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle'):
-        """Joint MLE of (τ, δ); ``method='tau'`` falls back to it.
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False):
+        """Joint MLE of (τ, δ) by default; ``method='tau'`` is itau.
 
-        Kendall's τ alone cannot identify δ — τ(θ, δ) has two unknowns — so a
-        ``'tau'`` request logs a warning and is answered by the same joint
-        two-parameter MLE as ``'mle'`` (BB1's, BB6's and Tawn's precedent).
+        Kendall's τ alone cannot identify δ: ``'tau'`` inverts τ̂ and fits
+        δ by maximum likelihood at that τ (a profile likelihood, FR-12 —
+        before, it logged a warning and ran the joint MLE). ``weights`` and
+        ``pseudo_obs`` as in :meth:`CopulaVirt.fit`.
         """
-        if method == 'tau':
-            logger.warning(
-                "%s.fit: method='tau' cannot identify delta8 from Kendall's tau "
-                "alone; falling back to MLE.", cls.__name__)
-            method = 'mle'
-        return super().fit(data, method=method)
+        return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
 
 
 if __name__ == '__main__':

@@ -54,8 +54,9 @@ Fitting
     n_params = 2 — MLE jointly over (ρ, ν) via L-BFGS-B, with ν bounded by
     ``EXTRA_PARAM_BOUNDS_BY_PARAM["df"]`` of ``pmcprg.copulas._base`` — the same
     bounds ICE uses (audit A-2, RB-4).
-    method='tau' is accepted for API compatibility and warns before falling
-    back to MLE (τ alone cannot identify both ρ and ν).
+    method='tau' is itau (FR-12): ρ from Kendall's τ̂, then ν by maximum
+    likelihood at that ρ — VineCopula's itau for the Student copula (it used
+    to warn and fall back to the joint MLE: τ alone cannot identify ν).
 
 Notes
 -----
@@ -213,26 +214,38 @@ class CopulaStudent(CopulaVirt):
     # ------------------------------------------------------------------
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
-        """Fit the Student-t copula by 2-D MLE over (ρ, ν).
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
+        """Fit the Student-t copula by 2-D MLE over (ρ, ν), or by itau.
 
-        ``method`` is accepted for API compatibility.  If 'tau' is passed,
-        a warning is issued and MLE is used (τ alone under-determines ν).
-        ν is bounded — and started — by ``EXTRA_PARAM_BOUNDS_BY_PARAM["df"]``,
+        ``method='mle'`` (default, unweighted): the 2-D MLE below. ν is
+        bounded — and started — by ``EXTRA_PARAM_BOUNDS_BY_PARAM["df"]``,
         the bounds ICE uses (audit RB-4); the objective is the native
         log-density, without floor.
 
+        ``method='tau'``: ρ from Kendall's τ̂, then ν by maximum likelihood
+        at that ρ — VineCopula's itau for the Student copula (FR-12; before,
+        ``'tau'`` warned and ran this MLE). ``weights``, and the weighted
+        fits, as in :meth:`CopulaVirt.fit` (the weighted MLE is ICE's joint
+        optimiser in (atanh τ, 1/ν)).
+
         Parameters
         ----------
-        data   : array-like, shape (n, 2)
-        method : {'mle', 'tau'}  (only 'mle' is meaningful; 'tau' warns)
+        data       : array-like, shape (n, 2)
+        method     : {'mle', 'tau'}
+        weights    : optional observation weights (see :meth:`CopulaVirt.fit`)
+        pseudo_obs : ``True`` if ``data`` already are pseudo-observations
 
         Returns
         -------
-        FitResult with method='mle'.
+        FitResult
         """
-        from scipy.stats import rankdata, kendalltau as _kendalltau
+        from scipy.stats import kendalltau as _kendalltau
 
+        from pmcprg.copulas._base import _pseudo_observations
+
+        if weights is not None or method == 'tau':
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
@@ -241,17 +254,10 @@ class CopulaStudent(CopulaVirt):
             raise ValueError(
                 f'Student requires at least 8 observations for 2-D MLE, got {n}.'
             )
+        if method != 'mle':
+            raise ValueError(f"method must be 'tau' or 'mle', got {method!r}.")
 
-        uv = np.column_stack([
-            rankdata(data[:, 0]) / (n + 1),
-            rankdata(data[:, 1]) / (n + 1),
-        ])
-
-        if method == 'tau':
-            logger.warning(
-                "Student.fit: method='tau' is under-determined (2 free params ρ and ν); "
-                "falling back to MLE."
-            )
+        uv = _pseudo_observations(data, pseudo_obs)
 
         df_lo, df_hi, df0 = EXTRA_PARAM_BOUNDS_BY_PARAM["df"]
 
@@ -301,6 +307,10 @@ class CopulaStudent(CopulaVirt):
             log_likelihood=log_lik,
             n_obs=n,
             uv=uv,
+            converged=bool(res.success),
+            message=f"L-BFGS-B over (ρ, ν): {res.message}",
+            n_iter=int(res.nit),
+            n_eval=int(res.nfev),
         )
 
 

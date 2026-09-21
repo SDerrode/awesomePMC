@@ -514,11 +514,10 @@ def _prepare(uv, weights) -> tuple[np.ndarray, np.ndarray, bool]:
         w = np.ones(uv.shape[0])
         weighted = False
     else:
-        w = np.asarray(weights, dtype=float).ravel()
-        if w.shape[0] != uv.shape[0]:
-            raise ValueError(f"weights ({w.shape[0]}) and uv ({uv.shape[0]}) differ in length.")
-        if not np.all(np.isfinite(w)) or np.any(w < 0.0):
-            raise ValueError("weights must be finite and non-negative.")
+        from pmcprg.copulas._fit import validate_weights
+
+        w = validate_weights(np.asarray(weights, dtype=float).ravel(), uv.shape[0],
+                             allow_zero_sum=True)
         keep = w > 0.0
         uv, w = uv[keep], w[keep]
         weighted = True
@@ -1004,7 +1003,9 @@ def standard_errors(copula, uv, weights=None, method: str = "mle", *,
         if spec.dq_dtau is None:
             raise ValueError(
                 f"method='tau' is not available for {spec.cls.__name__}: Kendall's τ does not "
-                f"identify its second parameter (and its fit is always 'mle').")
+                f"identify its second parameter, and the variance of its itau estimate (τ̂ "
+                f"with a profile MLE of the other parameter) is not implemented; use "
+                f"method='mle' on a maximum-likelihood fit.")
         ranks = True
         cov = np.outer(spec.dq_dtau, spec.dq_dtau) * _tau_variance(uv, w, weighted)
 

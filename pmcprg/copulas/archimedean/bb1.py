@@ -24,7 +24,8 @@ Parameters stored in `params`:
     tau_k : Kendall's τ ∈ (1 − 1/δ, 1)   [ensures θ > 0]
     delta : δ ≥ 1 (default 1.5 if omitted)
 
-n_params = 2 — fitting always uses 2-D MLE over (θ, δ).
+n_params = 2 — ``fit`` is the 2-D MLE over (θ, δ) by default; ``method='tau'``
+is itau, τ̂ then δ by maximum likelihood at that τ (FR-12).
 
 Reference: Joe, H. (1997). *Multivariate Models and Dependence Concepts*,
 Chapman & Hall, ch. 5 (family BB1: Clayton at δ = 1, Gumbel as θ → 0) and
@@ -394,21 +395,29 @@ class CopulaBB1(CopulaVirt):
     # ------------------------------------------------------------------
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
-        """Fit BB1 by 2-D MLE over (θ, δ).
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
+        """Fit BB1 by 2-D MLE over (θ, δ), or by itau.
 
-        ``method`` is accepted for API compatibility but MLE is always used
-        (τ alone cannot identify both free parameters). The log-likelihood is
-        ``Σ logpdf_array`` — no ``EPS`` floor on the density; an inadmissible
-        (θ, δ) or a non-finite sum gets the finite penalty the bounded
-        optimiser needs.
+        ``method='mle'`` (default, unweighted): the 2-D MLE below. The
+        log-likelihood is ``Σ logpdf_array`` — no ``EPS`` floor on the
+        density; an inadmissible (θ, δ) or a non-finite sum gets the finite
+        penalty the bounded optimiser needs.
+
+        ``method='tau'``: τ̂ from Kendall's τ, then δ by maximum likelihood at
+        that τ (a profile likelihood, FR-12; before, ``'tau'`` warned and ran
+        this MLE). ``weights`` and ``pseudo_obs`` as in :meth:`CopulaVirt.fit`.
 
         Returns
         -------
-        FitResult with copula fitted by MLE.
+        FitResult
         """
-        from scipy.stats import rankdata, kendalltau as _kendalltau
+        from scipy.stats import kendalltau as _kendalltau
 
+        from pmcprg.copulas._base import _pseudo_observations
+
+        if weights is not None or method == 'tau':
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
@@ -417,17 +426,10 @@ class CopulaBB1(CopulaVirt):
             raise ValueError(
                 f'BB1 requires at least 8 observations for 2-D MLE, got {n}.'
             )
+        if method != 'mle':
+            raise ValueError(f"method must be 'tau' or 'mle', got {method!r}.")
 
-        uv = np.column_stack([
-            rankdata(data[:, 0]) / (n + 1),
-            rankdata(data[:, 1]) / (n + 1),
-        ])
-
-        if method == 'tau':
-            logger.warning(
-                "BB1.fit: method='tau' is under-determined (2 free params); "
-                "falling back to MLE."
-            )
+        uv = _pseudo_observations(data, pseudo_obs)
 
         # Initial point: empirical τ → choose δ₀=1.5, θ₀ from formula
         tau_emp, _ = _kendalltau(data[:, 0], data[:, 1])
@@ -472,6 +474,10 @@ class CopulaBB1(CopulaVirt):
             log_likelihood=log_lik,
             n_obs=n,
             uv=uv,
+            converged=bool(res.success),
+            message=f"L-BFGS-B over (θ, δ): {res.message}",
+            n_iter=int(res.nit),
+            n_eval=int(res.nfev),
         )
 
 

@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.4.0] - 2026-09-21
+
+### Highlights
+
+- **Weighted copula fitting in the public API (FR-12).**
+  `CopulaVirt.fit(data, method, weights=…, pseudo_obs=…)` and `fit_best(…,
+  weights=…, criterion=…)` use the same weighted engine as ICE's M-step,
+  now moved to `pmcprg.copulas._weighted`. Every fit reports its status and,
+  on demand, diagnostics: gradient, Hessian eigenvalues and a boundary flag.
+  The new API is documented on a local MkDocs site (`apidoc/`) and in
+  `CONTRIBUTING.md`.
+- **The copula layer is cross-validated against R and pyvinecopulib (FR-11).**
+  Every family is compared, through versioned tables and an mpmath oracle,
+  with pyvinecopulib, VineCopula, copula, copBasic and fCopulae: densities,
+  CDFs, h-functions and their inverses, τ, tail coefficients, and weighted
+  estimation and selection. pmcprg agrees to 1e-13 or better wherever a
+  reference is accurate. Every disagreement is traced, almost always to the
+  reference.
+- **Results that change, each measured and small:**
+  - the generic h-inverse and BB1's rotation inverse converge to the last
+    digits; draws of those families move beyond the 9th and 13th digit;
+  - the two-parameter MLE no longer depends on the scale of the weights;
+  - BB1's four rotations are penalised for their two parameters in AIC/BIC;
+  - `fit(method='tau')` of the multi-parameter families is now itau, where
+    it used to fall back to the joint MLE;
+  - the weighted τ is a τ-b on tied data, as in the references;
+  - BB1 is labelled "Clayton-Gumbel".
+  PMC/HMC results on data without ties are otherwise unchanged.
+
+### Fixed — BB1's four rotations counted one free parameter instead of two (FR-12)
+
+- `BB190`, `BB1270`, `SURVIVAL_BB190` and `SURVIVAL_BB1270` fit (τ, δ) but
+  inherited `CopulaVirt`'s `n_params = 1`. Their AIC was therefore 2 too low,
+  and their BIC log n (or log Σw) too low. That penalty is what `fit_best`
+  and ICE's family selection use, so these four families were favoured
+  wrongly whenever they were candidates.
+- A rotation now takes `n_params` from its base family.
+- `test_copula_n_params.py` checks that `n_params` equals the number of
+  registered parameters for every family; it fails on the old code.
+- ICE's family choice may change when a BB1 rotation is a candidate. It is
+  not one of the default candidates.
+
 ### Added — CONTRIBUTING, an API documentation site, and the state-labelling rule (FR-12)
 
 - **`CONTRIBUTING.md`** covers:
@@ -32,6 +76,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The docstrings of `clarke_test` and `comparison_matrix` had prose inside
   `Parameters`, which a strict docstring parser misreads. It moved to
   `Notes`.
+### Added — weighted copula fitting and per-fit diagnostics in the public API (FR-12, part A)
+
+- **One weighted engine.** The weighted Kendall τ, the weighted MLE and the
+  weighted family selection of ICE's M-step move from `pmcprg/pmc/ice.py` to
+  `pmcprg.copulas._weighted`, unchanged. ICE imports them under their former
+  names. ICE's golden and bit-identity tests pass unchanged.
+- **`CopulaVirt.fit(data, method, *, weights=None, pseudo_obs=False)`.**
+  - `pseudo_obs=True` takes data in (0, 1)² as they are. Otherwise the data
+    are rank-transformed; with weights, by the weighted empirical CDF of
+    ICE's empirical copula margins (FR-7 a): Σ_{x_k ≤ x} w_k / (Σw + 1).
+  - Weights are frequency weights. They are validated in one place
+    (`pmcprg.copulas.validate_weights`, also used by ICE): 1-D, one per
+    observation, finite, ≥ 0, with a positive sum.
+  - Rows of weight 0 are dropped. If every other weight is 1, the result is
+    the unweighted fit, bit for bit: unit weights change nothing, and
+    {0, 1} weights give the fit on the subset.
+  - Otherwise the fit runs ICE's engine: `'mle'` is ICE's weighted MLE, bit
+    for bit, and `'tau'` inverts the weighted τ. The reported
+    log-likelihood is Σ wᵢ log cᵢ, and the BIC charges k·log Σw.
+    VineCopula charges log n instead, and pyvinecopulib rescales the
+    weights to mean 1.
+  - Parameters do not depend on the weights' scale when pseudo-observations
+    are passed. The rank transform does: a WARNING fires when Σw < 10.
+- **`CopulaVirt.fit_best(..., *, weights=None, criterion='aic', pseudo_obs=False)`.**
+  `criterion` is `'aic'` (the default, unchanged), `'bic'` or `'loglik'`.
+  With weights and `method='mle'`, it makes ICE's weighted selection.
+- **Weighted τ-b on ties.** The weighted Kendall τ is now the weighted τ-b
+  of pyvinecopulib and VineCopula. Without ties it keeps the former τ-a
+  code, bit for bit. On the FR-11 tie grid it matches both references to
+  1.3e-14 (it used to differ from them by 5e-2). ICE sees ties only with
+  tied observations, such as integer-valued data. Its joint two-parameter
+  MLE then starts from τ-b. In a fingerprint of ICE/SEM runs on rounded
+  data, 5 of the 6 runs with copulas moved: τ by at most 1.3e-7, the copula
+  parameters by at most 2.4e-6 relative, the log-likelihood trace by at most
+  4.3e-5 nat. No family changed.
+- **`FitResult` reports its status.** It gains `message`, `n_iter`,
+  `n_eval` and `weights`, plus the `failed` and `n_eff` properties. The
+  `diagnostics` property returns a `FitDiagnostics` in the manner of GJRM's
+  `conv.check()`:
+  - the gradient and Hessian of the weighted log-likelihood on the
+    parameter scale;
+  - the Hessian's eigenvalues, with `negative_definite`;
+  - the Newton decrement;
+  - a boundary flag, with FR-4's rules where they exist;
+  - the optimiser's counts.
+
+  It is computed on first access: 3 likelihood evaluations for one
+  parameter, 9 for two, 0.3 to 19 ms at n = 1000. ICE pays nothing.
+- New public names: `validate_weights`, `weighted_kendall_tau`,
+  `weighted_pseudo_obs`, `FitDiagnostics`, `FitBestResults`.
+
+### Changed — `fit(method='tau')` of the multi-parameter families is itau (FR-12)
+
+- **Before.**
+  - Student, BB1, BB1's rotations and survival, BB6, BB7, BB8, Tawn 1/2/3
+    and t-EV logged a warning and ran the joint MLE. The result was
+    reported as `method='mle'`, so `fit_best(method='tau')` put these
+    families in `other_method`, unranked.
+  - The generic code path left the extra parameter at its registered
+    start value (ν = 4 for Student).
+- **Now.** τ̂ is Kendall's τ, as for the one-parameter families. The other
+  parameters are fitted by maximum likelihood at that τ, a profile
+  likelihood, as VineCopula's itau fits Student's ν. With weights, the
+  weighted τ and the weighted profile are used. Student's weighted itau ν
+  matches pyvinecopulib's to 1e-6 relative.
+- **Measured** (n = 500, seed 1; before → after):
+
+  | family | τ | extra parameter | log-likelihood |
+  |---|---|---|---|
+  | Student (τ 0.5, ν 8) | 0.4941 → 0.4851 | ν 7.700 → 7.204 | 171.270 → 171.173 |
+  | Student (τ 0.7, ν 3) | 0.6924 → 0.6921 | ν 3.245 → 3.239 | 400.074 → 400.074 |
+  | BB1 (τ 0.5, δ 1.5) | 0.4921 → 0.4833 | δ 1.408 → 1.387 | 181.731 → 181.618 |
+  | Tawn 1 (τ 0.4, ψ 0.6) | 0.3774 → 0.3848 | ψ 0.533 → 0.546 | 134.905 → 134.831 |
+
+- **What did not change.** Every `'mle'` fit and every one-parameter `'tau'`
+  fit is bit-identical: an 86-fit fingerprint covered every family.
+- **What follows.**
+  - `fit_best(method='tau')` now ranks the multi-parameter families.
+  - `standard_errors()` of an itau fit of these families raises: the
+    variance of that estimator is not implemented.
+  - The unweighted Student and BB1 MLEs now report L-BFGS-B's own success
+    in `converged`.
+- ICE never takes this path and is unchanged.
 
 ### Fixed — the two-parameter MLE depended on the scale of the weights (FR-11)
 

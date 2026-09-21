@@ -432,8 +432,7 @@ def test_fit_best_hooks_are_read_only(method):
     np.testing.assert_array_equal(ref.statistic, mat.statistic)
     ref_cs = fit_best_confidence_set(fb, adjust="holm")
     assert ref_cs.members == cs.members
-    if method == "tau":                               # Student is in other_method
-        assert "Student" not in names
+    assert "Student" in names                         # ranked under 'tau' too since FR-12
 
 
 def test_fit_best_hook_refuses_fits_on_different_data():

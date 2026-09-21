@@ -15,6 +15,9 @@ from pmcprg.copulas._stderr   import (IndependenceLRTest, MleTauDiscrepancyTest,
 from pmcprg.copulas._robust   import (DPD_ALPHAS, DPDAlphaSelection, DPDFit, dpd_fit,
                                    dpd_objective, integral_c_power, select_alpha)
 from pmcprg.copulas._nonparametric import EmpiricalBetaCopula
+from pmcprg.copulas._fit      import FitBestResults, validate_weights
+from pmcprg.copulas._fit_diagnostics import FitDiagnostics
+from pmcprg.copulas._weighted import weighted_kendall_tau, weighted_pseudo_obs
 
 # --- CopulaEnum-driven auto-import ---------------------------------------
 # Every member with a MODULE set is imported and exposed in this namespace
@@ -32,6 +35,12 @@ __all__ = [
     'CopulaVirt',
     'FitResult',
     'GoFResult',
+    # Weighted fitting and per-fit diagnostics (audit FR-12)
+    'FitBestResults',
+    'FitDiagnostics',
+    'validate_weights',
+    'weighted_kendall_tau',
+    'weighted_pseudo_obs',
     # Bivariate law
     'BivariateLaw',
     'ConditionalLaw',

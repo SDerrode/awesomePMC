@@ -256,9 +256,14 @@ def test_fit_result_method_matches_copula_method_and_free_function():
 
 
 def test_fit_and_fit_result_are_untouched():
-    """Opt-in: no new FitResult field, and computing SEs changes nothing on the fit."""
+    """Opt-in: no FitResult field for the SEs, and computing SEs changes nothing on the fit.
+
+    (FR-12 added the optimiser's status and the weights — ``message``,
+    ``n_iter``, ``n_eval``, ``weights`` — none of them for the SEs.)
+    """
     assert [f.name for f in dataclasses.fields(FitResult)] == [
-        "copula", "method", "tau_k", "log_likelihood", "n_obs", "uv", "converged"]
+        "copula", "method", "tau_k", "log_likelihood", "n_obs", "uv", "converged",
+        "message", "n_iter", "n_eval", "weights"]
     data = CopulaClayton(tau_k=0.3).sample(200, seed=8)
     fit = CopulaClayton.fit(data, method="mle")
     before = (repr(fit), fit.uv.copy(), dict(fit.copula.params), fit.copula.theta)

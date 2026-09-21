@@ -31,6 +31,7 @@ on the copula class hierarchy.
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 import os
@@ -58,6 +59,51 @@ MLE_FAIL_PENALTY: float = 1e12
 
 
 # ---------------------------------------------------------------------------
+# Observation weights — the one validation (audit FR-12)
+# ---------------------------------------------------------------------------
+
+def validate_weights(weights, n: int | None = None, *,
+                     allow_zero_sum: bool = False) -> np.ndarray:
+    """``weights`` as a float array, after the package's one check of observation weights.
+
+    Every weighted computation of the package validates its weights here —
+    the public ``CopulaVirt.fit(weights=…)`` and ``fit_best``, the copula
+    step of ICE/SEM, the weighted log-likelihood behind every objective
+    (:func:`_weighted_log_density_sum`), the standard errors, the robust fits
+    and the model-selection tests — so they accept and refuse the same
+    weights with the same messages. A valid weight vector is
+
+    * one-dimensional,
+    * of length ``n`` (one weight per observation) when ``n`` is given,
+    * finite and non-negative (a zero weight drops its observation),
+    * of positive sum — unless ``allow_zero_sum``, for the low-level sums
+      whose callers handle an all-zero vector themselves (ICE skips a pair
+      of states with Σw < 1e-12 before it gets here).
+
+    Raises ``ValueError`` naming the first condition that fails. Returns
+    ``np.asarray(weights, dtype=float)`` — the same array, not a copy, when
+    it already is a float array — so validating costs no copy and changes no
+    value.
+    """
+    try:
+        w = np.asarray(weights, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"weights must be an array of numbers ({exc}).") from None
+    if w.ndim != 1:
+        raise ValueError(f"weights must be a 1-D array, got an array of shape {w.shape}.")
+    if n is not None and w.shape[0] != n:
+        raise ValueError(f"weights has {w.shape[0]} entries for {n} observations: it must "
+                         "have the same length as the data (one weight per observation).")
+    if not np.all(np.isfinite(w)):
+        raise ValueError("weights must be finite and non-negative: found a non-finite weight.")
+    if np.any(w < 0.0):
+        raise ValueError("weights must be finite and non-negative: found a negative weight.")
+    if not allow_zero_sum and not float(w.sum()) > 0.0:
+        raise ValueError("weights must have a positive sum: every weight is zero.")
+    return w
+
+
+# ---------------------------------------------------------------------------
 # Pseudo-observation utilities
 # ---------------------------------------------------------------------------
 
@@ -80,20 +126,16 @@ def _weighted_log_density_sum(
       NaN or ``+∞`` mean the kernel failed there. Neither may be averaged
       away, and all three rank the parameter value as impossible.
 
-    ``weights=None`` means unit weights. Weights must be finite and ≥ 0.
+    ``weights=None`` means unit weights. Weights must be finite and ≥ 0
+    (:func:`validate_weights`; an all-zero vector gives 0).
     """
     ld = np.asarray(log_density, dtype=float).ravel()
     if weights is None:
         if not np.all(np.isfinite(ld)):
             return -math.inf
         return float(ld.sum())
-    w = np.asarray(weights, dtype=float).ravel()
-    if w.shape != ld.shape:
-        raise ValueError(
-            f"weights {w.shape} and log-densities {ld.shape} must have the same length."
-        )
-    if not np.all(np.isfinite(w)) or np.any(w < 0.0):
-        raise ValueError("weights must be finite and non-negative.")
+    w = validate_weights(np.asarray(weights, dtype=float).ravel(), ld.shape[0],
+                         allow_zero_sum=True)
     pos = w > 0.0
     ld_pos = ld[pos]
     if not np.all(np.isfinite(ld_pos)):
@@ -814,9 +856,42 @@ class GoFResult:
 class FitResult:
     """Returned by :meth:`CopulaVirt.fit`.
 
-    ``converged`` is ``False`` when the numerical optimiser behind a
-    ``method='mle'`` fit did not converge (the copula is then the best point
-    it found, and a WARNING was logged). Moment fits are always ``True``.
+    Fields
+    ------
+    copula, method, tau_k : the fitted copula, the method (``'tau'`` or
+                     ``'mle'``) and its τ.
+    log_likelihood : ``Σᵢ wᵢ log c(ûᵢ, v̂ᵢ)`` at the estimate (``wᵢ = 1``
+                     unweighted) — the total, not divided by Σw, as in
+                     VineCopula's weighted MLE and in ICE's selection scores.
+                     pyvinecopulib reports ``(n/Σw)·Σ wᵢ log cᵢ`` instead (its
+                     weights rescaled to mean 1); VineCopula's itau ignores
+                     the weights.
+    n_obs          : number of observations of positive weight.
+    uv             : the pseudo-observations the estimate was computed from,
+                     shape ``(n_obs, 2)``.
+    converged      : the optimiser's verdict: ``False`` when the search
+                     behind the estimate did not converge (the copula is then
+                     the best point it found, and a WARNING was logged).
+                     ``True`` for a moment estimate (a one-parameter
+                     ``'tau'`` fit).
+    message        : what the optimiser said (``""`` when not recorded).
+    n_iter, n_eval : its iterations and log-likelihood evaluations (0 for a
+                     moment estimate, ``None`` when not recorded).
+    weights        : the weights of the ``n_obs`` rows for a weighted fit,
+                     ``None`` for an unweighted one (unit weights are fitted
+                     as unweighted, :meth:`CopulaVirt.fit`).
+
+    ``failed`` (``not converged``) is the public counterpart of ICE's
+    internal ``FIT_FAILED_KEY``, and :attr:`diagnostics` the per-fit
+    convergence diagnostics (gradient, Hessian eigenvalues, boundary flag,
+    counts — :mod:`pmcprg.copulas._fit_diagnostics`), computed on first
+    access only.
+
+    Information criteria: ``k`` free parameters and ``n_eff`` =
+    :attr:`n_eff` (``n_obs`` unweighted, ``Σw`` weighted, the size ICE's
+    BIC charges): AIC ``2k − 2ℓ``, BIC ``k·log n_eff − 2ℓ`` (floored at
+    ``n_eff = 1`` when weighted, as in ICE), AICc and HQC with ``n_eff`` for
+    ``n``. VineCopula's BIC charges ``log n`` (rows) instead of ``log Σw``.
     """
     copula:         "CopulaVirt"
     method:         str
@@ -825,10 +900,31 @@ class FitResult:
     n_obs:          int
     uv:             np.ndarray   # pseudo-observations used for the fit, shape (n, 2)
     converged:      bool = True
+    message:        str = ""
+    n_iter:         int | None = None
+    n_eval:         int | None = None
+    weights:        np.ndarray | None = None
 
     @property
     def n_params(self) -> int:
         return getattr(self.copula, 'n_params', 1)
+
+    @property
+    def failed(self) -> bool:
+        """``not converged`` — the estimate is the best point found, not a certified optimum."""
+        return not self.converged
+
+    @property
+    def weighted(self) -> bool:
+        """``True`` for a weighted fit (``weights`` given, not all ones)."""
+        return self.weights is not None
+
+    @property
+    def n_eff(self) -> float:
+        """Effective sample size: ``n_obs`` unweighted, ``Σw`` weighted (frequency weights)."""
+        if self.weights is None:
+            return float(self.n_obs)
+        return float(np.sum(np.asarray(self.weights, dtype=float)))
 
     @property
     def aic(self) -> float:
@@ -837,29 +933,62 @@ class FitResult:
 
     @property
     def bic(self) -> float:
-        """Bayesian Information Criterion: k·log(n) − 2·loglik (smaller is better)."""
-        return self.n_params * np.log(self.n_obs) - 2.0 * self.log_likelihood
+        """Bayesian Information Criterion: k·log(n) − 2·loglik (smaller is better).
+
+        ``n`` is ``n_obs`` unweighted and ``max(Σw, 1)`` weighted — the
+        penalty of ICE's ``bic`` selection score (``pmcprg.pmc.ice``), so a
+        weighted ``fit_best(criterion='bic')`` ranks as ICE selects.
+        """
+        if self.weights is None:
+            return self.n_params * np.log(self.n_obs) - 2.0 * self.log_likelihood
+        return self.n_params * np.log(max(self.n_eff, 1.0)) - 2.0 * self.log_likelihood
 
     @property
     def aicc(self) -> float:
-        """Corrected AIC for small samples: AIC + 2k(k+1)/(n−k−1)."""
-        k, n = self.n_params, self.n_obs
+        """Corrected AIC for small samples: AIC + 2k(k+1)/(n−k−1), ``n = n_eff``."""
+        k, n = self.n_params, (self.n_obs if self.weights is None else self.n_eff)
         if n - k - 1 <= 0:
             return float('nan')
         return self.aic + 2.0 * k * (k + 1) / (n - k - 1)
 
     @property
     def hqc(self) -> float:
-        """Hannan-Quinn: 2k·log(log n) − 2·loglik (asymptotically less biased than BIC)."""
-        return 2.0 * self.n_params * np.log(np.log(self.n_obs)) - 2.0 * self.log_likelihood
+        """Hannan-Quinn: 2k·log(log n) − 2·loglik, ``n = n_eff`` (asymptotically less biased than BIC)."""
+        n = self.n_obs if self.weights is None else self.n_eff
+        return 2.0 * self.n_params * np.log(np.log(n)) - 2.0 * self.log_likelihood
+
+    @functools.cached_property
+    def diagnostics(self):
+        """Convergence diagnostics of this fit — :class:`pmcprg.copulas.FitDiagnostics`.
+
+        The gradient of the (weighted) log-likelihood at the estimate on the
+        parameter scale, the eigenvalues of its Hessian (negative at an
+        interior maximum), a boundary flag and the optimiser's counts, as
+        GJRM's ``conv.check()`` reports them. Computed on first access (a few
+        likelihood evaluations: 3 for one parameter, 9 for two), then cached;
+        nothing is computed during the fit. See
+        :mod:`pmcprg.copulas._fit_diagnostics`.
+        """
+        from pmcprg.copulas._fit_diagnostics import fit_diagnostics
+        return fit_diagnostics(self.copula, self.uv, self.weights, converged=self.converged,
+                               message=self.message, n_iter=self.n_iter, n_eval=self.n_eval)
 
     def __repr__(self) -> str:
         name = self.copula.copula_enum.value.LONG_NAME
+        extra = f', Σw={self.n_eff:.6g}' if self.weights is not None else ''
+        extra += '' if self.converged else ', not converged'
         return (
             f'FitResult(copula={name!r}, method={self.method!r}, '
             f'tau_k={self.tau_k:.4f}, loglik={self.log_likelihood:.4f}, '
-            f'AIC={self.aic:.2f}, BIC={self.bic:.2f}, n={self.n_obs})'
+            f'AIC={self.aic:.2f}, BIC={self.bic:.2f}, n={self.n_obs}{extra})'
         )
+
+    def _refuse_weighted(self, what: str) -> None:
+        if self.weights is not None:
+            raise NotImplementedError(
+                f"{what} is not implemented for a weighted fit: it rests on unweighted "
+                "refits or on the unweighted empirical copula. standard_errors() and "
+                "diagnostics take the weights into account.")
 
     # ------------------------------------------------------------------
     # Goodness-of-fit (Cramér-von Mises, parametric bootstrap)
@@ -867,7 +996,8 @@ class FitResult:
     def gof_test(self, B: int = 100, seed: int | None = None) -> GoFResult:
         """Cramér-von Mises GoF test via parametric bootstrap.
 
-        H₀: data was generated by the fitted copula family.
+        H₀: data was generated by the fitted copula family. Unweighted fits
+        only (``NotImplementedError`` for a weighted one).
         Returns S_n and a bootstrap p-value over B replicates. The copula is
         **re-fitted on every replicate**, so this is the parametric bootstrap
         of Genest & Rémillard (2008, Ann. IHP 44(6):1096–1127) for the
@@ -876,6 +1006,7 @@ class FitResult:
         ``(1 + #{S*_b ≥ S_n}) / (n_valid + 1)`` (Davison & Hinkley 1997, ch. 4) — never 0; GRB 2009 (App. A) write the plain proportion,
         which differs by at most 1/(B + 1).
         """
+        self._refuse_weighted("gof_test")
         try:
             self.copula.cdf([0.5, 0.5])
         except NotImplementedError:
@@ -918,7 +1049,9 @@ class FitResult:
 
         Resamples the pseudo-observations with replacement B times, refits with
         the same method, and returns the (alpha/2, 1-alpha/2) quantiles.
+        Unweighted fits only (``NotImplementedError`` for a weighted one).
         """
+        self._refuse_weighted("bootstrap_ci")
         rng = np.random.default_rng(seed)
         cls = self.copula.__class__
         tau_boots = np.full(B, np.nan)
@@ -953,9 +1086,10 @@ class FitResult:
         :class:`pmcprg.copulas._stderr.StandardErrors`; see
         :mod:`pmcprg.copulas._stderr`. Unlike :meth:`bootstrap_ci`, it is
         analytic (no refit) and reports SEs on τ and on the native parameters.
+        A weighted fit passes its weights (frequency weights, ``n_eff = Σw``).
         """
         from pmcprg.copulas._stderr import standard_errors as _standard_errors
-        return _standard_errors(self.copula, self.uv, None, self.method, ranks=ranks)
+        return _standard_errors(self.copula, self.uv, self.weights, self.method, ranks=ranks)
 
     # ------------------------------------------------------------------
     # K-fold cross-validation log-likelihood
@@ -965,8 +1099,10 @@ class FitResult:
 
         For each fold, the copula is refitted on the K−1 training folds (using
         the same `method`) and its log-density is summed over the held-out
-        test fold's pseudo-observations. Higher is better.
+        test fold's pseudo-observations. Higher is better. Unweighted fits
+        only (``NotImplementedError`` for a weighted one).
         """
+        self._refuse_weighted("cv_loglik")
         if K < 2 or K > self.n_obs:
             raise ValueError(f'K must be in [2, n_obs], got {K} for n={self.n_obs}.')
         rng = np.random.default_rng(seed)
@@ -998,7 +1134,11 @@ class FitResult:
         (1,0) empirical copula heatmap C_n(u,v)
         (1,1) residuals heatmap C_n − C_θ
         (1,2) upper tail dependence  λ̂_U(u) vs fitted λ_U
+
+        Unweighted fits only: the empirical copula and tail curves are the
+        unweighted ones (``NotImplementedError`` for a weighted fit).
         """
+        self._refuse_weighted("plot_diagnostics")
         try:
             self.copula.cdf([0.5, 0.5])
             has_cdf = True
@@ -1107,27 +1247,37 @@ class FitResult:
 
 class FitBestResults(list):
     """Returned by :meth:`CopulaVirt.fit_best` — a ``list[FitResult]`` sorted
-    by AIC, carrying what the ranking left out (audit RB-10).
+    by the selection criterion (AIC by default), carrying what the ranking
+    left out (audit RB-10).
 
     Attributes
     ----------
     method : str
         The estimation method that was requested for every family.
+    criterion : str
+        The ranking: ``'aic'`` (ascending AIC, the default), ``'bic'``
+        (ascending BIC, ``log Σw`` for a weighted fit) or ``'loglik'``
+        (descending log-likelihood).
     other_method : list[FitResult]
-        Fits that the family could only produce with another method — Student
-        and BB1 always fit by MLE, since τ alone does not identify their
-        second parameter. Their log-likelihood is a *maximum*, which a
-        τ-inversion log-likelihood is not, so they are reported here and
-        **not ranked** with the others.
+        Fits that a family could only produce with another method, reported
+        here and **not ranked** with the others (their log-likelihood is not
+        comparable). Until FR-12 the multi-parameter families (Student, BB1,
+        …) answered ``method='tau'`` with a joint MLE and landed here; they
+        now fit by itau with a profile MLE of their other parameters, so no
+        registered family does — the attribute stays for families that
+        override ``fit``.
     failures : list[tuple[str, str]]
         ``(class name, "ExceptionType: message")`` for every family whose fit
         raised. Each is also logged at WARNING.
     """
 
+    criterion: str = "aic"      # the ranking of a FitBestResults pickled before FR-12
+
     def __init__(self, ranked=(), *, method: str = "tau",
-                 other_method=None, failures=None):
+                 other_method=None, failures=None, criterion: str = "aic"):
         super().__init__(ranked)
         self.method = method
+        self.criterion = criterion
         self.other_method: list = list(other_method or [])
         self.failures: list[tuple[str, str]] = list(failures or [])
 

@@ -472,11 +472,10 @@ def _prepare(uv, weights):
     if weights is None:
         w = np.ones(uv.shape[0])
     else:
-        w = np.asarray(weights, dtype=float).ravel()
-        if w.shape[0] != uv.shape[0]:
-            raise ValueError(f"weights ({w.shape[0]}) and uv ({uv.shape[0]}) differ in length.")
-        if not np.all(np.isfinite(w)) or np.any(w < 0.0):
-            raise ValueError("weights must be finite and non-negative.")
+        from pmcprg.copulas._fit import validate_weights
+
+        w = validate_weights(np.asarray(weights, dtype=float).ravel(), uv.shape[0],
+                             allow_zero_sum=True)
         keep = w > 0.0
         uv, w = uv[keep], w[keep]
     if uv.shape[0] < 4:

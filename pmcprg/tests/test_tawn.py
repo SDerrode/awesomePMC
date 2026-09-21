@@ -413,13 +413,27 @@ def test_fit_recovers_tau_and_psi(klass, tau, psi, tol_psi):
     assert r.copula.params["tau_k"] == r.tau_k
 
 
-def test_fit_tau_method_falls_back_to_mle(caplog):
+def test_fit_tau_method_is_itau_with_a_profile_mle(caplog):
+    """FR-12: ``'tau'`` inverts Kendall's τ and fits ψ by MLE at that τ.
+
+    It used to log "falling back to MLE" and return the joint MLE.
+    """
     uv = CopulaTawn1(tau_k=0.4, psi=0.6).sample(n=800, seed=7)
     with caplog.at_level(logging.WARNING):
-        r_tau = CopulaTawn1.fit(uv, method="tau")
-    assert "falling back to MLE" in caplog.text
-    r_mle = CopulaTawn1.fit(uv, method="mle")
-    assert r_tau.tau_k == r_mle.tau_k and r_tau.copula.psi == r_mle.copula.psi
+        res = CopulaTawn1.fit(uv, method="tau")
+    assert res.method == "tau" and res.converged
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert res.tau_k == kendalltau(uv[:, 0], uv[:, 1])[0]      # itau: τ̂ itself
+    # psi is the maximum of the likelihood at that τ (a profile MLE) …
+    for h in (-1e-3, 1e-3):
+        try:
+            cop = CopulaTawn1(tau_k=res.tau_k, psi=res.copula.psi + h)
+        except CopulaParameterError:
+            continue
+        assert float(np.sum(cop.logpdf_array(res.uv))) <= res.log_likelihood + 1e-9
+    # … and not the joint MLE, which it used to be.
+    mle = CopulaTawn1.fit(uv, method="mle")
+    assert mle.log_likelihood >= res.log_likelihood and mle.tau_k != res.tau_k
 
 
 def test_ice_m_step_fits_psi():

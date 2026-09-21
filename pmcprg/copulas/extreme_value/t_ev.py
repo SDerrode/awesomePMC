@@ -66,8 +66,8 @@ at the ends (τ = 1 − 10⁻⁶ at ν = 100 needs 1 − ρ ≈ 10⁻¹⁴).
 decreasing in s on every grid tried (ν ∈ [0.05, 10⁴], s' = ln((ν + 1)η) ∈
 [ln 10⁻¹⁴, 200]; no proof attempted). Hence ``constructible_params`` stays
 the identity, and ν is *not identified from τ* (one τ, a whole curve of
-(ρ, ν)): ``fit(method='tau')`` warns and falls back to MLE (the BB1/Tawn
-precedent).
+(ρ, ν)): ``fit(method='tau')`` is itau — τ̂, then ν by maximum likelihood
+at that τ (FR-12; it used to warn and fall back to MLE).
 
 λ_U brackets τ: for any symmetric EV copula, τ = ∫t(1−t)A''/A with
 ½ ≤ A ≤ 1 and ∫t(1−t)A'' = 2∫(1 − A) (by parts); 1 − A is concave with
@@ -641,14 +641,16 @@ class CopulaTEV(CopulaVirt):
     # -- fitting ---------------------------------------------------------
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle'):
-        """Joint MLE of (τ, ν); ``method='tau'`` falls back to it (module docstring)."""
-        if method == 'tau':
-            logger.warning(
-                "%s.fit: method='tau' cannot identify nu from Kendall's tau "
-                "alone; falling back to MLE.", cls.__name__)
-            method = 'mle'
-        return super().fit(data, method=method)
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False):
+        """Joint MLE of (τ, ν) by default; ``method='tau'`` is itau.
+
+        Kendall's τ alone cannot identify ν: ``'tau'`` inverts τ̂ and fits
+        ν by maximum likelihood at that τ (a profile likelihood, FR-12 —
+        before, it logged a warning and ran the joint MLE). ``weights`` and
+        ``pseudo_obs`` as in :meth:`CopulaVirt.fit`.
+        """
+        return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
 
 
 if __name__ == '__main__':

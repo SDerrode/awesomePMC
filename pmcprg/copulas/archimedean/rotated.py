@@ -162,6 +162,18 @@ class RotatedCopula(CopulaVirt):
 
     _KERNEL_INTERFACE = ('_kcoord', '_kcoord_reflected', '_k_logpdf', '_k_cdf', '_k_h', '_k_inv_h')
 
+    def __init_subclass__(cls, **kwargs):
+        # A rotation has its base's free parameters: take ``n_params`` from
+        # ``_base_class`` unless the subclass sets it. Before FR-12, BB1's
+        # four rotations (``BB190``, ``BB1270``, ``SBB190``, ``SBB1270``) kept
+        # ``CopulaVirt``'s 1 while fitting (τ, δ): their AIC/BIC were
+        # under-penalised by one parameter in ``fit_best`` and in ICE's
+        # family selection.
+        super().__init_subclass__(**kwargs)
+        base = cls.__dict__.get("_base_class")
+        if base is not None and "n_params" not in cls.__dict__:
+            cls.n_params = base.n_params
+
     def __init__(self, **kwargs):
         missing = [m for m in self._KERNEL_INTERFACE if not hasattr(self._base_class, m)]
         if missing:
@@ -477,7 +489,8 @@ class CopulaBB190(RotatedCopula90):
     _base_class = CopulaBB1
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
         """Delegate to :meth:`CopulaBB1.fit` on the ``(1 − u, v)``-reflected
         data — module docstring: ``(U,V) ~ BB190`` iff ``(1−U,V) ~ BB1`` — τ̂
         negated back and rewrapped as ``CopulaBB190``.
@@ -493,11 +506,15 @@ class CopulaBB190(RotatedCopula90):
         MLE via the reflection identity avoids that mismatch entirely instead
         of teaching the generic two-parameter fit about a rotation's sign.
         """
+        if weights is not None or method == 'tau':
+            # itau and the weighted fits: the generic path, whose joint MLE is
+            # sign-aware for a rotated BB1 (``_two_parameter_spec``) — FR-12.
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
         reflected = np.column_stack([1.0 - data[:, 0], data[:, 1]])
-        base_fit = CopulaBB1.fit(reflected, method=method)
+        base_fit = CopulaBB1.fit(reflected, method=method, pseudo_obs=pseudo_obs)
         tau_k = -base_fit.tau_k
         cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
         uv = np.column_stack([1.0 - base_fit.uv[:, 0], base_fit.uv[:, 1]])
@@ -505,7 +522,8 @@ class CopulaBB190(RotatedCopula90):
             log_lik = float(np.sum(cop.logpdf_array(uv)))
         return FitResult(copula=cop, method='mle', tau_k=tau_k,
                          log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
-                         converged=base_fit.converged)
+                         converged=base_fit.converged, message=base_fit.message,
+                         n_iter=base_fit.n_iter, n_eval=base_fit.n_eval)
 
 
 class CopulaBB1270(RotatedCopula270):
@@ -517,14 +535,19 @@ class CopulaBB1270(RotatedCopula270):
     _base_class = CopulaBB1
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
         """Delegate to :meth:`CopulaBB1.fit` on the ``(u, 1 − v)``-reflected
         data, mirroring :meth:`CopulaBB190.fit` (see its docstring for why)."""
+        if weights is not None or method == 'tau':
+            # itau and the weighted fits: the generic path, whose joint MLE is
+            # sign-aware for a rotated BB1 (``_two_parameter_spec``) — FR-12.
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
         reflected = np.column_stack([data[:, 0], 1.0 - data[:, 1]])
-        base_fit = CopulaBB1.fit(reflected, method=method)
+        base_fit = CopulaBB1.fit(reflected, method=method, pseudo_obs=pseudo_obs)
         tau_k = -base_fit.tau_k
         cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
         uv = np.column_stack([base_fit.uv[:, 0], 1.0 - base_fit.uv[:, 1]])
@@ -532,7 +555,8 @@ class CopulaBB1270(RotatedCopula270):
             log_lik = float(np.sum(cop.logpdf_array(uv)))
         return FitResult(copula=cop, method='mle', tau_k=tau_k,
                          log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
-                         converged=base_fit.converged)
+                         converged=base_fit.converged, message=base_fit.message,
+                         n_iter=base_fit.n_iter, n_eval=base_fit.n_eval)
 
 
 # ---------------------------------------------------------------------------
@@ -633,18 +657,23 @@ class SurvivalBB190(RotatedCopula90):
     _base_class = SurvivalBB1
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
         """Delegate to :meth:`SurvivalBB1.fit` on the ``(1 − u, v)``-reflected
         data, mirroring :meth:`CopulaBB190.fit` one level up (its docstring's
         reasoning applies unchanged: the generic two-parameter fit's BB1
         ``delta`` branch is sign-aware, but reusing the base family's own
         validated 2-D MLE via the reflection identity is simpler and more
         robust than exercising that branch's negative-range path directly)."""
+        if weights is not None or method == 'tau':
+            # itau and the weighted fits: the generic path, whose joint MLE is
+            # sign-aware for a rotated BB1 (``_two_parameter_spec``) — FR-12.
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
         reflected = np.column_stack([1.0 - data[:, 0], data[:, 1]])
-        base_fit = SurvivalBB1.fit(reflected, method=method)
+        base_fit = SurvivalBB1.fit(reflected, method=method, pseudo_obs=pseudo_obs)
         tau_k = -base_fit.tau_k
         cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
         uv = np.column_stack([1.0 - base_fit.uv[:, 0], base_fit.uv[:, 1]])
@@ -652,7 +681,8 @@ class SurvivalBB190(RotatedCopula90):
             log_lik = float(np.sum(cop.logpdf_array(uv)))
         return FitResult(copula=cop, method='mle', tau_k=tau_k,
                          log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
-                         converged=base_fit.converged)
+                         converged=base_fit.converged, message=base_fit.message,
+                         n_iter=base_fit.n_iter, n_eval=base_fit.n_eval)
 
 
 class SurvivalBB1270(RotatedCopula270):
@@ -663,15 +693,20 @@ class SurvivalBB1270(RotatedCopula270):
     _base_class = SurvivalBB1
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
         """Delegate to :meth:`SurvivalBB1.fit` on the ``(u, 1 − v)``-reflected
         data, mirroring :meth:`SurvivalBB190.fit` (see its docstring for
         why)."""
+        if weights is not None or method == 'tau':
+            # itau and the weighted fits: the generic path, whose joint MLE is
+            # sign-aware for a rotated BB1 (``_two_parameter_spec``) — FR-12.
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
         reflected = np.column_stack([data[:, 0], 1.0 - data[:, 1]])
-        base_fit = SurvivalBB1.fit(reflected, method=method)
+        base_fit = SurvivalBB1.fit(reflected, method=method, pseudo_obs=pseudo_obs)
         tau_k = -base_fit.tau_k
         cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
         uv = np.column_stack([base_fit.uv[:, 0], 1.0 - base_fit.uv[:, 1]])
@@ -679,7 +714,8 @@ class SurvivalBB1270(RotatedCopula270):
             log_lik = float(np.sum(cop.logpdf_array(uv)))
         return FitResult(copula=cop, method='mle', tau_k=tau_k,
                          log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
-                         converged=base_fit.converged)
+                         converged=base_fit.converged, message=base_fit.message,
+                         n_iter=base_fit.n_iter, n_eval=base_fit.n_eval)
 
 
 # The 90°/270° twins of each base, for RotatedCopula.transposed.

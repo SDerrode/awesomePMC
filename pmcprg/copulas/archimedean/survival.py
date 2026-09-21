@@ -334,31 +334,32 @@ class SurvivalBB1(SurvivalCopula):
     n_params: int = 2
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle') -> 'FitResult':
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
         """Delegate to :meth:`CopulaBB1.fit` on the ``(1 − u, 1 − v)``-
         reflected data — module docstring: ``(U,V) ~ SurvivalBB1`` iff
         ``(1−U,1−V) ~ BB1``. τ is *not* negated back (unchanged by a 180°
         rotation, unlike the 90°/270° case's ``CopulaBB190``/
         ``CopulaBB1270.fit``, which this mirrors otherwise).
 
-        Needed for the same reason those two override ``fit``: BB1's own
-        ``fit`` always uses MLE regardless of ``method`` (τ alone cannot
-        identify ``delta``, module docstring of ``bb1.py``) — the generic
-        ``CopulaVirt.fit(method='tau')`` this class would otherwise inherit
-        does not, and builds the final copula at the *default* δ = 1.5
-        without projecting it through :meth:`constructible_params` first, so
-        it can raise past the family's own admissible set (found in
-        practice: δ = 1.5 is inadmissible at any τ ≤ 1/3, the same
-        BB1-specific gap ``CopulaBB1.constrain_params``'s own docstring
-        describes). Reusing BB1's own validated fit via the reflection
-        identity sidesteps it entirely, exactly as it does for the
-        90°/270° rotations.
+        Needed, at the time, for the same reason those two override ``fit``:
+        BB1's own ``fit`` always used MLE regardless of ``method``, while the
+        generic ``CopulaVirt.fit(method='tau')`` built the final copula at the
+        *default* δ = 1.5 without projecting it through
+        :meth:`constructible_params` (δ = 1.5 is inadmissible at any
+        τ ≤ 1/3). Since FR-12 ``method='tau'`` (itau: δ by maximum likelihood
+        at τ̂, on its admissible interval) and the weighted fits take the
+        generic path; the unweighted MLE still reuses BB1's validated fit via
+        the reflection identity, as the 90°/270° rotations do.
         """
+        if weights is not None or method == 'tau':
+            # itau and the weighted fits: the generic path (FR-12).
+            return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
         reflected = 1.0 - data
-        base_fit = CopulaBB1.fit(reflected, method=method)
+        base_fit = CopulaBB1.fit(reflected, method=method, pseudo_obs=pseudo_obs)
         tau_k = base_fit.tau_k
         cop = cls(tau_k=tau_k, delta=base_fit.copula.delta)
         uv = 1.0 - base_fit.uv
@@ -366,7 +367,8 @@ class SurvivalBB1(SurvivalCopula):
             log_lik = float(np.sum(cop.logpdf_array(uv)))
         return FitResult(copula=cop, method='mle', tau_k=tau_k,
                          log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
-                         converged=base_fit.converged)
+                         converged=base_fit.converged, message=base_fit.message,
+                         n_iter=base_fit.n_iter, n_eval=base_fit.n_eval)
 
 
 # ---------------------------------------------------------------------------

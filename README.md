@@ -466,6 +466,42 @@ print(ranked.compare())                 # or ranked.compare(test="clarke")
 print(ranked.confidence_set().members)  # families not significantly worse than the best
 ```
 
+### Weighted fitting
+
+`fit` and `fit_best` accept observation weights, as **frequency weights**: an
+integer weight counts its row that many times, and Σw is the effective sample
+size.
+
+- **Data.** Raw data are rank-transformed with the weighted empirical CDF.
+  Pass `pseudo_obs=True` for data already in (0, 1)².
+- **Unit weights** give exactly the unweighted fit.
+- **`method='mle'`** is the weighted maximum likelihood of ICE's M-step. It
+  uses the same engine, `pmcprg.copulas._weighted`.
+- **`method='tau'`** inverts the weighted Kendall τ, a weighted τ-b as in
+  pyvinecopulib and VineCopula. It fits any other parameter by maximum
+  likelihood at that τ.
+- **Scores.** The log-likelihood is Σ wᵢ log cᵢ, and the BIC charges log Σw.
+- **Diagnostics.** Every fit reports its optimiser status and, on demand, its
+  convergence diagnostics: gradient, Hessian eigenvalues and a boundary flag.
+
+```python
+import numpy as np
+from pmcprg.copulas import CopulaClayton, CopulaGaussian, CopulaStudent, CopulaVirt
+
+data = CopulaStudent(tau_k=0.5, df=4.0).sample(1000, seed=1)   # (n, 2) sample
+w = np.random.default_rng(0).uniform(0.2, 1.0, size=1000)      # one weight per row
+
+fit = CopulaStudent.fit(data, method="mle", weights=w)
+print(fit)                           # weighted log-likelihood, AIC/BIC with n_eff = Σw
+print(fit.converged, fit.n_iter, fit.n_eval)
+print(fit.diagnostics.summary())     # gradient, Hessian eigenvalues, boundary flag
+
+itau = CopulaStudent.fit(data, method="tau", weights=w)   # weighted τ, then ν at that τ
+best = CopulaVirt.fit_best(data, families=[CopulaGaussian, CopulaClayton, CopulaStudent],
+                           method="mle", weights=w, criterion="bic")
+print(best[0])
+```
+
 ### Bivariate joint laws
 
 ```python

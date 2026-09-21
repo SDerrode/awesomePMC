@@ -6,7 +6,7 @@ test_student.py — dedicated coverage for the Student-t copula (audit T-4).
 formula and the parameter validation had no dedicated tests. These tests pin
 the *documented behaviours*: ρ = sin(πτ/2), the ν > 2 domain, the symmetric
 tail dependence λ(ν) and its Gaussian limit, the no-closed-form CDF contract,
-and the (ρ, ν) MLE — including the ``method='tau'`` fallback warning.
+and the (ρ, ν) MLE — and ``method='tau'``, itau with a profile MLE of ν (FR-12).
 """
 
 from __future__ import annotations
@@ -117,18 +117,28 @@ def test_student_fit_rejects_bad_input():
         CopulaStudent.fit(np.zeros((5, 2)))
 
 
-def test_student_fit_tau_method_warns_and_uses_mle(caplog):
-    """``method='tau'`` is under-determined for (ρ, ν): it must warn and
-    fall back to MLE, still returning a valid FitResult."""
-    data = CopulaStudent(tau_k=0.4, df=4.0).sample(60, seed=3)
+def test_student_fit_tau_method_is_itau_with_a_profile_mle(caplog):
+    """``method='tau'``: ρ from Kendall's τ̂, ν by maximum likelihood at that ρ
+    (VineCopula's itau for the Student copula; FR-12). It used to warn
+    "under-determined" and fall back to the joint MLE."""
+    from scipy.stats import kendalltau
+
+    # n = 400: ν̂ interior (at n = 60 this sample's profile peaks beyond ν = 100,
+    # the end of the box, which the fit's diagnostics flag).
+    data = CopulaStudent(tau_k=0.4, df=4.0).sample(400, seed=3)
     with caplog.at_level(logging.WARNING, logger="pmcprg.copulas.elliptical.student"):
         r = CopulaStudent.fit(data, method="tau")
-    assert any("under-determined" in rec.message for rec in caplog.records)
-    assert r.method == "mle"
+    assert not caplog.records
+    assert r.method == "tau" and r.converged
     assert isinstance(r.copula, CopulaStudent)
     assert math.isfinite(r.log_likelihood)
-    assert r.n_obs == 60
-    assert -1.0 < r.tau_k < 1.0
+    assert r.n_obs == 400
+    assert 2.001 < r.copula.df < 100.0 and not r.diagnostics.at_boundary
+    assert r.tau_k == kendalltau(data[:, 0], data[:, 1])[0]
+    # ν is searched in 1/ν (Brent, xatol 1e-6): 1/ν ± 1e-4 is a worse point.
+    for h in (-1e-4, 1e-4):
+        cop = CopulaStudent(tau_k=r.tau_k, df=1.0 / (1.0 / r.copula.df + h))
+        assert float(np.sum(cop.logpdf_array(r.uv))) <= r.log_likelihood + 1e-9
 
 
 @pytest.mark.slow

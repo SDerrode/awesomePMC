@@ -21,14 +21,6 @@ up, or the "Available families" tables of the
 
 ## Base classes
 
-`CopulaVirt.fit` and `.fit_best` (`pmcprg/copulas/_base.py`) are omitted
-from the rendered members below — their docstrings are mid-edit on another
-branch (a public weighted `fit()`, audit FR-12) and currently trip
-mkdocstrings' strict-mode docstring parser; see the narrative "Fitting and
-model selection" section of the
-[README](https://github.com/SDerrode/awesomePMC/blob/main/README.md#fitting-and-model-selection)
-in the meantime.
-
 ::: pmcprg.copulas.CopulaVirt
     options:
       members:
@@ -40,6 +32,8 @@ in the meantime.
         - pdf_array
         - logpdf_array
         - cdf_array
+        - fit
+        - fit_best
         - conditional_cdf
         - transposed
         - inv_h
@@ -50,6 +44,19 @@ in the meantime.
         - sample
 
 ::: pmcprg.copulas.FitResult
+
+::: pmcprg.copulas.FitDiagnostics
+
+## Weighted fitting
+
+`fit` and `fit_best` accept observation weights (`weights=`); ICE's M-step
+uses the same engine (`pmcprg.copulas._weighted`).
+
+::: pmcprg.copulas.validate_weights
+
+::: pmcprg.copulas.weighted_kendall_tau
+
+::: pmcprg.copulas.weighted_pseudo_obs
 
 ::: pmcprg.copulas.GoFResult
 

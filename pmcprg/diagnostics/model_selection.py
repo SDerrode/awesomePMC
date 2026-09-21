@@ -596,11 +596,10 @@ def _prepare(logc_a, logc_b, weights):
     if weights is None:
         w = np.ones_like(la)
     else:
-        w = np.asarray(weights, dtype=float).ravel()
-        if w.shape != la.shape:
-            raise ValueError(f"weights {w.shape} and log-densities {la.shape} must have the same length.")
-        if not np.all(np.isfinite(w)) or np.any(w < 0.0):
-            raise ValueError("weights must be finite and non-negative.")
+        from pmcprg.copulas._fit import validate_weights
+
+        w = validate_weights(np.asarray(weights, dtype=float).ravel(), la.shape[0],
+                             allow_zero_sum=True)
     pos = w > 0.0
     if not np.any(pos):
         raise ValueError("all weights are zero.")
@@ -1253,24 +1252,32 @@ def confidence_set(
 # fit_best hook
 # ---------------------------------------------------------------------------
 
-def _fit_best_log_densities(results) -> tuple[dict[str, np.ndarray], dict[str, int]]:
-    """Pointwise log-densities of the ranked fits of a ``FitBestResults``."""
+def _fit_best_log_densities(results):
+    """Pointwise log-densities of the ranked fits of a ``FitBestResults``, with their weights.
+
+    Returns ``(logc, k, weights)``: ``weights`` is the fits' common weight
+    vector (``FitResult.weights``, FR-12), ``None`` for unweighted fits.
+    """
     fits = list(results)
     if not fits:
         raise ValueError("no ranked fit to compare.")
     uv0 = np.asarray(fits[0].uv, dtype=float)
+    w0 = getattr(fits[0], "weights", None)
     logc: dict[str, np.ndarray] = {}
     k: dict[str, int] = {}
     for r in fits:
         uv = np.asarray(r.uv, dtype=float)
         if uv.shape != uv0.shape or not np.array_equal(uv, uv0):
             raise ValueError("the fits were not obtained on the same pseudo-observations.")
+        w = getattr(r, "weights", None)
+        if (w is None) != (w0 is None) or (w is not None and not np.array_equal(w, w0)):
+            raise ValueError("the fits were not obtained with the same weights.")
         name = r.copula.copula_enum.value.SHORT_NAME
         if name in logc:
             raise ValueError(f"family {name!r} appears twice in the results.")
         logc[name] = np.asarray(r.copula.logpdf_array(uv), dtype=float)
         k[name] = int(r.n_params)
-    return logc, k
+    return logc, k, w0
 
 
 def fit_best_comparison(
@@ -1289,12 +1296,13 @@ def fit_best_comparison(
     (Student and BB1 under ``method='tau'``) are left out, as from the
     ranking. The default ``correction="akaike"`` makes the sign of each
     statistic agree with the AIC ranking. The data are the rank pseudo-
-    observations of the fit, with unit weights — if they are serially
-    dependent keep the HAC default, otherwise ``bandwidth=0`` gives the
-    i.i.d. variance of Vuong (1989).
+    observations of the fit, with its weights (unit weights for an
+    unweighted fit; ``FitResult.weights`` for a weighted one, FR-12) — if
+    they are serially dependent keep the HAC default, otherwise
+    ``bandwidth=0`` gives the i.i.d. variance of Vuong (1989).
     """
-    logc, k = _fit_best_log_densities(results)
-    return comparison_matrix(logc, None, n_params=k, test=test,
+    logc, k, weights = _fit_best_log_densities(results)
+    return comparison_matrix(logc, weights, n_params=k, test=test,
                              correction=correction, alpha=alpha,
                              bandwidth=bandwidth, n_eff=n_eff, **test_kwargs)
 
@@ -1315,8 +1323,8 @@ def fit_best_confidence_set(
     With the default ``correction="akaike"`` the reference is the AIC winner
     ``results[0]`` (up to exact AIC ties). See :func:`confidence_set`.
     """
-    logc, k = _fit_best_log_densities(results)
-    return confidence_set(logc, None, n_params=k, test=test,
+    logc, k, weights = _fit_best_log_densities(results)
+    return confidence_set(logc, weights, n_params=k, test=test,
                           correction=correction, alpha=alpha, adjust=adjust,
                           bandwidth=bandwidth, n_eff=n_eff, **test_kwargs)
 

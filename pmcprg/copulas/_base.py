@@ -150,6 +150,42 @@ def constructible_tau_range(tau_min: float, tau_max: float) -> tuple[float, floa
     return lo, hi
 
 
+def _pseudo_observations(data: np.ndarray, pseudo_obs: bool) -> np.ndarray:
+    """The ``(n, 2)`` pseudo-observations an unweighted fit works on.
+
+    ``rank/(n + 1)`` in each column (mid-ranks for ties) — the rank transform
+    ``CopulaVirt.fit`` has always applied — or, with ``pseudo_obs=True``,
+    ``data`` itself (a copy), which must then be finite and strictly inside
+    (0, 1)² (``ValueError`` otherwise). Rank pseudo-observations passed with
+    ``pseudo_obs=False`` come back unchanged: their ranks are themselves.
+    """
+    if pseudo_obs:
+        if not np.all(np.isfinite(data)) or np.any(data <= 0.0) or np.any(data >= 1.0):
+            raise ValueError("pseudo_obs=True: the data must be pseudo-observations, finite "
+                             "and strictly inside (0, 1)².")
+        return np.array(data, dtype=float)
+    from scipy.stats import rankdata
+
+    n = data.shape[0]
+    return np.column_stack([
+        rankdata(data[:, 0]) / (n + 1),
+        rankdata(data[:, 1]) / (n + 1),
+    ])
+
+
+def _registry_entry(cls) -> "CopulaEnum":
+    """The ``CopulaEnum`` entry of a copula class — ``CopulaNotAvailableError`` if none or disabled."""
+    for entry in CopulaEnum:
+        if entry.value.CLASS_NAME == cls.__name__:
+            if not entry.value.AVAILABLE:
+                raise CopulaNotAvailableError(f'{cls.__name__} is currently disabled.')
+            return entry
+    raise CopulaNotAvailableError(f'{cls.__name__!r} is not registered in CopulaEnum.')
+
+
+FIT_BEST_CRITERIA: tuple[str, ...] = ("aic", "bic", "loglik")
+
+
 @dataclass
 class CopulaDataMixin:
     ID: int
@@ -904,7 +940,8 @@ class CopulaVirt:
     # Parameter estimation
     # ------------------------------------------------------------------
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'tau') -> 'FitResult':
+    def fit(cls, data: np.ndarray, method: str = 'tau', *, weights=None,
+            pseudo_obs: bool = False) -> 'FitResult':
         """Fit a copula's free parameters from a (n, 2) data array.
 
         Raw data is rank-transformed to pseudo-observations û = rank/(n+1)
@@ -914,9 +951,13 @@ class CopulaVirt:
         ----------
         data   : array-like, shape (n, 2)
         method : {'tau', 'mle'}
-            ``'tau'`` — moment matching via Kendall's τ (O(n log n), default):
-                       inversion of Kendall's τ, Genest & Rivest (1993).
-            ``'mle'`` — maximise ∑ log c(û_i, v̂_i). For 1-parameter families
+            ``'tau'`` — inversion of Kendall's τ (itau; Genest & Rivest 1993),
+                       O(n log n), the default. A family with more parameters
+                       than τ gets the others by maximum likelihood **with τ
+                       held at τ̂** — a profile likelihood, VineCopula's rule
+                       for Student's ν (FR-12; before, these families silently
+                       ran the joint MLE and reported ``method='mle'``).
+            ``'mle'`` — maximise ∑ w log c(û_i, v̂_i). For 1-parameter families
                        a 1-D Brent scalar search on the padded τ-range; for
                        two-parameter families that do not override ``fit``
                        the joint optimiser of the ICE M-step
@@ -924,7 +965,41 @@ class CopulaVirt:
                        rank pseudo-observations this is the
                        pseudo-maximum-likelihood estimator of Genest, Ghoudi
                        & Rivest (1995).
+        weights : array-like, shape (n,), optional
+            Observation weights (FR-12) — frequency weights, the package's
+            convention: an integer weight counts its row that many times.
+            Validated by :func:`pmcprg.copulas._fit.validate_weights` (1-D,
+            one per row, finite, ≥ 0, positive sum; ``ValueError``
+            otherwise). Rows of weight zero are dropped; if every other
+            weight is 1 the result **is** the unweighted fit of those rows,
+            bit for bit (so ``{0, 1}`` weights give the fit on the subset).
+            Otherwise the weighted engine of ICE's M-step
+            (:mod:`pmcprg.copulas._weighted`) is used:
 
+            * pseudo-observations by the weighted empirical CDF
+              ``Σ_k w_k 1{x_k ≤ x}/(Σw + 1)`` (ICE's ``copula_margins =
+              "empirical"`` convention, audit FR-7 a) unless ``pseudo_obs``;
+            * ``'tau'`` — the weighted Kendall τ, a weighted **τ-b** as in
+              pyvinecopulib and VineCopula (the τ-a when no two points of
+              positive weight tie), then as above with the weighted profile;
+            * ``'mle'`` — the weighted MLE of ICE's M-step: a Brent search on
+              the Σw-normalised objective (``xatol`` 10⁻⁶) for one parameter,
+              the joint optimiser with ``gtol`` scaled by the mean weight for
+              more — parameters invariant to the weights' scale.
+
+            The log-likelihood is the total Σ wᵢ log cᵢ and the BIC charges
+            ``k·log Σw`` (see :class:`FitResult`).
+        pseudo_obs : bool, default False
+            ``True`` when ``data`` already are pseudo-observations in (0, 1)²:
+            they are used as they are (``ValueError`` if a value is outside
+            the open square or not finite). ``False`` rank-transforms them.
+
+        Returns
+        -------
+        FitResult
+
+        Notes
+        -----
         With ``'tau'``, τ̂ is clipped into the *constructible* τ-range: a
         singular registered endpoint (|τ| = 1) is replaced by the padded
         value next to it, an admissible endpoint is kept (τ̂ ≤ 0 → ε for
@@ -932,12 +1007,9 @@ class CopulaVirt:
         that bound (Frank). With ``'mle'``, a τ̂ found beyond the reachable
         |τ| — where the likelihood is flat — is returned as the bound too, so
         ``tau_k`` is always the τ the fitted copula uses.
-        ``FitResult.converged`` is ``False`` when an MLE optimiser did not
-        converge.
-
-        Returns
-        -------
-        FitResult
+        ``FitResult.converged`` (and ``failed``, ``message``) report whether
+        the optimiser converged; ``FitResult.diagnostics`` the gradient,
+        Hessian eigenvalues and boundary flag of the estimate.
 
         References
         ----------
@@ -947,20 +1019,20 @@ class CopulaVirt:
           estimation procedure of dependence parameters in multivariate
           families of distributions. *Biometrika* 82(3), 543–552.
         """
-        from scipy.stats    import rankdata, kendalltau as _kendalltau
+        from scipy.stats    import kendalltau as _kendalltau
         from scipy.optimize import minimize_scalar
 
         data = np.asarray(data, dtype=float)
         if data.ndim != 2 or data.shape[1] != 2:
             raise ValueError(f'data must be shape (n, 2), got {data.shape}.')
+        if weights is not None:
+            from pmcprg.copulas._weighted import fit_weighted
+            return fit_weighted(cls, data, method, weights, pseudo_obs)
         n = data.shape[0]
         if n < 4:
             raise ValueError(f'At least 4 observations required, got {n}.')
 
-        uv = np.column_stack([
-            rankdata(data[:, 0]) / (n + 1),
-            rankdata(data[:, 1]) / (n + 1),
-        ])
+        uv = _pseudo_observations(data, pseudo_obs)
 
         class_name = cls.__name__
         tau_min = tau_max = None
@@ -983,7 +1055,8 @@ class CopulaVirt:
             copula = cls(tau_k=tau_k)
             return FitResult(copula=copula, method=method, tau_k=tau_k,
                              log_likelihood=_eval_log_likelihood(copula, uv),
-                             n_obs=n, uv=uv)
+                             n_obs=n, uv=uv, message='no free parameter',
+                             n_iter=0, n_eval=0)
 
         # Extra (non-tau) parameter bounds — single source of truth shared with
         # ICE-driven fitting (see EXTRA_PARAM_BOUNDS_BY_PARAM at module top).
@@ -1011,7 +1084,22 @@ class CopulaVirt:
                     "%s.fit(method='tau'): τ̂ = %.6g outside [%.6g, %.6g] — "
                     "clipped to %.6g.", class_name, tau_hat, lo, hi, tau_k,
                 )
-            extra_vals = {k: v[2] for k, v in extras.items()}   # init defaults
+            message, n_iter, n_eval = "inversion of Kendall's τ (moment estimate)", 0, 0
+            extra_vals = {}
+            if extras:
+                # The other parameters by maximum likelihood at τ = τ̂ — a
+                # profile likelihood, as VineCopula's itau fits Student's ν
+                # (FR-12; formerly left at their registered start values here).
+                from pmcprg.copulas._weighted import _profile_extras
+                prof = _profile_extras(cls, entry, uv, None, tau_k)
+                extra_vals = {k: v for k, v in prof.params.items() if k != "tau_k"}
+                converged, message = prof.converged, prof.message
+                n_iter, n_eval = prof.n_iter, prof.n_eval
+                if not converged:
+                    logger.warning(
+                        "%s.fit(method='tau'): %s; returning the best point found %s.",
+                        class_name, message, prof.params,
+                    )
 
         elif method == 'mle':
             tau_lo, tau_hi = padded_tau_range(tau_min, tau_max)
@@ -1033,8 +1121,12 @@ class CopulaVirt:
                                          method='bounded')
                 tau_k = entry.reachable_tau(float(res.x))
                 extra_vals = {}
+                message = f"bounded Brent search on τ: {res.message}"
+                n_iter = int(getattr(res, "nit", 0))
+                n_eval = int(getattr(res, "nfev", 0))
                 if not res.fun < MLE_FAIL_PENALTY:
                     converged = False
+                    message = "the likelihood is not finite at any τ the search evaluated"
                     logger.warning(
                         "%s.fit(method='mle'): the likelihood is not finite at "
                         "any τ the search evaluated; returning τ = %.6g.",
@@ -1047,6 +1139,7 @@ class CopulaVirt:
                 tau_k = float(pfit.params["tau_k"])
                 extra_vals = {k: v for k, v in pfit.params.items() if k != "tau_k"}
                 converged = pfit.converged
+                message, n_iter, n_eval = pfit.message, pfit.n_iter, pfit.n_eval
                 if not converged:
                     logger.warning(
                         "%s.fit(method='mle'): joint optimisation did not "
@@ -1060,39 +1153,60 @@ class CopulaVirt:
         copula = cls(tau_k=tau_k, **extra_vals)
         return FitResult(copula=copula, method=method, tau_k=tau_k,
                          log_likelihood=_eval_log_likelihood(copula, uv),
-                         n_obs=n, uv=uv, converged=converged)
+                         n_obs=n, uv=uv, converged=converged, message=message,
+                         n_iter=n_iter, n_eval=n_eval)
 
     @staticmethod
     def fit_best(data: np.ndarray, families: list | None = None,
-                 method: str = 'tau') -> 'FitBestResults':
-        """Fit each candidate family and rank the comparable fits by AIC.
+                 method: str = 'tau', *, weights=None, criterion: str = 'aic',
+                 pseudo_obs: bool = False) -> 'FitBestResults':
+        """Fit each candidate family and rank the comparable fits by ``criterion``.
 
         Parameters
         ----------
-        data     : array-like, shape (n, 2)
-        families : list of CopulaVirt subclasses, or None for every available
-                   family except Product.
-        method   : passed to each cls.fit()
+        data       : array-like, shape (n, 2)
+        families   : list of CopulaVirt subclasses, or None for every available
+                     family except Product.
+        method     : passed to each cls.fit()
+        weights    : optional observation weights, passed to each ``cls.fit``
+                     (see :meth:`fit`; FR-12).
+        criterion  : ``'aic'`` (default — ascending AIC, the historical
+                     ranking, unchanged), ``'bic'`` (ascending BIC: ``k·log n``
+                     unweighted, ``k·log Σw`` weighted, as ICE's ``bic``
+                     selection criterion — VineCopula's ``BiCopSelect`` uses
+                     ``log n`` rows) or ``'loglik'`` (descending
+                     log-likelihood, ICE's ``mle`` criterion). With weights,
+                     ``method='mle'`` and a criterion, the ranking is ICE's
+                     weighted family selection
+                     (:func:`pmcprg.copulas._weighted._select_and_fit_copula`)
+                     over the same candidates.
+        pseudo_obs : passed to each ``cls.fit`` (see :meth:`fit`).
 
         Returns
         -------
-        FitBestResults — a ``list[FitResult]`` sorted by AIC ascending, holding
-        only the fits obtained **with the requested method**. Two attributes
-        report what the ranking leaves out (audit RB-10):
+        FitBestResults
+            A ``list[FitResult]`` sorted by the criterion (best first),
+            holding only the fits obtained **with the requested method**.
 
-        * ``other_method`` — fits the family could only produce with another
-          method. Student and BB1 always fit by maximum likelihood (τ alone
-          does not identify their second parameter): under ``method='tau'``
-          their log-likelihood is a maximum, the others' the likelihood at the
-          τ-inversion estimate — lower by construction — so ranking them
-          together favoured the two-parameter families. ``method='mle'``
-          ranks every family on maximised likelihoods.
+        Notes
+        -----
+        Two attributes of the result report what the ranking leaves out
+        (audit RB-10):
+
+        * ``other_method`` — fits a family could only produce with another
+          method (not ranked: their log-likelihood is not comparable). Since
+          FR-12 every registered family fits by either method — Student,
+          BB1 and the other multi-parameter families answer ``'tau'`` by
+          itau with a profile MLE of their other parameters — so this is
+          empty unless a family overrides ``fit``.
         * ``failures`` — ``(class name, "ExceptionType: message")`` for every
           family whose fit raised (formerly logged and dropped).
 
         Both are also logged at WARNING. ``converged`` on each result says
         whether its likelihood optimiser converged.
         """
+        if criterion not in FIT_BEST_CRITERIA:
+            raise ValueError(f"criterion must be one of {FIT_BEST_CRITERIA}, got {criterion!r}.")
         if families is None:
             import importlib as _il
             families = []
@@ -1103,13 +1217,20 @@ class CopulaVirt:
                     continue
                 _mod = _il.import_module(_entry.value.MODULE)
                 families.append(getattr(_mod, _entry.value.CLASS_NAME))
+        if weights is not None:
+            from pmcprg.copulas._fit import validate_weights
+            weights = validate_weights(weights, np.asarray(data).shape[0])   # once, for all
+        # The historical call when nothing new is asked: a family overriding
+        # ``fit`` with the former signature keeps working.
+        fit_kw = ({} if weights is None and not pseudo_obs
+                  else {'weights': weights, 'pseudo_obs': pseudo_obs})
 
         ranked: list = []
         other: list = []
         failures: list[tuple[str, str]] = []
         for cls in families:
             try:
-                r = cls.fit(data, method=method)
+                r = cls.fit(data, method=method, **fit_kw)
             except Exception as e:
                 logger.warning('%s.fit failed: %s', cls.__name__, e)
                 failures.append((cls.__name__, f"{type(e).__name__}: {e}"))
@@ -1123,10 +1244,16 @@ class CopulaVirt:
                 other.append(r)
             else:
                 ranked.append(r)
-        ranked.sort(key=lambda r: r.aic)
-        other.sort(key=lambda r: r.aic)
+        if criterion == 'aic':
+            key = lambda r: r.aic                     # noqa: E731
+        elif criterion == 'bic':
+            key = lambda r: r.bic                     # noqa: E731
+        else:
+            key = lambda r: -r.log_likelihood         # noqa: E731
+        ranked.sort(key=key)
+        other.sort(key=key)
         return FitBestResults(ranked, method=method, other_method=other,
-                              failures=failures)
+                              failures=failures, criterion=criterion)
 
     def standard_errors(self, uv: np.ndarray, weights: np.ndarray | None = None,
                         method: str = 'mle', *, ranks: bool = True):

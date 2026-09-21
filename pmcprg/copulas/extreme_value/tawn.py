@@ -254,8 +254,8 @@ runs this box twice (the second pass is a restart with a fresh curvature
 memory: the likelihood is a narrow curved ridge in these coordinates, and
 from a poor start a single L-BFGS-B pass stopped short on 3 of 50 contrived
 starts, once by 131 nat; with the restart, 0 of 50). τ alone
-cannot identify ψ, so ``fit(method='tau')`` logs a warning and falls back to
-MLE (BB1's precedent).
+cannot identify ψ, so ``fit(method='tau')`` is itau — τ̂, then ψ by maximum
+likelihood at that τ (FR-12; it used to warn and fall back to MLE).
 
 :class:`CopulaTawn3` uses the same optimiser in the natural extension
 ``(ln(θ − 1), ψ_u, ψ_v)``, again a box that *is* the admissible set and
@@ -641,19 +641,16 @@ class _TawnBase(CopulaVirt):
     # -- fitting ---------------------------------------------------------
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle'):
-        """Joint MLE of τ and the weights; ``method='tau'`` falls back to it.
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False):
+        """Joint MLE of τ and the weights by default; ``method='tau'`` is itau.
 
-        Kendall's τ alone cannot identify an asymmetry parameter (module
-        docstring, "Fitting"), so ``'tau'`` warns and uses MLE — BB1's
-        precedent.
+        Kendall's τ alone cannot identify the weights: ``'tau'`` inverts τ̂ and fits
+        the weights by maximum likelihood at that τ (a profile likelihood, FR-12 —
+        before, it logged a warning and ran the joint MLE). ``weights`` and
+        ``pseudo_obs`` as in :meth:`CopulaVirt.fit`.
         """
-        if method == 'tau':
-            logger.warning(
-                "%s.fit: method='tau' cannot identify psi from Kendall's tau "
-                "alone; falling back to MLE.", cls.__name__)
-            method = 'mle'
-        return super().fit(data, method=method)
+        return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
 
 
 class _CopulaTawn(_TawnBase):

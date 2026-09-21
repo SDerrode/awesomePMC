@@ -617,13 +617,30 @@ def test_the_weights_are_weakly_identified_near_independence():
                           "tawn.py's docstring is too pessimistic and should be revised")
 
 
-def test_fit_with_method_tau_warns_and_falls_back_to_mle(caplog):
+def test_fit_with_method_tau_is_itau_with_a_profile_mle(caplog):
+    """FR-12: ``'tau'`` inverts Kendall's τ and fits both weights by MLE at that τ.
+
+    It used to log "cannot identify psi" and run the joint MLE.
+    """
     import logging
+
+    from pmcprg.exceptions import CopulaParameterError
     uv = CopulaTawn3(tau_k=0.4, psi_u=0.8, psi_v=0.6).sample(n=600, seed=77)
     with caplog.at_level(logging.WARNING, logger="pmcprg.copulas.extreme_value.tawn"):
         res = CopulaTawn3.fit(uv, method="tau")
-    assert res.method == "mle"
-    assert "cannot identify psi" in caplog.text
+    assert res.method == "tau" and res.converged
+    assert res.tau_k == kendalltau(uv[:, 0], uv[:, 1])[0]
+    for key in ("psi_u", "psi_v"):
+        for h in (-1e-3, 1e-3):
+            p = dict(res.copula.params)
+            p[key] += h
+            try:
+                cop = CopulaTawn3(**p)
+            except CopulaParameterError:
+                continue
+            assert float(np.sum(cop.logpdf_array(res.uv))) <= res.log_likelihood + 1e-9
+    mle = CopulaTawn3.fit(uv, method="mle")
+    assert mle.log_likelihood >= res.log_likelihood and mle.tau_k != res.tau_k
 
 
 @pytest.mark.slow

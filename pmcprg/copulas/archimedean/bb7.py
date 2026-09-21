@@ -279,10 +279,10 @@ saturation convention at the two ends.
 
 Fitting
 -------
-``fit`` is always the joint two-parameter MLE
+``fit`` is the joint two-parameter MLE by default
 (:func:`pmcprg.copulas._fit._fit_two_parameter_mle`); τ alone cannot identify
-θ, so ``method='tau'`` logs a warning and falls back to MLE (BB1's, BB6's and
-Tawn's precedent). ``_two_parameter_spec``'s ``theta7`` branch optimises in
+θ, so ``method='tau'`` is itau — τ̂, then θ by maximum likelihood at that τ
+(FR-12; it used to warn and fall back to MLE). ``_two_parameter_spec``'s ``theta7`` branch optimises in
 ``(ln(θ − 1), ln δ)``, whose box **is** the admissible set — every θ ≥ 1,
 δ > 0 is a BB7 copula — with τ mapped back by (★★) and θ carried through
 unchanged. δ is the *nuisance* coordinate of the fit, not a stored parameter,
@@ -900,19 +900,16 @@ class CopulaBB7(CopulaVirt):
     # ------------------------------------------------------------------
 
     @classmethod
-    def fit(cls, data: np.ndarray, method: str = 'mle'):
-        """Joint MLE of (τ, δ); ``method='tau'`` falls back to it.
+    def fit(cls, data: np.ndarray, method: str = 'mle', *, weights=None,
+            pseudo_obs: bool = False):
+        """Joint MLE of (τ, θ) by default; ``method='tau'`` is itau.
 
-        Kendall's τ alone cannot identify δ — (★★) has two unknowns — so a
-        ``'tau'`` request logs a warning and is answered by the same joint
-        two-parameter MLE as ``'mle'`` (BB1's, BB6's and Tawn's precedent).
+        Kendall's τ alone cannot identify θ: ``'tau'`` inverts τ̂ and fits
+        θ by maximum likelihood at that τ (a profile likelihood, FR-12 —
+        before, it logged a warning and ran the joint MLE). ``weights`` and
+        ``pseudo_obs`` as in :meth:`CopulaVirt.fit`.
         """
-        if method == 'tau':
-            logger.warning(
-                "%s.fit: method='tau' cannot identify theta7 from Kendall's tau "
-                "alone; falling back to MLE.", cls.__name__)
-            method = 'mle'
-        return super().fit(data, method=method)
+        return super().fit(data, method=method, weights=weights, pseudo_obs=pseudo_obs)
 
 
 if __name__ == '__main__':

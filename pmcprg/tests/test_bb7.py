@@ -29,7 +29,7 @@ one the Joe end) with the checks specific to this family:
 * that ``theta7`` takes **its own** branch of ``_two_parameter_spec`` and not
   BB1's ``delta`` or BB6's ``delta6`` branch, which would fit BB7 with
   another family's τ map;
-* recovery of both τ and θ by ``fit``, and the ``method='tau'`` fallback.
+* recovery of both τ and θ by ``fit``, and ``method='tau'`` (itau with a profile MLE, FR-12).
 
 Every seed below is an integer literal or ``zlib.crc32`` of a repr — never
 ``hash()``, which is salted per process (commit 5e56fda).
@@ -718,14 +718,29 @@ def test_monte_carlo_tau_agrees_with_the_closed_form(tau, theta):
 # Fitting
 # --------------------------------------------------------------------------
 
-def test_fit_tau_method_falls_back_to_mle(caplog):
+def test_fit_tau_method_is_itau_with_a_profile_mle(caplog):
+    """FR-12: ``'tau'`` inverts Kendall's τ and fits θ by MLE at that τ.
+
+    It used to log a warning and run the joint MLE (reported as ``'mle'``).
+    """
     cop = CopulaBB7(tau_k=0.6, theta7=2.0)
     data = cop.sample(n=600, seed=4343)
     with caplog.at_level(logging.WARNING, logger="pmcprg.copulas.archimedean.bb7"):
         res = CopulaBB7.fit(data, method="tau")
-    assert res.method == "mle"
-    assert any("theta7" in r.getMessage() for r in caplog.records)
     assert res.copula.theta >= 1.0
+    assert res.method == "tau" and res.converged
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert res.tau_k == kendalltau(data[:, 0], data[:, 1])[0]      # itau: τ̂ itself
+    # theta7 is the maximum of the likelihood at that τ (a profile MLE) …
+    for h in (-1e-3, 1e-3):
+        try:
+            cop = CopulaBB7(tau_k=res.tau_k, theta7=res.copula.theta7 + h)
+        except CopulaParameterError:
+            continue
+        assert float(np.sum(cop.logpdf_array(res.uv))) <= res.log_likelihood + 1e-9
+    # … and not the joint MLE, which it used to be.
+    mle = CopulaBB7.fit(data, method="mle")
+    assert mle.log_likelihood >= res.log_likelihood and mle.tau_k != res.tau_k
 
 
 @pytest.mark.parametrize("tau,theta,tol_tau,tol_theta", [

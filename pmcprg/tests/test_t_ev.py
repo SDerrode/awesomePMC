@@ -464,13 +464,27 @@ def test_fit_recovers_tau_and_nu(tau, nu, rel_nu):
     assert r.copula.params["tau_k"] == r.tau_k
 
 
-def test_fit_tau_method_falls_back_to_mle(caplog):
+def test_fit_tau_method_is_itau_with_a_profile_mle(caplog):
+    """FR-12: ``'tau'`` inverts Kendall's τ and fits ν by MLE at that τ.
+
+    It used to log "falling back to MLE" and return the joint MLE.
+    """
     uv = CopulaTEV(tau_k=0.4, nu=3.0).sample(n=800, seed=7)
     with caplog.at_level(logging.WARNING):
-        r_tau = CopulaTEV.fit(uv, method="tau")
-    assert "falling back to MLE" in caplog.text
-    r_mle = CopulaTEV.fit(uv, method="mle")
-    assert r_tau.tau_k == r_mle.tau_k and r_tau.copula.nu == r_mle.copula.nu
+        res = CopulaTEV.fit(uv, method="tau")
+    assert res.method == "tau" and res.converged
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert res.tau_k == kendalltau(uv[:, 0], uv[:, 1])[0]      # itau: τ̂ itself
+    # nu is the maximum of the likelihood at that τ (a profile MLE) …
+    for h in (-1e-3, 1e-3):
+        try:
+            cop = CopulaTEV(tau_k=res.tau_k, nu=res.copula.nu + h)
+        except CopulaParameterError:
+            continue
+        assert float(np.sum(cop.logpdf_array(res.uv))) <= res.log_likelihood + 1e-9
+    # … and not the joint MLE, which it used to be.
+    mle = CopulaTEV.fit(uv, method="mle")
+    assert mle.log_likelihood >= res.log_likelihood and mle.tau_k != res.tau_k
 
 
 @pytest.mark.parametrize("tau,nu,seed", [(0.35, 3.0, 77), (0.2, 20.0, 3), (0.8, 1.5, 4),

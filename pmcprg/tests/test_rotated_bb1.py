@@ -386,17 +386,17 @@ def test_fit_recovers_negative_tau_and_delta_from_simulated_data(cls, tau_true, 
     assert r.copula.delta == pytest.approx(delta_true, rel=0.25)
 
 
-def test_fit_best_includes_bb1_rotations_in_other_method():
-    """BB1 (and its rotations) always fit by MLE — τ alone cannot identify
-    δ — so a ``method='tau'`` ``fit_best`` reports them in ``other_method``,
-    not ranked, exactly like plain ``CopulaBB1`` (``FitBestResults``'s own
-    docstring)."""
+def test_fit_best_ranks_bb1_rotations_under_itau():
+    """Under ``method='tau'`` BB1's rotations fit by itau — τ̂ inverted, δ by
+    MLE at that τ (FR-12) — and are ranked like every family. (They used to
+    fit by MLE and land in ``other_method``, unranked.)"""
     from pmcprg.copulas._base import CopulaVirt
     cop = CopulaBB190(tau_k=-0.6, delta=2.0)
     uv = cop.sample(n=800, seed=3)
     results = CopulaVirt.fit_best(uv, families=[CopulaBB190, CopulaBB1270], method="tau")
-    assert len(results) == 0
-    assert {r.copula.__class__ for r in results.other_method} == {CopulaBB190, CopulaBB1270}
+    assert results.other_method == [] and results.failures == []
+    assert {r.copula.__class__ for r in results} == {CopulaBB190, CopulaBB1270}
+    assert all(r.method == "tau" and r.tau_k < 0.0 for r in results)
 
 
 def test_fit_best_picks_the_correctly_rotated_family_at_low_delta():
