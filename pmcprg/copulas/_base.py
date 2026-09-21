@@ -178,7 +178,7 @@ class CopulaEnum(CopulaDataMixin, Enum):
     SURVIVAL_CLAYTON = 12, "SClayton", "Survival Clayton",        "SurvivalClayton", True, ["tau_k"], [0.0 + EPS, 1.0],             "pmcprg.copulas.archimedean.survival"
     SURVIVAL_GH      = 13, "SGH",      "Survival Gumbel-Hougaard", "SurvivalGH",    True,  ["tau_k"], [0.0 + EPS, 1.0],             "pmcprg.copulas.archimedean.survival"
     SURVIVAL_JOE     = 14, "SJoe",     "Survival Joe",            "SurvivalJoe",    True,  ["tau_k"],          [0.0 + EPS, 1.0],  "pmcprg.copulas.archimedean.survival"
-    BB1              = 15, "BB1",      "BB1 (Joe-Clayton)",       "CopulaBB1",      True,  ["tau_k", "delta"], [0.0 + EPS, 1.0],              "pmcprg.copulas.archimedean.bb1"
+    BB1              = 15, "BB1",      "BB1 (Clayton-Gumbel)",       "CopulaBB1",      True,  ["tau_k", "delta"], [0.0 + EPS, 1.0],              "pmcprg.copulas.archimedean.bb1"
     AMH              = 16, "AMH",      "Ali-Mikhail-Haq",         "CopulaAMH",      True,  ["tau_k"],          [_AMH_TAU_MIN, _AMH_TAU_MAX],  "pmcprg.copulas.archimedean.amh"
     PLACKETT         = 17, "Plackett", "Plackett",                "CopulaPlackett", True,  ["tau_k"],          [EPS_MINUS_ONE, ONE_MINUS_EPS], "pmcprg.copulas.explicit.plackett"
     GALAMBOS         = 18, "Galambos", "Galambos",                "CopulaGalambos", True,  ["tau_k"],          [0.0 + EPS, 1.0],              "pmcprg.copulas.extreme_value.galambos"
@@ -206,7 +206,7 @@ class CopulaEnum(CopulaDataMixin, Enum):
     # SURVIVAL_BB1's range mirrors BB1's own [0+ε, 1); the two rotations then
     # mirror BB190/BB1270's own [-1, -ε] exactly like every other 90°/270°
     # pair here.
-    SURVIVAL_BB1     = 35, "SBB1",    "Survival BB1 (Joe-Clayton)",         "SurvivalBB1",    True, ["tau_k", "delta"], [0.0 + EPS, 1.0],   "pmcprg.copulas.archimedean.survival"
+    SURVIVAL_BB1     = 35, "SBB1",    "Survival BB1 (Clayton-Gumbel)",         "SurvivalBB1",    True, ["tau_k", "delta"], [0.0 + EPS, 1.0],   "pmcprg.copulas.archimedean.survival"
     SURVIVAL_BB190   = 36, "SBB190",  "Survival BB1 (90° rotation)",        "SurvivalBB190",  True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],  "pmcprg.copulas.archimedean.rotated"
     SURVIVAL_BB1270  = 37, "SBB1270", "Survival BB1 (270° rotation)",       "SurvivalBB1270", True, ["tau_k", "delta"], [-1.0, 0.0 - EPS],  "pmcprg.copulas.archimedean.rotated"
     # FR-9: BB6, the outer power (Gumbel transform) of Joe — Joe at δ = 1,

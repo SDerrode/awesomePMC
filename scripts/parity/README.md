@@ -237,3 +237,82 @@ t = log v/log(uv); the tables hold A in the u-share t = log u/log(uv)
 - **copBasic**: only the CDFs are closed forms; `derCOP`, `densityCOP`
   (finite differences) and `tauCOP` (numerical, 1.8·10⁻⁵ off for Plackett,
   a double fallback for `N4212cop`) are not recorded.
+
+---
+
+# Joe's BB1, BB6, BB7 and BB8 (FR-11, wave 2)
+
+BB1 in its four rotations (pmcprg's `BB1`, `BB190`, `SURVIVAL_BB1`,
+`BB1270`, and `SURVIVAL_BB190`/`SURVIVAL_BB1270`, which are BB1's 270°/90°
+rotations), BB6, BB7 and BB8 unrotated (pmcprg registers no rotation of
+these three), read by `pmcprg/tests/test_parity_bb.py`.
+
+| file | produced by | reference |
+|------|-------------|-----------|
+| `bb_pyvinecopulib.json` | `gen_pyvinecopulib_bb.py` | pyvinecopulib 1.0.0 (every quantity) |
+| `bb_vinecopula.json` | `gen_r_bb.R` | VineCopula 2.6.1 (every quantity) |
+
+R's copula, copBasic and fCopulae have none of the four (copBasic has BB4
+only, `JOcopBB4`), and the two vine libraries share their formulas: the
+tests' **mpmath oracle** (textbook CDF and generator of Joe 1997, ch. 5;
+τ by the Genest–MacKay integral, λ by the diagonal limits) is what gives
+every quantity a second, independent implementation.
+
+```sh
+.venv-parity/bin/python scripts/parity/gen_pyvinecopulib_bb.py
+Rscript scripts/parity/gen_r_bb.R         # VineCopula only
+QT_QPA_PLATFORM=offscreen OMP_NUM_THREADS=1 \
+  .venv/bin/python -m pytest -q pmcprg/tests/test_parity_bb.py
+```
+
+Environment of the committed tables: R 4.6.1 with VineCopula 2.6.1;
+`.venv-parity` as above.
+
+## Grid
+
+`cases_bb.csv` — 23 parameter sets `[θ, δ]` of the unrotated family (also
+written, whole, under `grid` in both files): bb1 (0.3, 1.1), (1.2, 1.5),
+(2.5, 3) at 0°, 90°, 180° and 270°; bb6 (1.3, 1.2), (2, 1.8), (5, 1.5);
+bb7 (1.3, 0.5), (2, 1.5) (θ = 2, the removable singularity of pmcprg's τ
+formula), (1.5, 5) (δ > 3.44, where τ is not monotone in θ), (4, 3); bb8
+(1.5, 0.6), (3, 0.9), (6, 0.4), (4, 1) (the Joe edge δ = 1, the only one
+with λ_U > 0). Points: the pilot's 25 of `points.csv`.
+
+## Parametrisation (measured by the generators)
+
+Each package's CDF is compared with the textbook formula of the key under
+both orders of the two parameters (and, for VineCopula's 90°/270°, both
+signs); exactly one must match (median absolute error < 10⁻⁹; measured
+≤ 2.8·10⁻¹⁷). Both packages take `[θ, δ]`:
+
+| key [θ, δ] | textbook C (ū = 1 − u) | pmcprg | pyvinecopulib | VineCopula |
+|------------|------------------------|--------|---------------|------------|
+| bb1 (θ > 0, δ ≥ 1) | (1 + ((u^−θ − 1)^δ + (v^−θ − 1)^δ)^{1/δ})^{−1/θ} | `BB1`, `delta` = δ, θ from τ = 1 − 2/(δ(θ+2)) | `bb1`, [θ, δ], `rotation` 0/90/180/270 | 7, 17 (θ, δ); 27, 37 (**−θ, −δ**) |
+| bb6 (θ ≥ 1, δ ≥ 1) | 1 − (1 − exp(−(p^δ + q^δ)^{1/δ}))^{1/θ}, p = −log(1 − ū^θ) | `BB6`, `delta6` = δ, θ from τ = 1 − (1 − τ_Joe(θ))/δ | `bb6`, [θ, δ] | 8, (θ, δ) |
+| bb7 (θ ≥ 1, δ > 0) | 1 − (1 − (a^−δ + b^−δ − 1)^{−1/δ})^{1/θ}, a = 1 − ū^θ | `BB7`, `theta7` = θ, δ from τ (Brent on log δ) | `bb7`, [θ, δ] | 9, (θ, δ) |
+| bb8 (θ ≥ 1, 0 < δ ≤ 1) | (1 − (1 − A)^{1/θ})/δ, A = (1 − (1 − δu)^θ)(1 − (1 − δv)^θ)/(1 − (1 − δ)^θ) | `BB8`, `delta8` = δ, θ from τ (Brent through its τ quadrature) | `bb8`, [θ, δ] | 10, (θ, δ) |
+
+VineCopula's bounds are narrower than the families' (`BiCopCheck`): BB1
+θ ≤ 7, δ ≤ 7; BB6 θ ≤ 6, δ ≤ 8; BB7 θ ≤ 6, δ ≤ 75; BB8 θ ≤ 8, δ ≥ 10⁻⁴
+(the grid stays inside). Rotations as in the pilot
+(`convention_checks.rotations`): 90° reflects u, 270° v, 180° both. The key is
+Joe (1997, ch. 5)'s (θ, δ) as the three implementations' documentation
+gives it; the books themselves were not consulted, so whether Joe (2014)
+re-parametrises any of the four is not settled here. What is settled, by
+measurement, is that pmcprg, vinecopulib and VineCopula use the same
+(θ, δ), and that each τ map equals the Genest–MacKay integral of the
+textbook generator.
+
+## Package defects found (each measured; see the tests' register)
+
+- **Both vine libraries**: numerical h-inverses (pyvinecopulib 2.9·10⁻¹¹
+  everywhere; VineCopula ≤ 7.2·10⁻¹², up to 6.0·10⁻⁹ at BB6 (5, 1.5));
+  the textbook formulas evaluated in linear scale, which cancel near
+  (1, 1): densities 3.5·10⁻⁷ (BB6 (5, 1.5)), 4.9·10⁻⁹ (BB7 (4, 3)) and
+  5.2·10⁻¹³ (BB7 (2, 1.5)) relative, CDFs 8.4·10⁻¹² (BB7 (4, 3)) and
+  1.5·10⁻¹¹ (BB8 at δ = 1), h 1.3·10⁻⁹ (BB7 (4, 3)) — the two identical to
+  the last bits there.
+- **pyvinecopulib** alone: BB8's h at δ = 1, 2.0·10⁻⁹ at (0.99, 0.99).
+- **VineCopula** alone: BB6 (5, 1.5) CDF 3.7·10⁻¹⁰ and h 7.5·10⁻⁸ at
+  (0.99, 0.99); τ of BB6, BB7, BB8 by numerical integration (1.1·10⁻⁷,
+  2.6·10⁻⁸, 9.1·10⁻⁸). pyvinecopulib's τ is within 2.5·10⁻¹⁶ of mpmath.

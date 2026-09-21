@@ -1,5 +1,5 @@
 """
-BB1 copula (Joe-Clayton) — lower- AND upper-tail dependence.
+BB1 copula (Clayton-Gumbel) — lower- AND upper-tail dependence.
 
 Generator: φ(t) = (t^{-θ} − 1)^δ,   θ > 0, δ ≥ 1.
 CDF: C(u,v) = (1 + ((u^{-θ}−1)^δ + (v^{-θ}−1)^δ)^{1/δ})^{−1/θ}
@@ -193,7 +193,7 @@ def _bb1_inv_h_k(lw, ka, th, de):
 
 
 class CopulaBB1(CopulaVirt):
-    """BB1 (Joe-Clayton) copula — lower- AND upper-tail dependence.
+    """BB1 (Clayton-Gumbel) copula — lower- AND upper-tail dependence.
 
     Parameters
     ----------

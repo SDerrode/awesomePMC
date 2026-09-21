@@ -456,7 +456,7 @@ class CopulaJoe270(RotatedCopula270):
 # BB1 is the first base family for which they are not the identity.
 #
 # BB1's own (unrotated) tail asymmetry is *two-sided* (λ_L, λ_U both > 0 in
-# general — a Joe-Clayton hybrid, module docstring of ``bb1.py``), unlike
+# general — a Clayton-Gumbel hybrid, module docstring of ``bb1.py``), unlike
 # Clayton (pure lower) or GH/Joe (pure upper): a plain BB1 sample therefore
 # has mass concentrated near *both* (0,0) and (1,1), in a ratio set by
 # (τ, δ) rather than fixed. The 90°/270° rotations still each reflect only

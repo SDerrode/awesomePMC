@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — FR-11 parity, wave 2: BB1, BB6, BB7 and BB8
+
+- **What.** Interior parity against pyvinecopulib 1.0.0 and VineCopula 2.6.1
+  for BB1 in all four rotations (and its survival's rotations), BB6, BB7 and
+  BB8. An mpmath oracle recomputes everything from the textbook CDFs and
+  generators alone. Its τ is the Genest–MacKay integral, within 2.2e-20 of
+  the literature's closed forms.
+  - Generators: `scripts/parity/gen_pyvinecopulib_bb.py` and `gen_r_bb.R`
+    (tables 175 kB).
+  - Tests: `test_parity_bb.py`. Without mpmath its 61 table comparisons
+    still run.
+- **Parametrisations, measured.** Both packages take Joe's (1997) [θ, δ],
+  and VineCopula's 90°/270° families negate both parameters.
+- **Measured.** pmcprg agrees with mpmath to:
+
+  | Density (relative) | CDF | h | τ | λ |
+  |---|---|---|---|---|
+  | 1.3e-14 | 2.0e-16 | 9.5e-15 | 1.7e-16 | 1.1e-16 |
+
+  The same holds under the minimum versions, except τ (6.1e-16 there).
+  No pmcprg defect was found.
+- **Package discrepancies**, registered and checked against mpmath:
+  - numerical h-inverses in both libraries;
+  - formulas that lose precision near (1, 1): the BB6 density is 3.5e-7
+    relative off;
+  - VineCopula's integrated τ, ≤ 1.1e-7.
+
+### Fixed — BB1 was labelled "Joe-Clayton"
+
+- BB1 nests Clayton (δ = 1) and Gumbel (θ → 0), as its own module says, and
+  VineCopula calls it "Clayton-Gumbel". "Joe-Clayton" is BB7.
+- The display name of `BB1` and `SURVIVAL_BB1` (plot titles, messages),
+  the module docstrings and the README now say "Clayton-Gumbel".
+- Short names, IDs and saved models are unchanged.
+
 ### Changed — the generic h-inverse now converges to the last digits (FR-11)
 
 - `CopulaVirt.inv_h`, the Brent search used by the families without a

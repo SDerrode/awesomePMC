@@ -14,7 +14,7 @@ the first *two-parameter* rotated family:
   is the first base family whose joint constraint is not the identity, so
   the rotated variants need the sign-flipped delegation to inherit it;
 * the tail-asymmetry signature is *derived from an actual sample*, not
-  assumed: BB1 is a Joe-Clayton hybrid with generally BOTH λ_L, λ_U > 0
+  assumed: BB1 is a Clayton-Gumbel hybrid with generally BOTH λ_L, λ_U > 0
   (module docstring of ``bb1.py``), so a plain BB1 sample has residual mass
   in *both* diagonal corners — the 90°/270° rotations therefore populate
   *both* anti-diagonal corners too (not a single dominant one, as for the

@@ -283,7 +283,7 @@ a TOML model expects.
 | 9 | `A14` | Archimedean 14 | (1/3, 1) | both |
 | 10 | `Frank` | Frank | (−1, 1) | none |
 | 11 | `Joe` | Joe | (0, 1) | upper |
-| 15 | `BB1` | BB1 (Joe-Clayton), free `delta` | (0, 1) | both |
+| 15 | `BB1` | BB1 (Clayton-Gumbel), free `delta` | (0, 1) | both |
 | 16 | `AMH` | Ali-Mikhail-Haq | (≈−0.18, 1/3) | none |
 | 38 | `BB6` | BB6 (Joe-Gumbel), free `delta6` | (0, 1) | upper |
 | 40 | `BB7` | BB7 (Joe-Clayton), free `theta7` ² | (0, 1) | both |
@@ -318,7 +318,7 @@ two tails.
 | 12 | `SClayton` | Survival Clayton | (0, 1) | upper |
 | 13 | `SGH` | Survival Gumbel-Hougaard | (0, 1) | lower |
 | 14 | `SJoe` | Survival Joe | (0, 1) | lower |
-| 35 | `SBB1` | Survival BB1 (Joe-Clayton), free `delta` | (0, 1) | both |
+| 35 | `SBB1` | Survival BB1 (Clayton-Gumbel), free `delta` | (0, 1) | both |
 
 #### Extreme-value
 
