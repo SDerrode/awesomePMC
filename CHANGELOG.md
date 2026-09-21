@@ -63,6 +63,20 @@ estimators and classifiers were not affected.
   - copula's Frank h at θ = −30 and its symbolic rotated-Joe density, 1.5e-3;
   - pmcprg's Gaussian CDF, 7e-11 relative, within the documented accuracy of
     its quadrature.
+- **The Student copula's accuracy follows scipy's `t` distribution.** The
+  first run on the minimum-versions CI job (scipy 1.10) showed this. Against
+  the three references, over the whole Student grid:
+
+  | scipy | density (relative) | h and h-inverses |
+  |---|---|---|
+  | 1.10 to 1.12 | 2.8e-8 | 1.0e-9 |
+  | 1.13 to 1.16 | 3.1e-11 | 4.1e-12 |
+  | from 1.17 | 3.9e-14 | 4.4e-15 |
+
+  This matches scipy's `t.ppf`, which is 2.3e-9 relative from mpmath up to
+  1.12 and 1.6e-11 in 1.13–1.16. The parity tests use tiered tolerances,
+  measured under each of these versions. No change is needed for practical
+  use; a newer scipy gives the last digits.
 
 ---
 

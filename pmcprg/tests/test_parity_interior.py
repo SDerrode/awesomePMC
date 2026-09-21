@@ -96,6 +96,7 @@ except ImportError:               # comparisons must still run there
     mp = None
 import numpy as np
 import pytest
+import scipy
 
 from pmcprg.copulas import CopulaEnum
 from pmcprg.copulas.archimedean.frank import kendall_tau_frank
@@ -323,11 +324,31 @@ def _limited(reference: str, family: str, rotation: int, pars: tuple, q: str) ->
     return hits[0] if hits else None
 
 
+# The Student copula evaluates scipy's t distribution (its quantile maps u to
+# the t scale), whose accuracy changed with scipy: t.ppf is 2.3e-9 relative
+# from mpmath up to scipy 1.12 and 1.6e-11 in 1.13-1.16, and the table
+# comparisons above hold from 1.17 on. Maxima of pmcprg against the three
+# references on the whole Student grid, measured under scipy 1.10.1 / 1.12.0
+# and 1.13.1 / 1.16.2 (same values within each tier), λ and τ unaffected:
+#   < 1.13:        pdf 2.83e-8 (relative), h 1.03e-9, h-inverses 1.04e-9;
+#   1.13 to 1.16:  pdf 3.10e-11, h 4.12e-12, h-inverses 3.90e-12.
+# The minimum-versions CI job runs scipy 1.10, the lower bound in pyproject.
+_SCIPY = tuple(int(x) for x in scipy.__version__.split(".")[:2])
+STUDENT_TOL_OLD_SCIPY = (
+    {"pdf": 1e-7, "h1": 3e-9, "h2": 3e-9, "hinv1": 3e-9, "hinv2": 3e-9} if _SCIPY < (1, 13) else
+    {"pdf": 1e-10, "h1": 1.5e-11, "h2": 1.5e-11, "hinv1": 1.5e-11, "hinv2": 1.5e-11}
+    if _SCIPY < (1, 17) else {}
+)
+
+
 def _tolerance(reference: str, family: str, rotation: int, pars: tuple, q: str) -> float:
     entry = _limited(reference, family, rotation, pars, q)
     if entry is not None:
         return entry.tol
-    return PMCPRG_LIMITED.get((family, q), TOL[q])
+    tol = PMCPRG_LIMITED.get((family, q), TOL[q])
+    if family == "student":
+        tol = max(tol, STUDENT_TOL_OLD_SCIPY.get(q, 0.0))
+    return tol
 
 
 # --------------------------------------------------------------------------
@@ -394,9 +415,10 @@ def test_pmcprg_rotation_and_transpose_conventions(family):
                          ids=[f"{f}{r}" for f, r in FAMILY_ROTATIONS])
 def test_pmcprg_theta_round_trip(family, rotation):
     """pmcprg's constructor returns θ at pmcprg's τ(θ) — the evaluations are at θ."""
-    # Measured: 1.0e-14 for Frank (brentq xtol = 1e-14 in find_theta_frank),
-    # 5.1e-16 for every other family.
-    tol = 3e-14 if family == "frank" else 2e-15
+    # Measured: 1.0e-14 for Frank (brentq xtol = 1e-14 in find_theta_frank)
+    # with scipy >= 1.17, 3.03e-14 with scipy 1.10-1.16 (θ = 0.2, τ = 0.022:
+    # the Debye integral's last bits); 5.1e-16 for every other family.
+    tol = 1e-13 if family == "frank" else 2e-15
     for fam, rot, pars in CASE_KEYS:
         if (fam, rot) == (family, rotation):
             assert _ours(fam, rot, pars)["theta"] == pytest.approx(pars[0], rel=tol, abs=0.0)
