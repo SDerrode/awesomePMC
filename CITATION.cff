@@ -2,7 +2,7 @@
 # GitHub renders this as "Cite this repository"; Zenodo reads it on archive.
 # The package implements two papers: cite BOTH when you use it — the CSDA 2013
 # paper is `preferred-citation`, the Signal Processing 2016 paper is under
-# `references`. Version and release date track the git tag (v1.3.0, 2026-09-21).
+# `references`. Version and release date track the git tag (v1.3.1, 2026-09-21).
 cff-version: 1.2.0
 message: >-
   If you use awesomePMC in published work, please cite both papers below
@@ -24,7 +24,7 @@ authors:
     given-names: Stéphane
     email: stephane.derrode@ec-lyon.fr
     affiliation: École Centrale de Lyon
-version: 1.3.0
+version: 1.3.1
 date-released: "2026-09-21"
 license: MIT
 repository-code: https://github.com/SDerrode/awesomePMC

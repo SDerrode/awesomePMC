@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.3.1] - 2026-09-21
+
+A patch release: one bug fix found by the new parity tests, plus the tests
+themselves. `BivariateLaw` users working with a rotated (90°/270°) or Tawn
+copula and conditioning on the right margin should upgrade. The PMC/HMC
+estimators and classifiers were not affected.
+
 ### Fixed — `BivariateLaw` conditioned on its right margin by swapping the copula's arguments (FR-11)
 
 - `conditional_cdf`, `conditional_pdf`, `sample_conditional` and the
