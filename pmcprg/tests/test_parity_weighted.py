@@ -69,10 +69,11 @@ plus the Gaussian sample on an 8 × 8 grid (ties):
 * {0, 1} weights ≡ the subset: bit-identical in pmcprg (τ and every
   parameter); the references agree with their own subset fits to their
   shortfalls;
-* weight scaling: one-parameter fits invariant at every scale tried
-  (τ̂ 5.5·10⁻¹², ℓ 2.4·10⁻¹³, Σw down to 1.4·10⁻⁴); two-parameter fits for
-  Σw ≥ 46 (ℓ 2.7·10⁻¹², τ̂ 4.2·10⁻⁸) — **but not at small Σw**
-  (:data:`PMCPRG_SCALE_LIMITED`, a pmcprg defect reported and not fixed).
+* weight scaling: invariant at every scale tried, Σw down to 1.3·10⁻⁴ —
+  one-parameter fits τ̂ 5.5·10⁻¹², ℓ 2.4·10⁻¹³; two-parameter fits ℓ
+  9.5·10⁻¹², τ̂ 1.4·10⁻⁷ since the joint MLE's ``gtol`` is scaled by the mean
+  positive weight (found here: with a fixed 1e-6 a fit at Σw = 1.4·10⁻⁴
+  stopped 2.6·10⁻³ nat short of its maximum).
 
 Selection: eight families at |τ| ≈ 0.4 (Gauss, Student ν = 4, Clayton,
 Clayton 90°, Gumbel, Frank, Joe, BB1), n = 500, twenty seeds, unweighted and
@@ -94,16 +95,13 @@ Discrepancies, each explained
   pyvinecopulib's (2.6·10⁻¹⁰), VineCopula's Frank itau table (7.1·10⁻⁴ in τ),
   pyvinecopulib's Frank θ(τ) (1.1·10⁻¹⁰), VineCopula's τ sum (1.8·10⁻¹³);
   VineCopula's Student itau searches ν in [2, 10] only, at ``tol = 1``.
-* pmcprg: the joint (two-parameter) MLE's stopping rule is not scale-free —
+* pmcprg: the joint (two-parameter) MLE's stopping rule was not scale-free —
   L-BFGS-B's absolute ``gtol = 1e-6`` on the total objective stops early
   when Σw is small (loss up to 3.9·10⁻⁹ nat of the unscaled likelihood at
   Σw ≈ 1.4·10⁻², up to 2.6·10⁻³ with τ̂ off by up to 5.6·10⁻⁴ at
   Σw ≈ 1.4·10⁻⁴). Of no statistical consequence at those Σw, but the
-  estimate is not invariant. Not fixed: a scale-free ``gtol`` (tried: gtol
-  times the mean positive weight — bit-identical at unit weights and at the
-  weights here) would still change ICE's two-parameter fits of the pairs of
-  small posterior mass, so it is the author's decision
-  (:data:`PMCPRG_SCALE_LIMITED` fails once the defect is gone).
+  estimate was not invariant. Fixed at the author's decision: ``gtol`` is
+  scaled by the mean positive weight, unit weights unchanged bit for bit.
 """
 from __future__ import annotations
 
@@ -383,25 +381,14 @@ _SCIPY = tuple(int(x) for x in scipy.__version__.split(".")[:2])
 TOL_LOGLIK_EVAL = 5e-13
 TOL_LOGLIK_EVAL_STUDENT = 1e-9 if _SCIPY < (1, 17) else TOL_LOGLIK_EVAL
 
-# Weight scaling, Σw ≥ 46 (c ≥ 1/3). One parameter: τ̂ moves 5.5e-12 at most
-# (1.7e-12 for c ≥ 1/3; Brent sees the Σw-normalised objective, rounded
-# differently), ℓ 2.4e-13 — at every c tried, down to Σw = 1.4e-4. Two: ℓ
-# 2.7e-12, τ̂ 4.2e-8 along the flat direction of the likelihood (L-BFGS-B
-# stops elsewhere on it).
-TOL_SCALE = {"tau1": 2e-11, "loglik1": 1e-12, "tau2": 2e-7, "loglik2": 1e-11}
-# The joint MLE is **not** scale-free when Σw is small (defect, reported, not
-# fixed — module docstring): L-BFGS-B's gtol = 1e-6 is
-# an absolute bound on the projected gradient of the *total* objective, which
-# scales with c, so the search stops early. Loss in nats of the unscaled
-# log-likelihood at the gen weights (Σw ≈ 140): measured, both environments,
-# c = 1e-2: 9.0e-12 to 4.9e-11; c = 1e-4: 2.2e-9 to 3.9e-9; c = 1e-6: 7.0e-4
-# to 2.6e-3 (τ̂ off by 5.6e-4). With gtol scaled by c the loss stays ≤ 1e-11
-# down to c = 1e-6 (the cause); below Σw ≈ 1e-6 the finite-difference
-# gradient and the max(|f|, 1) floor of ftol bite too. (dataset, c) → bound.
-PMCPRG_SCALE_LIMITED = {
-    ("student", 1e-4): 1e-8, ("bb1", 1e-4): 1e-8,
-    ("student", 1e-6): 1e-2, ("bb1", 1e-6): 1e-2,
-}
+# Weight scaling, every c tried (1/3 … 1e6, down to 2^-20: Σw from 1.3e-4 to
+# 1.4e8). One parameter: τ̂ moves 5.5e-12 at most (Brent sees the
+# Σw-normalised objective, rounded differently), ℓ 2.4e-13. Two: since the
+# joint MLE's gtol is scaled by the mean positive weight (FR-11 wave 3; with
+# the fixed 1e-6 a fit at Σw = 1.4e-4 stopped 2.6e-3 nat short), ℓ 9.5e-12
+# (Student) and 7.3e-12 (BB1), τ̂ 1.4e-7 along the flat direction of the
+# likelihood (L-BFGS-B stops elsewhere on it).
+TOL_SCALE = {"tau1": 2e-11, "loglik1": 1e-12, "tau2": 5e-7, "loglik2": 3e-11}
 
 # Selection samples (n = 500): each candidate's pmcprg fit against
 # VineCopula's, both evaluated by pmcprg. pmcprg is never lower by more than
@@ -654,35 +641,18 @@ def test_zero_one_weights_equal_the_subset_fit(dataset):
 
 @pytest.mark.parametrize("dataset", WEIGHTED_SETS)
 def test_weight_scaling_invariance(dataset):
-    """Multiplying every weight by c leaves pmcprg's estimate unchanged (Σw ≥ 46; see the register)."""
+    """Multiplying every weight by c leaves pmcprg's estimate unchanged, down to Σw ≈ 1.3e-4."""
     entry = ENTRY[dataset]
     u, v, w, _ = _scheme(dataset, "gen")
     base = _pmcprg_fit(dataset, u, v, w)
     two = len(base) > 1
     ll0 = _weighted_log_likelihood(entry.klass, base, u, v, w)
-    scales = (1 / 3, 7.0, 1e3, 1e6, 2.0 ** 10)
-    if not two:     # the one-parameter search normalises the weights: every scale
-        scales += (1e-2, 1e-4, 1e-6, 2.0 ** -20)
+    scales = (1 / 3, 7.0, 1e3, 1e6, 2.0 ** 10, 1e-2, 1e-4, 1e-6, 2.0 ** -20)
     for c in scales:
         p = _pmcprg_fit(dataset, u, v, w * c)
         ll = _weighted_log_likelihood(entry.klass, p, u, v, w)
         assert abs(p["tau_k"] - base["tau_k"]) <= TOL_SCALE["tau2" if two else "tau1"], (c, p, base)
         assert abs(ll - ll0) <= TOL_SCALE["loglik2" if two else "loglik1"], (c, ll - ll0)
-
-
-@pytest.mark.parametrize("cell", sorted(PMCPRG_SCALE_LIMITED), ids=lambda c: f"{c[0]}-{c[1]:g}")
-def test_joint_mle_scale_limit_register(cell):
-    """Each PMCPRG_SCALE_LIMITED cell is still needed and within what it allows.
-
-    The two-parameter fit at small Σw loses more than TOL_SCALE — the defect
-    documented at the register — and no more than the register's bound.
-    """
-    dataset, c = cell
-    entry = ENTRY[dataset]
-    u, v, w, _ = _scheme(dataset, "gen")
-    ll0 = _weighted_log_likelihood(entry.klass, _pmcprg_fit(dataset, u, v, w), u, v, w)
-    ll = _weighted_log_likelihood(entry.klass, _pmcprg_fit(dataset, u, v, w * c), u, v, w)
-    assert TOL_SCALE["loglik2"] < ll0 - ll <= PMCPRG_SCALE_LIMITED[cell], ll0 - ll
 
 
 # ---------------------------------------------------------------------------

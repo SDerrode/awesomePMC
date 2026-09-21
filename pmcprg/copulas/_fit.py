@@ -142,7 +142,9 @@ class ParameterFit:
 # the ``max(…, 1)`` floor made the test absolute) the fit stopped after 3–5
 # iterations next to its start value. ``gtol`` only matters for a tiny total
 # weight, where the finite-difference gradient noise (≈ 1e-8 · Σ|w log c|)
-# falls below it.
+# falls below it; it is scaled by the mean positive weight in
+# :func:`_fit_two_parameter_mle`, so the fit does not depend on the weights'
+# scale (FR-11 wave 3).
 _MLE2_MAXITER: int   = 200
 _MLE2_FTOL:    float = 1e-12
 _MLE2_GTOL:    float = 1e-6
@@ -630,7 +632,19 @@ def _fit_two_parameter_mle(
             return MLE_FAIL_PENALTY
         return -ll if np.isfinite(ll) else MLE_FAIL_PENALTY
 
-    options = {"maxiter": _MLE2_MAXITER, "ftol": _MLE2_FTOL, "gtol": _MLE2_GTOL}
+    # gtol is an absolute bound on the projected gradient of the *total*
+    # objective, which scales with the weights: scale it by their mean, so
+    # that multiplying every weight by a constant leaves the fit unchanged
+    # (FR-11 wave 3: with a fixed 1e-6, a pair of ICE states with Σw = 1.4e-4
+    # stopped 2.6e-3 nat below its maximum, τ off by 5.6e-4). Unit weights
+    # (and weights=None) keep gtol = 1e-6 exactly, hence bit-identical fits.
+    gtol = _MLE2_GTOL
+    if weights is not None:
+        w = np.asarray(weights, dtype=float)
+        pos = w[w > 0.0]
+        if pos.size:
+            gtol = _MLE2_GTOL * float(pos.mean())
+    options = {"maxiter": _MLE2_MAXITER, "ftol": _MLE2_FTOL, "gtol": gtol}
     best_p, best_f = tuple(p0), neg_ll(p0)
     n_iter = 0
     converged = False

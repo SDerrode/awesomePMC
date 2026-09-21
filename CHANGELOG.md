@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the two-parameter MLE depended on the scale of the weights (FR-11)
+
+- The joint fit of the two-parameter families (Student, BB1, BB6–BB8, …)
+  stopped L-BFGS-B on an absolute `gtol = 1e-6`. That bound applies to the
+  gradient of the *total* weighted log-likelihood, which scales with the
+  weights, so a small Σw stopped the search early. Found by the FR-11
+  weighted-parity tests: at Σw = 1.4e-4 the fit ended 2.6e-3 nat below its
+  maximum, with τ off by 5.6e-4.
+- `gtol` is now scaled by the mean positive weight. Multiplying every weight
+  by a constant no longer changes the fit: Δℓ ≤ 9.5e-12 and Δτ̂ ≤ 1.4e-7 for
+  scales from 2⁻²⁰ to 10⁶.
+- Unit weights and `weights=None` are bit-identical. ICE's fits change only
+  for pairs of states with small posterior mass.
+
 ### Added — FR-11 parity, wave 3: weighted estimation and family selection
 
 - **What.** ICE's weighted copula fit, taken exactly as the M-step calls it
@@ -46,12 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `BiCopSelect` agrees in 959 of 960 cases; the other differs through BIC's
   sample size.
-- **Known issue, pending.** The joint two-parameter MLE (Student, BB1, …) is
-  not invariant under weight scaling when Σw is very small. L-BFGS-B's
-  absolute `gtol = 1e-6` on the total objective stops it early: at
-  Σw = 1.4e-4 the fit ends 2.6e-3 nat below the maximum, with τ off by
-  5.6e-4. Registered as `PMCPRG_SCALE_LIMITED` in the tests.
-
 ### Added — FR-11 parity, wave 2: BB1, BB6, BB7 and BB8
 
 - **What.** Interior parity against pyvinecopulib 1.0.0 and VineCopula 2.6.1
