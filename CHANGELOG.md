@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the generic h-inverse now converges to the last digits (FR-11)
+
+- `CopulaVirt.inv_h`, the Brent search used by the families without a
+  closed-form or Newton inverse, stopped at `xtol = 1e-8`. The FR-11 parity
+  tests measured what that left:
+  - on h⁻¹ itself, up to 2.5e-9 against mpmath;
+  - on the round trip h(h⁻¹(w)) − w, up to 1.2e-6 (A12) and 2.9e-7
+    (Hüsler–Reiss).
+  The families concerned are Galambos, Hüsler–Reiss, Plackett, AMH, FGM, A12
+  and A14; their rotations have their own inverse.
+- It now stops at `xtol = 1e-15` (`maxiter` 100).
+  - Round trip after the change: ≤ 1.2e-13 on 2 000 points per family.
+  - h⁻¹ against mpmath: ≤ 2.7e-15, except where h is flat — A14 2.2e-14
+    and A12 1.2e-14 at v = 0.99, the limit set by the rounding of h itself.
+  - Cost: 5–10 % more time per call.
+- **Results change:** sampling, simulation and every quantity that inverts h
+  for these seven families move beyond the ninth digit. The other families
+  are bit-identical.
+
 ### Added — FR-11 parity, wave 1: the families only R has
 
 - **What.** Galambos, Hüsler–Reiss, t-EV, the three Tawn models, Plackett,

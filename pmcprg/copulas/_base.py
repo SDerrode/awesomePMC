@@ -773,7 +773,7 @@ class CopulaVirt:
             return float(ONE_MINUS_EPS)
         return float(brentq(
             lambda v_: self.conditional_cdf(float(v_), u) - w,
-            EPS, ONE_MINUS_EPS, maxiter=80, xtol=1e-8,
+            EPS, ONE_MINUS_EPS, maxiter=100, xtol=1e-15,
         ))
 
     def inv_h_array(self, w: np.ndarray, u: np.ndarray) -> np.ndarray:

@@ -72,9 +72,10 @@ mpmath to 4.0·10⁻¹⁴ (pdf, relative), 2.3·10⁻¹⁶ (cdf), 2.7·10⁻¹�
 5.3·10⁻¹⁶ (h⁻¹), 2.1·10⁻¹⁴ (τ), 4.4·10⁻¹⁶ (λ), 5.3·10⁻¹⁶ (A, relative).
 
 * :data:`PMCPRG_LIMITED` — pmcprg is the one off: the h⁻¹ of the seven
-  families that use :meth:`CopulaVirt.inv_h`'s generic Brent search, whose
-  ``xtol = 1e-8`` leaves up to 2.5·10⁻⁹ (Galambos, Hüsler–Reiss, Plackett,
-  AMH, FGM, A12, A14; copula's AMH inverse is 7·10⁻¹⁵ from mpmath); and the
+  families that use :meth:`CopulaVirt.inv_h`'s generic Brent search
+  (A12, A14, Hüsler–Reiss, Plackett; Galambos, AMH and FGM are within the
+  oracle tolerance), up to 2.2·10⁻¹⁴ where h is flat — its ``xtol = 1e-8`` left 2.5·10⁻⁹ before this item
+  tightened it to 1e-15 (copula's AMH inverse is 7·10⁻¹⁵ from mpmath); and the
   τ of Galambos and Hüsler–Reiss, whose ``scipy.integrate.quad`` of the
   Genest–MacKay integrand is 1.8·10⁻¹² off (both within their modules'
   tested accuracy). Not defects — each within what the code promises — but
@@ -335,17 +336,19 @@ ORACLE_TOL = {
 # pmcprg is the one off (module docstring), measured against mpmath:
 # (family, rotation, quantity) → tolerance.
 PMCPRG_LIMITED = {
-    # CopulaVirt.inv_h's generic brentq, xtol = 1e-8 (the rotations of A12
-    # and A14 have their own monotone Newton inverse, 3.9e-16).
-    **{(f, 0, q): 5e-9 for f in ("galambos", "husler_reiss", "plackett", "amh", "fgm", "a12", "a14")
-       for q in HINV},
+    # CopulaVirt.inv_h's generic brentq (xtol = 1e-15 since FR-11; it was 1e-8
+    # and left 2.5e-9): measured 2.15e-14 (A14, θ = 1.3) and 1.17e-14 (A12)
+    # at v = 0.99, where h is flat and the root is limited by the rounding of
+    # h itself; 2.7e-15 (Plackett, θ = 25) and 2.6e-15 (Hüsler–Reiss); Galambos,
+    # AMH and FGM are back within the oracle tolerance. The rotations of A12
+    # and A14 have their own monotone Newton inverse (3.9e-16).
+    **{(f, 0, q): 5e-14 for f in ("a12", "a14") for q in HINV},
+    **{(f, 0, q): 1e-14 for f in ("husler_reiss", "plackett") for q in HINV},
     # scipy.integrate.quad of the Genest–MacKay integrand (_pickands.tau_from_A_terms):
     # 1.8e-12 at θ = 0.3 (Galambos), 1.1e-12 at λ = 1.5 (Hüsler–Reiss).
     ("galambos", 0, "tau"): 5e-12,
     ("husler_reiss", 0, "tau"): 5e-12,
 }
-# Measured maxima of the h⁻¹ entries: 2.5e-9 (A12, A14, Galambos, Plackett),
-# 2.4e-9 (Hüsler–Reiss), 2.3e-9 (AMH, FGM).
 
 
 @dataclass(frozen=True)
