@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — FR-11 parity, wave 3: weighted estimation and family selection
+
+- **What.** ICE's weighted copula fit, taken exactly as the M-step calls it
+  (`_weighted_kendall_tau`, `_fit_copula_params`, `_select_and_fit_copula`),
+  is compared with pyvinecopulib 1.0.0 and VineCopula 2.6.1 fitting with
+  weights. Two oracles of our own complete the comparison: the exact
+  weighted τ in integer arithmetic, and a polished optimum of pmcprg's
+  weighted log-likelihood.
+  - Data: `scripts/parity/gen_weighted_data.py`.
+  - Generators: `gen_pyvinecopulib_weighted.py` and `gen_r_weighted.R`;
+    data and tables together weigh 520 kB.
+  - Tests: `test_parity_weighted.py`, which reads the tables only.
+- **Definitions, measured.**
+  - Weighted τ: pmcprg's is a product-weight τ-a, the references' a weighted
+    τ-b. They are identical without ties, and ICE has none.
+  - Reported log-likelihood: pmcprg and VineCopula's MLE give Σ wᵢ log cᵢ;
+    VineCopula's itau ignores the weights; pyvinecopulib rescales them to
+    mean 1.
+  - BIC: pmcprg charges log Σw, VineCopula log n.
+- **Measured.**
+
+  | | pmcprg | pyvinecopulib | VineCopula |
+  |---|---|---|---|
+  | weighted τ against the exact value | 1.7e-16 | 5.6e-17 | 1.8e-13 |
+  | MLE, nat below the maximum | 1.3e-11 | 2.6e-10 | 3.0e-8 |
+
+  With {0, 1} weights, pmcprg gives the fit on the kept subset bit for bit.
+  One-parameter fits do not change when all weights are scaled.
+- **Selection.** 960 decisions among {independence, Gauss, true family},
+  |τ| ≈ 0.4, n = 500. The true family is recovered every time except for
+  BB1, which is taken for Gauss:
+  - unweighted BIC: 19/20;
+  - weighted AIC: 19/20;
+  - weighted BIC: 15/20.
+
+  `BiCopSelect` agrees in 959 of 960 cases; the other differs through BIC's
+  sample size.
+- **Known issue, pending.** The joint two-parameter MLE (Student, BB1, …) is
+  not invariant under weight scaling when Σw is very small. L-BFGS-B's
+  absolute `gtol = 1e-6` on the total objective stops it early: at
+  Σw = 1.4e-4 the fit ends 2.6e-3 nat below the maximum, with τ off by
+  5.6e-4. Registered as `PMCPRG_SCALE_LIMITED` in the tests.
+
 ### Added — FR-11 parity, wave 2: BB1, BB6, BB7 and BB8
 
 - **What.** Interior parity against pyvinecopulib 1.0.0 and VineCopula 2.6.1

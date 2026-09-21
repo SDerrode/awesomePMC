@@ -316,3 +316,83 @@ textbook generator.
 - **VineCopula** alone: BB6 (5, 1.5) CDF 3.7·10⁻¹⁰ and h 7.5·10⁻⁸ at
   (0.99, 0.99); τ of BB6, BB7, BB8 by numerical integration (1.1·10⁻⁷,
   2.6·10⁻⁸, 9.1·10⁻⁸). pyvinecopulib's τ is within 2.5·10⁻¹⁶ of mpmath.
+
+---
+
+# Weighted estimation and family selection (FR-11, wave 3)
+
+The copula fit of ICE's M-step weights each pseudo-observation by its pair
+posterior ξ_n(i, j): a weighted Kendall τ, a weighted MLE and a weighted
+selection criterion (`pmcprg/pmc/ice.py`: `_weighted_kendall_tau`,
+`_fit_copula_params`, `_select_and_fit_copula`). Both vine libraries accept
+weights, which makes them a direct oracle; `pmcprg/tests/test_parity_weighted.py`
+reads the tables below and adds two oracles of its own (the exact weighted τ
+in integer arithmetic, and a polished optimum of pmcprg's weighted
+log-likelihood).
+
+| file | produced by | content |
+|------|-------------|---------|
+| `weighted_data.csv` | `gen_weighted_data.py` | 7 samples, n = 300, with generic and {0, 1} weights; 1 sample with ties |
+| `selection_data.csv` | `gen_weighted_data.py` | 8 families × 20 seeds, n = 500 |
+| `weighted_pyvinecopulib.json` | `gen_pyvinecopulib_weighted.py` | pyvinecopulib 1.0.0: `wdm` τ, itau and MLE fits |
+| `weighted_vinecopula.json` | `gen_r_weighted.R` | VineCopula 2.6.1: `fasttau`/`TauMatrix`, `BiCopEst` itau and MLE, `BiCopSelect` |
+
+```sh
+# only to regenerate the data (then rerun both generators below)
+.venv-parity/bin/python scripts/parity/gen_weighted_data.py
+.venv-parity/bin/python scripts/parity/gen_pyvinecopulib_weighted.py
+Rscript scripts/parity/gen_r_weighted.R           # ~2 min (960 BiCopSelect calls)
+QT_QPA_PLATFORM=offscreen OMP_NUM_THREADS=1 \
+  .venv/bin/python -m pytest -q pmcprg/tests/test_parity_weighted.py
+```
+
+Both reference files record the md5 of the data files they read; the tests
+check it.
+
+## Data
+
+Drawn with pyvinecopulib's sampler (`Bicop.sample(n, seeds=[seed])`, never
+pmcprg's), then reduced to ranks. **Every value is an integer**, so that R
+and Python read the same doubles without trusting either's decimal parser:
+u = `u_int`/`denom` (a rank over n + 1), w = `w_gen`/2²⁰ (Beta(½, ½) draws
+— mass at both ends, as the ξ have — rounded and floored at 2⁻²⁰), `w01` ∈
+{0, 1} (P(1) = 0.6), both independent of the data. Selection samples store
+`v_by_u`, the v-rank of the point of u-rank i: u_i = i/(n + 1),
+v_i = `v_by_u`[i]/(n + 1); their weighted variant uses the deterministic
+w_i = ((7919 i) mod 1024 + 1)/1024 (Σw = 242.6), computed by both sides.
+
+- weighted: gaussian ρ = 0.6; student (0.6, ν = 5); clayton θ = 1.5 at 0° and
+  90°; gumbel 1.8; frank 5; bb1 (θ, δ) = (0.8, 1.4); and `gaussian_ties`, the
+  gaussian sample on an 8 × 8 grid (level/9).
+- selection (|τ| ≈ 0.4): gaussian 0.6; student (0.6, 4); clayton 1.3 at 0° and
+  90°; gumbel 1.7; frank 4.2; joe 2.2; bb1 (0.5, 1.33). Candidates
+  {independence, Gauss, true family}; `BiCopSelect(rotations = FALSE,
+  presel = FALSE)` so that VineCopula considers exactly those.
+
+## Definitions (measured, not assumed)
+
+- **Weighted Kendall τ.** pmcprg: Σ_{i<j} wᵢwⱼ sgn(Δu)sgn(Δv) / Σ_{i<j} wᵢwⱼ,
+  a weighted τ-a. `wdm` and `TauMatrix` (VineCopula's `fasttau`, hence
+  `BiCopEst`'s `emptau` and itau): the same numerator over
+  √(Σ wᵢwⱼ sgn(Δu)² Σ wᵢwⱼ sgn(Δv)²), a weighted τ-b. Identical without
+  ties; −5.1·10⁻² apart on the 8 × 8 grid.
+- **Weighted log-likelihood.** pmcprg and VineCopula's MLE: the total
+  Σ wᵢ log cᵢ. VineCopula's **itau** `logLik` ignores the weights.
+  pyvinecopulib's `loglik()` is (n_rows/Σw)·Σ wᵢ log cᵢ — weights rescaled to
+  mean 1 over the rows, zero weights included — while `nobs` counts the
+  positive weights.
+- **BIC.** pmcprg k·log(Σw) − 2ℓ; `BiCopSelect` k·log(n_rows) − 2ℓ. AIC and
+  the parameter counts (independence 0, one-parameter 1, Student and BB1 2)
+  agree.
+
+## Package limitations found (each measured; see the test module)
+
+- **VineCopula**: one-parameter MLE by `optimize()` at its default
+  tol = 1.2·10⁻⁴ in the parameter, up to 3.0·10⁻⁸ nat below the maximum
+  (n = 300; 3.5·10⁻⁷ at n = 500); Frank's itau through the interpolated τ
+  table of the pilot (7.1·10⁻⁴ in τ); Student's itau ν by `optimize()` on
+  [2.0001, 10] at `tol = 1`; `TauMatrix` 1.8·10⁻¹³ (an R matrix product);
+  its itau `logLik` unweighted.
+- **pyvinecopulib**: MLE up to 2.6·10⁻¹⁰ nat below the maximum; Frank's
+  θ(τ) numerical (1.1·10⁻¹⁰ in τ); `loglik()` of a {0, 1}-weighted fit ≠ the
+  subset's (the rescaling above), although the parameters agree.
