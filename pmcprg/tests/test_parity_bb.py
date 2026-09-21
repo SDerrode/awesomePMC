@@ -75,12 +75,11 @@ figures under the minimum versions but for that one.
   is flat (w = 0.99, small density) the root is only defined to ε·w/c, the
   rounding of h itself: BB1's generic Brent search (``CopulaVirt.inv_h``,
   xtol 10⁻¹⁵) and the logit bisections of BB6 and BB7 land within 11 times
-  that floor (BB8's within 1.5 times, inside :data:`ORACLE_TOL`). The BB1 **rotations and survival** do not: their kernel
-  inverse (``bb1._bb1_inv_h_k``) stops Brent at ``xtol = 1e-13`` on log v,
-  1.5·10⁻¹⁴ — up to 293 times the floor where c = 5.2; 1e-15 there would
-  give 7.3·10⁻¹⁵ at the same cost (measured) but change the draws of these
-  families, ``SURVIVAL_BB1`` (exchangeable) included: a margin left to the
-  author, as the generic search's was in wave 1.
+  that floor (BB8's within 1.5 times, inside :data:`ORACLE_TOL`). The BB1
+  **rotations and survival** use their kernel inverse
+  (``bb1._bb1_inv_h_k``, Brent on log v): its ``xtol = 1e-13`` left
+  1.5·10⁻¹⁴, up to 293 times the floor; tightened to 1e-15 at the author's
+  decision (same cost), it is 7.1·10⁻¹⁵.
 * :data:`REFERENCE_LIMITED` — a package is off and pmcprg agrees with mpmath,
   each entry proven at its worst point
   (:func:`test_reference_limited_entries_are_the_reference`): both vine
@@ -318,10 +317,10 @@ PMCPRG_LIMITED = {
     # The generic brentq of CopulaVirt.inv_h (xtol 1e-15): 6.4e-15 at
     # (u, w) = (0.01, 0.99), (θ, δ) = (1.2, 1.5), 3.9 times ε·w/c with c = 0.13.
     **{("bb1", 0, q): 1e-14 for q in HINV},
-    # bb1._bb1_inv_h_k, Brent on log v at xtol = 1e-13: 1.5e-14 (BB1270
-    # (1.2, 1.5) at (0.95, 0.75)); up to 293 times the floor ε·w/c where
-    # c = 5.2 ((2.5, 3), (0.1, 0.9)). xtol 1e-15 would give 7.3e-15.
-    **{("bb1", r, q): 3e-14 for r in (90, 180, 270) for q in HINV},
+    # bb1._bb1_inv_h_k, Brent on log v, xtol 1e-15 since FR-11 wave 2 (it was
+    # 1e-13 and left 1.5e-14): 7.1e-15 ((1.2, 1.5) at (0.01, 0.01)), the
+    # rounding floor ε·w/c of h where it is flat, as for the generic search.
+    **{("bb1", r, q): 2e-14 for r in (90, 180, 270) for q in HINV},
     # The logit bisection, at the rounding floor where h is flat: 4.4e-15
     # (BB6 (5, 1.5) at (0.5, 0.99), 5.4 times the floor), 1.7e-14 (BB7
     # (2, 1.5) at (0.01, 0.99), c = 0.068, 5.3 times the floor).

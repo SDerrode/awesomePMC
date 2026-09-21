@@ -80,9 +80,12 @@ u`` either — rather than by a closed-form step. This is a genuine, exact
 (to Brent's tolerance) solve, not an approximation: BB1's own public
 ``inv_h``/``inv_h_array`` (unchanged by this refactor) already used the
 generic numerical inversion of ``CopulaVirt.inv_h`` via ``conditional_cdf``,
-so ``_k_inv_h`` is no slower or less precise than the family's pre-existing
-public inverse — only reformulated on kernel coordinates so
-``CopulaBB190``/``CopulaBB1270`` (``rotated.py``) can use it.
+and ``_k_inv_h`` is the same solve reformulated on kernel coordinates so
+``CopulaBB190``/``CopulaBB1270`` (``rotated.py``) can use it. Both stop Brent
+at ``xtol = 1e-15`` (FR-11; the kernel inverse had 1e-13, the generic one
+1e-8): against mpmath, 7.1e-15 for the kernel inverse and 6.4e-15 for the
+generic one on the parity grid, both at the rounding floor of h where it is
+flat.
 """
 if __name__ == '__main__':
     import sys
@@ -186,7 +189,7 @@ def _bb1_inv_h_k(lw, ka, th, de):
             out[i] = kb_hi
         else:
             out[i] = brentq(lambda kb_: _bb1_logh_k(kb_, k_, th, de) - l_,
-                             kb_lo, kb_hi, maxiter=100, xtol=1e-13,
+                             kb_lo, kb_hi, maxiter=100, xtol=1e-15,
                              rtol=8.0 * np.finfo(float).eps)
     kb = out.reshape(shape)
     return np.exp(kb), -np.expm1(kb)

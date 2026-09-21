@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Results change:** sampling, simulation and every quantity that inverts h
   for these seven families move beyond the ninth digit. The other families
   are bit-identical.
+- **The BB1 rotations and survival** (`BB190`, `BB1270`, `SURVIVAL_BB1` and
+  its rotations) have their own inverse on kernel coordinates. It stopped at
+  `xtol = 1e-13` on log v, which left 1.5e-14. It now also stops at 1e-15:
+  7.1e-15 against mpmath, at the same cost. Their draws move beyond the
+  thirteenth digit.
 
 ### Added — FR-11 parity, wave 1: the families only R has
 
