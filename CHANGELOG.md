@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] - 2026-09-21
+
+### Highlights
+
+- **State-dependent missingness (P6).** Until 1.2.0 a missing observation was
+  integrated out under an *ignorable* mechanism: the gaps said nothing about
+  the hidden states. A model can now declare, in a `[missingness]` table,
+  that the probability of a gap depends on the hidden state:
+  - `"state"`: one missing rate per state;
+  - `"state-markov"`: an onset and a persistence probability per state, for
+    gaps that come in bursts.
+  Every inference function then uses the mask as evidence on the states:
+  classification, posteriors, imputation, forecasting and FFBS draws. The
+  default is unchanged and bit-identical to 1.2.0.
+- **Estimation and a test.** ICE and SEM estimate the mechanism (config key
+  `missingness`), and `missingness_lr_test` tests whether the gaps depend on
+  the state, with a χ² and a parametric-bootstrap p-value. Both are
+  reachable from the CLI (`pmc estimate --missingness`,
+  `pmc missingness-lr-test`) and from the GUI.
+- **Measured.**
+  - On simulated data, using the mask cuts the classification error at the
+    gaps from 31 % to 3 %.
+  - For gaps in bursts, only `"state-markov"` stays calibrated.
+  - The test holds its level on HMC-IN. On grid variants, `"state-markov"`
+    needs about 20 bursts of gaps.
+  - On PAMAP2 the dependence is real and bursty, but it helps classification
+    only where each state's dropout rate is homogeneous. The study and its
+    advice are in `report/missing_state/pamap2/`.
+
 ### Added — state-dependent missingness on real data: PAMAP2 (P6, study)
 
 - **Why.** The work on state-dependent missingness was motivated by PAMAP2's
