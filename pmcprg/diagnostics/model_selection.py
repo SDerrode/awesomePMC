@@ -985,10 +985,10 @@ def clarke_test(
     difference is exactly zero carry no sign and are dropped, as in the
     classical sign test.
 
+    Takes the same parameters as :func:`vuong_test`, plus ``method``.
+
     Parameters
     ----------
-    As :func:`vuong_test`, plus
-
     method : ``"exact"`` — binomial ``B ~ Bin(N, 1/2)`` on the weighted count
              ``B = Σ w 1{m > 0}`` of ``N = Σ w`` trials; valid only with
              integer (frequency) weights, ``bandwidth=0`` and ``n_eff="sum"``.
@@ -999,6 +999,8 @@ def clarke_test(
              at ``p̂``). ``"auto"`` — ``"exact"`` when its conditions hold,
              ``"normal"`` otherwise.
 
+    Notes
+    -----
     The binomial law assumes independent signs: with serially dependent pairs
     (ICE) use the default HAC.
     """
@@ -1112,8 +1114,10 @@ def comparison_matrix(
     weights       : shared weights ``w_n`` (``None``: unit).
     n_params      : ``{name: k}`` for the corrections (default 1 each).
     test          : ``"vuong"`` or ``"clarke"``.
-    other options : forwarded to the test.
+    **test_kwargs : forwarded to the test.
 
+    Notes
+    -----
     Each unordered pair is tested once; the lower triangle is the swapped
     result, so the matrix is exactly antisymmetric.
     """

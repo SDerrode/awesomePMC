@@ -23,6 +23,10 @@
 #   min-versions — Python 3.11 with every runtime dependency (and the `ml`
 #                  extra) pinned to the lower bound declared in
 #                  pyproject.toml; fast test subset.
+#   docs         — builds the API documentation site (MkDocs + mkdocstrings,
+#                  the `docs` extra) with `mkdocs build --strict`, so a
+#                  broken docstring reference or dead internal link fails
+#                  CI; one Python version, nothing deployed (audit FR-12).
 #
 # The "gui" optional extra (PyQt6) is installed so the test_gui_dialogs
 # tests run; PyQt6 ships its own Qt; we just need an X-less display
@@ -264,3 +268,27 @@ jobs:
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
         run: pytest -q -n auto -m "not slow"
+
+  # --------------------------------------------------------------------
+  # Docs — API documentation site (MkDocs + mkdocstrings), strict mode.
+  #   Catches a broken docstring cross-reference or a dead internal link
+  #   before it reaches a release. Builds only — no `mkdocs gh-deploy`,
+  #   no GitHub Pages, nothing published (audit FR-12).
+  # --------------------------------------------------------------------
+  docs:
+    name: docs (mkdocs build --strict)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the package with the docs extra
+        run: |
+          python -V
+          pip install --upgrade pip
+          pip install -e ".[docs]"
+      - name: Build the site (strict — warnings fail the build)
+        run: mkdocs build --strict

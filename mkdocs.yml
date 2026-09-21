@@ -1,0 +1,69 @@
+site_name: awesomePMC
+site_description: >-
+  Pairwise and hidden Markov chains with copula-based non-Gaussian
+  dependence — API reference.
+repo_url: https://github.com/SDerrode/awesomePMC
+repo_name: SDerrode/awesomePMC
+edit_uri: ""
+docs_dir: apidoc   # not docs/: that folder holds private, unversioned manuscripts
+site_dir: site
+
+# Built locally only (`mkdocs build --strict` / `mkdocs serve`); no
+# `gh-deploy` is run anywhere in this repository or its CI (FR-12).
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Overview: index.md
+  - Installation: installation.md
+  - API reference:
+      - pmcprg.copulas: api/copulas.md
+      - pmcprg.pmc: api/pmc.md
+      - pmcprg.missing: api/missing.md
+      - pmcprg.diagnostics: api/diagnostics.md
+  - State labelling: state-labelling.md
+  - Changelog: changelog.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: numpy
+            docstring_section_style: table
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            members_order: source
+            filters: ["!^_"]
+
+# Strict mode (`mkdocs build --strict`, used by the `docs` CI job) turns
+# every warning — a broken internal link, a missing mkdocstrings
+# identifier, an unresolved cross-reference — into a build failure.

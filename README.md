@@ -149,6 +149,8 @@ package packages for reuse.*
   - [Logging](#logging)
 - [Diagnostics — multivariate Kolmogorov–Smirnov test](#diagnostics--multivariate-kolmogorovsmirnov-test)
 - [Reproducibility reports](#reproducibility-reports)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
 - [Folder structure](#folder-structure)
 - [Citation and references](#citation-and-references)
 - [License](#license)
@@ -607,7 +609,13 @@ init        = "model"    # "model" (default) | "kmeans"
 > M-step (prior + copula τ always re-estimated; margins re-estimated only if
 > `fit_margins = true`) — useful when the declared initial parameters are far
 > from the data. Requires scikit-learn (`pip install "awesomepmc[ml]"`). Works
-> for both ICE and SEM.
+> for both ICE and SEM. Its k-means clusters are renumbered to match the
+> declared states before the M-step runs (`_align_kmeans_labels`), by the
+> assignment that maximises each cluster's log-likelihood under a candidate
+> state's declared law — see
+> [`apidoc/state-labelling.md`](https://github.com/SDerrode/awesomePMC/blob/main/apidoc/state-labelling.md)
+> for the rule that gives a fitted state's index its meaning, with or without
+> `init = "kmeans"`.
 >
 > **Multistart over copula families.** With `n_starts > 1` ICE/SEM keep the
 > run with the highest final log-likelihood; the extra starts jitter the
@@ -1013,6 +1021,29 @@ bundled `sp2016_gice_k2.toml` model.
 
 ---
 
+## Documentation
+
+This README is the main documentation. An **API reference** (the copula
+registry, `PMCModel`, inference, ICE/SEM, missing-data handling, the
+[state-labelling rule](https://github.com/SDerrode/awesomePMC/blob/main/apidoc/state-labelling.md))
+is generated from the docstrings with [MkDocs](https://www.mkdocs.org/) +
+[mkdocstrings](https://mkdocstrings.github.io/); it is built locally and not
+deployed anywhere:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve            # http://127.0.0.1:8000
+mkdocs build --strict   # static site under site/
+```
+
+## Contributing
+
+See [`CONTRIBUTING.md`](https://github.com/SDerrode/awesomePMC/blob/main/CONTRIBUTING.md)
+for the development install, running the tests, the numerical-rigour norms
+the codebase follows, how CI runs, and how to report an issue.
+
+---
+
 ## Folder structure
 
 ```text
@@ -1035,11 +1066,14 @@ awesomePMC/
 │   └── missing_benchmark/  missing-data benchmark
 ├── scripts/                maintenance scripts
 ├── data/                   local data folders (UCI HAR cache, not versioned)
+├── apidoc/                 API reference site (MkDocs + mkdocstrings, local build only)
 ├── CHANGELOG.md
 ├── CITATION.cff
+├── CONTRIBUTING.md
 ├── LICENSE
 ├── README.md
 ├── REFERENCES.md
+├── mkdocs.yml
 ├── pyproject.toml
 └── requirements.txt
 ```

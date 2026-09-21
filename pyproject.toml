@@ -98,6 +98,15 @@ ml = [
     # Kept out of the runtime dependencies to keep the package light.
     "scikit-learn>=1.3",
 ]
+docs = [
+    # The API documentation site (FR-12): MkDocs + Material + mkdocstrings,
+    # built locally only (`mkdocs build --strict`); never deployed. Not read
+    # by the `min-versions` CI job (it parses `dependencies` and `ml` only).
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings>=0.26",
+    "mkdocstrings-python>=1.10",
+]
 
 [project.scripts]
 pmc = "pmcprg.pmc.cli:main"

@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — CONTRIBUTING, an API documentation site, and the state-labelling rule (FR-12)
+
+- **`CONTRIBUTING.md`** covers:
+  - the development install and how to run the tests;
+  - the numerical-rigour norms the suite follows: measured tolerances,
+    mpmath references, parity tables regenerated only by `scripts/parity/`,
+    deterministic `zlib.crc32` seeds, and bit-exact comparisons on macOS
+    arm64 only;
+  - how CI runs, how to report an issue, and how pull requests go through
+    the GitHub mirror.
+- **API documentation site**: MkDocs + Material + mkdocstrings, built
+  locally only, with 0 warnings under `mkdocs build --strict`.
+  - The sources are in `apidoc/` (`mkdocs.yml`, new `docs` extra).
+  - Pages cover `pmcprg.copulas`, `pmcprg.pmc`, `pmcprg.missing`,
+    `pmcprg.diagnostics`, installation and the state-labelling rule.
+  - A new `docs` CI job builds it in strict mode. Nothing is deployed.
+- **State labelling, documented** (`apidoc/state-labelling.md`, README).
+  - A state's index comes from the initial model, and ICE/SEM keep it.
+  - `init = "kmeans"` renumbers its arbitrary clusters to the declared states
+    with the Hungarian assignment of `_align_kmeans_labels`.
+- The docstrings of `clarke_test` and `comparison_matrix` had prose inside
+  `Parameters`, which a strict docstring parser misreads. It moved to
+  `Notes`.
+
 ### Fixed — the two-parameter MLE depended on the scale of the weights (FR-11)
 
 - The joint fit of the two-parameter families (Student, BB1, BB6–BB8, …)

@@ -19,9 +19,6 @@ data/uci_har/*
 # Logs générés par les scripts
 logs/
 
-# Articles / manuscrits (non versionnés)
-docs/
-
 # VSCodium / VSCode
 copulasformm.code-workspace
 awesomePMC.code-workspace
@@ -150,3 +147,6 @@ note/*.out
 
 # Power-study output — regenerate with report/gof_power_study.py
 report/out/
+
+# Articles / manuscrits (non versionnés)
+docs/
