@@ -40,33 +40,38 @@ comonotone copula unless ψ_u = ψ_v = 1.
 
 The two two-parameter types
 ---------------------------
-As VineCopula does (families 104 and 204), one weight is fixed at 1 and the
-other is the free asymmetry parameter ``psi`` ∈ (0, 1]:
+As in VineCopula (families 104 and 204 — numbered the other way round, see
+below), one weight is fixed at 1 and the other is the free asymmetry
+parameter ``psi`` ∈ (0, 1]:
 
 * **Tawn type 1** (``CopulaTawn1``): ψ_u = 1, ψ_v = ψ —
-  ``ℓ = (1 − ψ) z + [w^θ + (ψ z)^θ]^{1/θ}``.
+  ``ℓ = (1 − ψ) z + [w^θ + (ψ z)^θ]^{1/θ}``; VineCopula's family **204**.
 * **Tawn type 2** (``CopulaTawn2``): ψ_u = ψ, ψ_v = 1 —
-  ``ℓ = (1 − ψ) w + [(ψ w)^θ + z^θ]^{1/θ}``.
+  ``ℓ = (1 − ψ) w + [(ψ w)^θ + z^θ]^{1/θ}``; VineCopula's family **104**.
 
 Type 2 is the transpose of type 1 at the same (θ, ψ):
 ``C₂(u, v) = C₁(v, u)`` (swapping u and v swaps w and z), so the two share
 τ(θ, ψ) and λ_U and differ only in the direction of the asymmetry.
 
-*Which ψ is fixed — how this was established.* VineCopula's C sources (no
-network access here, so this rests on recollection of the code, not on a
-fresh reading) evaluate ``C(u, v) = (uv)^{A(t)}`` with
-``t = ln v / ln(uv)`` — the **v**-share, the opposite of this module's t —
-and ``A(t) = (1 − β)t + (1 − α)(1 − t) + [(α(1 − t))^θ + (βt)^θ]^{1/θ}``,
-with type 1 setting α = 1 (β = ψ free) and type 2 setting β = 1 (α = ψ
-free). Rewriting in (w, z): ``ℓ = (1 − β) z + (1 − α) w + [(α w)^θ +
-(β z)^θ]^{1/θ}``, so α weights w (= u) and β weights z (= v): type 1 fixes
-the u-weight and frees the v-weight, type 2 the reverse — the assignment
-above. Because the two types are exact transposes, a reader whose source
-uses the other convention only has to swap the two class names; nothing
-else changes. The symmetric part of the claim (types 1 and 2 are the
-ψ₂ = 1 / ψ₁ = 1 restrictions, and transposes of each other) was checked
-numerically: τ agrees to 40 digits at (θ, ψ) = (3, 0.4), and the module
-tests check C₂(u, v) = C₁(v, u) to rounding.
+*Which ψ is fixed — measured against VineCopula (audit FR-11).* This
+module's type 1 fixes the u-weight, its type 2 the v-weight. VineCopula
+2.6.1 numbers them the other way round: its family 104 frees the
+**u**-weight (ψ_u = par2, ψ_v = 1) and 204 the v-weight — measured by
+``scripts/parity/gen_r_extra.R``, which compares each family's CDF with the
+textbook ℓ above under both assignments, and pinned by
+``pmcprg/tests/test_parity_extra.py``
+(``test_tawn_type_numbering_against_vinecopula``): ``CopulaTawn1`` at
+(θ, ψ) = (3, 0.4) is BiCopCDF(·, 204, 3, 0.4) to 1e-16, and
+``CopulaTawn2`` is family 104. (This paragraph used to claim VineCopula's
+assignment for this module's, from a recollection of its C sources that
+the measurement contradicts.) pyvinecopulib's three-parameter
+``BicopFamily.tawn`` takes ``[psi1, psi2, theta] = [ψ_u, ψ_v, θ]``, as
+:class:`CopulaTawn3` does. Because the two types are exact transposes, a
+model read from VineCopula maps family 104 to ``CopulaTawn2`` and 204 to
+``CopulaTawn1``; nothing else changes. The symmetric part (types 1 and 2
+are the ψ_u = 1 / ψ_v = 1 restrictions, and transposes of each other) was
+checked numerically: τ agrees to 40 digits at (θ, ψ) = (3, 0.4), and the
+module tests check C₂(u, v) = C₁(v, u) to rounding.
 
 The full three-parameter model (FR-9, round 5)
 ----------------------------------------------
@@ -292,7 +297,8 @@ References
   ch. 4 and ch. 6 (asymmetric Gumbel / Tawn model, EV-copula identities).
 * Schepsmeier, U., Stoeber, J., Brechmann, E. C., Graeler, B., Nagler, T. &
   Erhardt, T. (2018). *VineCopula: Statistical Inference of Vine Copulas*,
-  R package (families 104 and 204, Tawn types 1 and 2).
+  R package (families 104 and 204 — this module's types 2 and 1, in that
+  order).
 * Genest, C. & MacKay, J. (1986). The joy of copulas: bivariate
   distributions with uniform marginals. *The American Statistician* 40(4),
   280–283.

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — FR-11 parity, wave 1: the families only R has
+
+- **What.** Galambos, Hüsler–Reiss, t-EV, the three Tawn models, Plackett,
+  AMH, FGM, and A12 and A14 with their 90°/270° rotations. The references
+  are pyvinecopulib 1.0.0, VineCopula 2.6.1, copula 1.1-7, copBasic 2.2.16
+  and fCopulae 4052.86.
+  - The tables are generated offline (`scripts/parity/gen_r_extra.R`,
+    `gen_pyvinecopulib_extra.py`; 164 kB with provenance).
+  - An mpmath oracle recomputes every quantity from the textbook CDF alone,
+    so that no family rests on a single reference.
+  - `test_parity_extra.py` needs neither R nor pyvinecopulib, and without
+    mpmath its 96 table comparisons still run.
+- **Measured.** pmcprg agrees with mpmath to 4e-14 or better everywhere,
+  with two exceptions:
+  - the generic Brent `inv_h`, 2.5e-9 on h⁻¹ for Galambos, Hüsler–Reiss,
+    Plackett, AMH, FGM, A12 and A14;
+  - the `quad`-based τ of Galambos and Hüsler–Reiss, 1.8e-12.
+  The tests pass unchanged from the minimum versions (numpy 1.24,
+  scipy 1.10) to the current ones.
+- **Correction (documentation only).** pmcprg's `TAWN1` (ψ_u = 1) is
+  VineCopula's family **204** and `TAWN2` is **104**, the reverse of what
+  `tawn.py` said. Four references agree on this.
+- **Defects found in the references**, recorded in `scripts/parity/README.md`:
+  - fCopulae's default AMH density is wrong (e^y − 1 in place of e^y − θ);
+  - copula's spline τ for t-EV ignores ν and the sign of ρ;
+  - several densities lose all their digits in the corners.
+
 ---
 
 ## [1.3.1] - 2026-09-21
