@@ -701,6 +701,33 @@ class CopulaVirt:
         return float(np.clip(result, 0.0, 1.0))
 
     # ------------------------------------------------------------------
+    # Transpose — conditioning on the second argument (audit FR-11)
+    # ------------------------------------------------------------------
+    #: ``C(u, v) = C(v, u)``. True for every family except the 90°/270°
+    #: rotations and the Tawn models, which override :meth:`transposed`.
+    exchangeable: bool = True
+
+    def transposed(self) -> "CopulaVirt":
+        """The copula of (V, U) when (U, V) has this one: Cᵀ(u, v) = C(v, u).
+
+        The h-functions condition on the *first* argument; conditioning on
+        the second is conditioning on the first of the transpose:
+
+            ∂C/∂v (u, v) = P(U ≤ u | V = v) = ``transposed().conditional_cdf(u, v)``,
+
+        inverted in u by ``transposed().inv_h(w, v)``. ``self`` for an
+        exchangeable family. Checked for every registered family
+        (``pmcprg/tests/test_copula_transpose.py``), and against the h2 and
+        h⁻¹ of pyvinecopulib, VineCopula and R ``copula``
+        (``pmcprg/tests/test_parity_interior.py``).
+        """
+        if self.exchangeable:
+            return self
+        raise NotImplementedError(
+            f"{type(self).__name__} is not exchangeable and defines no transpose."
+        )
+
+    # ------------------------------------------------------------------
     # Inverse of the conditional CDF (Rosenblatt sampling step).
     #
     # Default: numerical inversion via Brent's method on h(v|u) = w. Subclasses

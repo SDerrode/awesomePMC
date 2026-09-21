@@ -304,6 +304,19 @@ class RotatedCopula(CopulaVirt):
         tail dependence, corners swapped)."""
         return 0.0, 0.0
 
+    #: Not exchangeable: c₉₀(u, v) = c(1 − u, v) ≠ c(1 − v, u) = c₉₀(v, u).
+    exchangeable = False
+
+    def transposed(self) -> 'RotatedCopula':
+        """The other rotation of the same base, at the same parameters.
+
+        Every base here is exchangeable, so c₉₀(u, v) = c(1 − u, v) =
+        c(v, 1 − u) = c₂₇₀(v, u): the transpose of a 90° rotation is the
+        270° rotation, and conversely (audit FR-11). Conditioning on the
+        second argument goes through it — :meth:`CopulaVirt.transposed`.
+        """
+        return _TRANSPOSE[type(self)](**dict(self.params))
+
 
 class RotatedCopula90(RotatedCopula):
     """90°-rotation formulas: C90(u,v) = v − C(1−u, v) (module docstring)."""
@@ -667,6 +680,16 @@ class SurvivalBB1270(RotatedCopula270):
         return FitResult(copula=cop, method='mle', tau_k=tau_k,
                          log_likelihood=log_lik, n_obs=base_fit.n_obs, uv=uv,
                          converged=base_fit.converged)
+
+
+# The 90°/270° twins of each base, for RotatedCopula.transposed.
+_TRANSPOSE: dict[type, type] = {}
+for _r90, _r270 in ((CopulaClayton90, CopulaClayton270), (CopulaGH90, CopulaGH270),
+                    (CopulaJoe90, CopulaJoe270), (CopulaBB190, CopulaBB1270),
+                    (CopulaA1290, CopulaA12270), (CopulaA1490, CopulaA14270),
+                    (SurvivalBB190, SurvivalBB1270)):
+    _TRANSPOSE[_r90], _TRANSPOSE[_r270] = _r270, _r90
+del _r90, _r270
 
 
 if __name__ == '__main__':

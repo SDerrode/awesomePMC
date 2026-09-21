@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — `BivariateLaw` conditioned on its right margin by swapping the copula's arguments (FR-11)
+
+- `conditional_cdf`, `conditional_pdf`, `sample_conditional` and the
+  left-given-right sampler with `which="right"` evaluated the copula with its
+  arguments swapped. That is right only for an exchangeable copula. For the
+  90°/270° rotations (14 registry entries) and the three Tawn models, they
+  returned the conditional law of the other side: P(U ≤ u | V = v) was off by
+  up to 0.46 (Joe), 0.42 (Clayton) and 0.19 (Gumbel). Clayton 90°, τ = −0.5,
+  at (0.3, 0.8): 0.601 instead of 0.535.
+- Found by the parity tests below. Checked independently against the closed
+  form ∂C90/∂v = 1 − ∂C0/∂b(1 − u, v): agreement 1e-16 after the fix, error
+  0.07–0.14 before, while `which="left"` was already right.
+- The fix adds `CopulaVirt.transposed()`, the copula of (V, U), and an
+  `exchangeable` flag:
+  - a 90° rotation returns the 270° rotation of the same base, and conversely;
+  - Tawn types 1 and 2 return each other;
+  - Tawn 3 returns itself with ψ_u and ψ_v swapped;
+  - an exchangeable copula returns itself, so its results are bit-identical.
+- The PMC/HMC inference and simulation condition on the previous observation
+  (the left argument) and were not affected. Every golden test is unchanged.
+
+### Added — interior parity with pyvinecopulib, VineCopula and R `copula` (FR-11, pilot)
+
+- **What.** `scripts/parity/` generates reference tables offline, from
+  pyvinecopulib 1.0.0, VineCopula 2.6.1 and copula 1.1-7:
+  - quantities: pdf, cdf, h1, h2, both h-inverses, τ(θ), λ_L and λ_U;
+  - families: Gaussian, Student and Frank, plus Clayton, Gumbel and Joe in
+    all four rotations;
+  - 60 parameter sets × 25 interior points.
+  The tables live in `pmcprg/tests/data/parity/` with their provenance.
+  `test_parity_interior.py` needs neither R nor pyvinecopulib.
+- **Conventions**, measured and written in `scripts/parity/README.md`:
+  - parameters: τ for pmcprg, and ρ, θ, ν for the references;
+  - VineCopula codes 23/24/26 and 33/34/36 take −θ;
+  - rotations: 90° reflects u, 270° reflects v;
+  - h1 = ∂C/∂u, h2 = ∂C/∂v, and the argument each inverse is taken in.
+- **Measured.** pmcprg agrees with every reference to 1e-13 or better
+  wherever the reference is accurate. Each remaining disagreement is traced
+  with mpmath:
+  - pyvinecopulib's Frank cdf/h near (1, 1);
+  - the numerical h-inverses of pyvinecopulib and VineCopula, up to 1.2e-10;
+  - VineCopula's interpolated Frank τ, 5.5e-4;
+  - copula's Frank h at θ = −30 and its symbolic rotated-Joe density, 1.5e-3;
+  - pmcprg's Gaussian CDF, 7e-11 relative, within the documented accuracy of
+    its quadrature.
+
 ---
 
 ## [1.3.0] - 2026-09-21

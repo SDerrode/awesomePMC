@@ -526,6 +526,9 @@ class _TawnBase(CopulaVirt):
     def __init__(self, **kwargs):
         super().__init__(class_name=self.__class__.__name__, params=kwargs)
 
+    #: Not exchangeable unless ψ_u = ψ_v; each member defines its transpose.
+    exchangeable = False
+
     @classmethod
     def reachable_tau_bounds(cls) -> tuple[float, float]:
         """``(EPS, τ(θ = 10⁶, ψ_u = ψ_v = 1))`` — the Gumbel cap, the largest
@@ -754,6 +757,11 @@ class _CopulaTawn(_TawnBase):
             # θ clamped: store the τ it realises (RB-10, as Galambos).
             self.params['tau_k'] = _tau_of(theta, pu, pv)
 
+    def transposed(self) -> '_CopulaTawn':
+        """The other type at the same (τ, ψ): C₂(u, v) = C₁(v, u) (module docstring)."""
+        twin = CopulaTawn2 if self._FIXED_U else CopulaTawn1
+        return twin(**dict(self.params))
+
 
 class CopulaTawn1(_CopulaTawn):
     """Tawn type 1: ψ_u = 1, ψ_v = ψ — ``ℓ = (1 − ψ) z + [w^θ + (ψ z)^θ]^{1/θ}``.
@@ -955,6 +963,12 @@ class CopulaTawn3(_TawnBase):
         if theta >= _THETA_HI:
             # θ clamped: store the τ it realises (RB-10, as Galambos).
             self.params['tau_k'] = _tau_of(theta, pu, pv)
+
+    def transposed(self) -> 'CopulaTawn3':
+        """The same model with the two weights swapped: swapping u and v swaps
+        w = −ln u and z = −ln v in ℓ (module docstring)."""
+        return CopulaTawn3(**{**self.params, 'psi_u': self.params['psi_v'],
+                              'psi_v': self.params['psi_u']})
 
 
 if __name__ == '__main__':

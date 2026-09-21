@@ -254,34 +254,49 @@ class BivariateLaw:
             raise ValueError("which must be 'left' or 'right'.")
         return u_obs, u_cond, lf
 
+    def _conditioning_copula(self, which: str):
+        """The copula whose *first* argument is the observed side.
+
+        The copula itself for ``which='left'``; for ``which='right'`` its
+        transpose Cᵀ(u, v) = C(v, u) (:meth:`CopulaVirt.transposed`), so that
+        h(v | u) = ∂C/∂u of the transpose is ∂C/∂v of the copula. The two are
+        the same object for an exchangeable family. Swapping the arguments
+        instead, as before, gave the conditional law of the *other* side for
+        the 90°/270° rotations and the Tawn models (audit FR-11: Clayton
+        90°, τ = −0.5, P(U ≤ 0.3 | V = 0.8) read 0.601 for 0.535).
+        """
+        return self.copula if which == "left" else self.copula.transposed()
+
     def conditional_log_pdf(
         self, y_cond: float, y_obs: float, which: str = "left"
     ) -> float:
-        """log p(y_cond | y_obs)  =  log f_cond(y_cond) + log c(u_obs, u_cond).
+        """log p(y_cond | y_obs)  =  log f_cond(y_cond) + log c(u_left, u_right).
 
         which='left'  → condition on left  margin value, evaluate for right
         which='right' → condition on right margin value, evaluate for left
         """
         u_obs, u_cond, lf = self._copula_uvs(y_cond, y_obs, which)
-        lc = np.log(max(float(self.copula.pdf(np.array([u_obs, u_cond]))), EPS))
+        cop = self._conditioning_copula(which)
+        lc = np.log(max(float(cop.pdf(np.array([u_obs, u_cond]))), EPS))
         return float(lf + lc)
 
     def conditional_pdf(
         self, y_cond: float, y_obs: float, which: str = "left"
     ) -> float:
-        """p(y_cond | y_obs)  =  f_cond(y_cond) · c(u_obs, u_cond)."""
+        """p(y_cond | y_obs)  =  f_cond(y_cond) · c(u_left, u_right)."""
         return float(np.exp(self.conditional_log_pdf(y_cond, y_obs, which)))
 
     def conditional_cdf(
         self, y_cond: float, y_obs: float, which: str = "left"
     ) -> float:
-        """P(Y_cond ≤ y_cond | Y_obs = y_obs)  =  h(u_cond | u_obs).
+        """P(Y_cond ≤ y_cond | Y_obs = y_obs).
 
-        Uses the h-function h(v|u) = ∂C(u,v)/∂u provided by the copula.
-        Valid for all symmetric copulas implemented here.
+        ∂C/∂u at (u_obs, u_cond) — the copula's h-function ``conditional_cdf``
+        — when the left margin is observed; ∂C/∂v at (u_cond, u_obs), the
+        h-function of the transposed copula, when the right one is.
         """
         u_obs, u_cond, _ = self._copula_uvs(y_cond, y_obs, which)
-        return float(self.copula.conditional_cdf(u_cond, u_obs))
+        return float(self._conditioning_copula(which).conditional_cdf(u_cond, u_obs))
 
     def conditional_law(self, y_obs: float, which: str = "left") -> ConditionalLaw:
         """Return a frozen conditional distribution p(Y_cond | Y_obs = y_obs).
@@ -337,7 +352,7 @@ class BivariateLaw:
             EPS, ONE_MINUS_EPS,
         ))
         ws = self._rng.uniform(EPS, ONE_MINUS_EPS, n)
-        v  = self.copula.inv_h_array(ws, np.full(n, u_obs))
+        v  = self._conditioning_copula(which).inv_h_array(ws, np.full(n, u_obs))
         return np.asarray(cond_margin["dist"].ppf(v, *cond_margin["params"]),
                           dtype=float)
 
@@ -373,15 +388,16 @@ class BivariateLaw:
     def _sample_left_given_right(self, y_right: float) -> float:
         """Sample Y_left | Y_right = y_right via Rosenblatt inversion.
 
-        Valid for symmetric copulas, where ``c(u, v) = c(v, u)`` and the
-        conditional CDF satisfies ``h(u | v) = h(v | u)`` after the
-        argument swap. All copulas in this package are symmetric.
+        The inverse h-function of the transposed copula, which conditions on
+        the right argument (:meth:`_conditioning_copula`) — the copula itself
+        for an exchangeable family, but not for the 90°/270° rotations and
+        the Tawn models.
         """
         u_right = minmaxEPS(
             self.right_margin["dist"].cdf(y_right, *self.right_margin["params"])
         )
         w = float(self._rng.uniform(EPS, ONE_MINUS_EPS))
-        v = float(self.copula.inv_h(w, u_right))
+        v = float(self._conditioning_copula("right").inv_h(w, u_right))
         return float(
             self.left_margin["dist"].ppf(v, *self.left_margin["params"])
         )
