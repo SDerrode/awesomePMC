@@ -129,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed — `fit(method='tau')` of the multi-parameter families is itau (FR-12)
 
+- For the three-parameter Tawn, the profile over (ψ_u, ψ_v) at τ̂ is a
+  Nelder–Mead search, started from an explicit simplex inside the box.
+  scipy's default simplex is clipped onto a bound when the start sits on one,
+  and before scipy 1.11 that collapses it. The minimum-versions CI job
+  (scipy 1.10) caught this before release: the search stayed at the start,
+  Gumbel's corner (1, 1), with log-likelihood 176.1 against 214.6. It now
+  reaches the same optimum, to the digits shown, under scipy 1.10 and 1.18.
 - **Before.**
   - Student, BB1, BB1's rotations and survival, BB6, BB7, BB8, Tawn 1/2/3
     and t-EV logged a warning and ran the joint MLE. The result was

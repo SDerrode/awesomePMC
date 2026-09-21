@@ -156,8 +156,11 @@ def test_zero_one_weights_are_the_fit_on_the_subset_bit_for_bit(cls, kw, method)
 # 1.7e-15 ('tau'), 1.5e-11 ('mle', Brent on the Σw-normalised objective); two
 # parameters 1.8e-10 (the profile of itau), 9.7e-7 (the joint MLE, along the
 # flat direction ν of the likelihood). ℓ(c·w)/c against ℓ(w): 6.1e-13
-# relative (BB1, c = 2^-20).
-TOL_SCALE = {("tau", 1): 1e-14, ("mle", 1): 3e-11, ("tau", 2): 1e-8, ("mle", 2): 1e-5}
+# relative (BB1, c = 2^-20). The one-parameter 'mle' is a Brent search whose
+# objective differs by rounding under c: a flipped comparison changes its
+# path, so the result moves by up to its xatol in principle — measured
+# 1.5e-11 on macOS arm64, 3.95e-11 on the Linux runners (Clayton, c = 1e-3).
+TOL_SCALE = {("tau", 1): 1e-14, ("mle", 1): 1e-9, ("tau", 2): 1e-8, ("mle", 2): 1e-5}
 TOL_SCALE_LOGLIK_REL = 3e-12
 
 

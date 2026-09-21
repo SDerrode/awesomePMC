@@ -1390,8 +1390,25 @@ def _profile_extras(cls, entry, uv: np.ndarray, weights, tau: float) -> Weighted
         xs = [x]
     else:
         box = [(float(lo), float(hi)) for lo, hi, _ in boxes]
-        res = minimize(neg_ll, np.asarray(x0), method="Nelder-Mead", bounds=box,
-                       options={"xatol": _PROFILE_XATOL, "fatol": 1e-12, "maxiter": 4000})
+        # An explicit initial simplex inside the box. scipy's own (x0 plus 5 %
+        # per coordinate) is clipped onto a bound when x0 sits on or next to
+        # it, and before scipy 1.11 that collapses the simplex: from Tawn3's
+        # start (ψ_u, ψ_v) = (1, 1) the search never left that corner under
+        # scipy 1.10 (log-likelihood 176.1 against 214.6 at the profile
+        # optimum; minimum-versions CI job). Each vertex steps 10 % of its
+        # coordinate's range towards the interior.
+        lo_b = np.array([b[0] for b in box])
+        hi_b = np.array([b[1] for b in box])
+        span = hi_b - lo_b
+        v0 = np.clip(np.asarray(x0, dtype=float), lo_b + 0.1 * span, hi_b - 0.1 * span)
+        simplex = [v0]
+        for k in range(v0.size):
+            v = v0.copy()
+            v[k] += 0.1 * span[k] if v0[k] + 0.1 * span[k] <= hi_b[k] else -0.1 * span[k]
+            simplex.append(v)
+        res = minimize(neg_ll, v0, method="Nelder-Mead", bounds=box,
+                       options={"xatol": _PROFILE_XATOL, "fatol": 1e-12, "maxiter": 4000,
+                                "initial_simplex": np.array(simplex)})
         xs = [float(np.clip(x, lo, hi)) for x, (lo, hi) in zip(res.x, box)]
         ok = bool(res.success) and bool(res.fun < _OPT_FAIL_PENALTY)
         msg = f"profile MLE of {', '.join(names)} at τ = {tau:.6g}: Nelder–Mead, {res.message}"

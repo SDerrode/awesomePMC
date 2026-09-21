@@ -788,8 +788,11 @@ def test_selection_penalties_match_vinecopula_parameter_counts():
 # are the unweighted fit of the kept rows (bit for bit,
 # ``test_fr12_weighted_fit.py``), whose one-parameter search stops at Brent's
 # default ``xatol`` 1e-5 and whose Student/BB1 optimisers are their own:
-# measured 9.3e-10 nat below the polished maximum at most (Clayton 90°, unit).
+# measured 9.3e-10 nat below the polished maximum at most (Clayton 90°, unit);
+# Student under scipy < 1.17 (its t quantile, and L-BFGS-B before its C port):
+# 5.96e-9 on the Linux minimum-versions job (scipy 1.10), below 5e-9 on macOS.
 SHORTFALL_UNWEIGHTED_PATH = 5e-9
+SHORTFALL_UNWEIGHTED_PATH_STUDENT = 3e-8 if _SCIPY < (1, 17) else SHORTFALL_UNWEIGHTED_PATH
 
 # itau of Student: ν by a Brent search in 1/ν at ρ(τ̂) (``xatol`` 1e-6) — a
 # profile maximum, as pyvinecopulib's itau finds it. Measured against
@@ -822,7 +825,8 @@ def test_public_weighted_mle_is_the_engine(dataset, scheme):
         # Unit or {0, 1} weights: the unweighted fit of the kept rows.
         assert r.weights is None and r.n_obs == int(np.count_nonzero(w))
         best = _optimum(entry, u, v, w, [engine, params])
-        assert 0.0 <= best - ll <= SHORTFALL_UNWEIGHTED_PATH, best - ll
+        tol = SHORTFALL_UNWEIGHTED_PATH_STUDENT if dataset == "student" else SHORTFALL_UNWEIGHTED_PATH
+        assert 0.0 <= best - ll <= tol, best - ll
 
 
 @pytest.mark.parametrize("dataset", list(_weighted_data()))
