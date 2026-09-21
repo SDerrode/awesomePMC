@@ -90,7 +90,10 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import mpmath as mp
+try:                              # a dev dependency: the minimum-versions CI job
+    import mpmath as mp           # installs the runtime ones only, and the table
+except ImportError:               # comparisons must still run there
+    mp = None
 import numpy as np
 import pytest
 
@@ -670,6 +673,7 @@ LIMITED_PARAMS = [(e, q) for e in REFERENCE_LIMITED for q in e.quantities]
          f"{'all' if e.pars is None else e.pars[0][0]}-{q}" for e, q in LIMITED_PARAMS])
 def test_reference_limited_entries_are_the_reference(entry, q):
     """At the worst point of each entry, mpmath sides with pmcprg, not with the reference."""
+    pytest.importorskip("mpmath")
     err, key, k = _worst(entry, q)
     assert key is not None
     # Still needed: the reference is off by more than the default tolerance
@@ -706,6 +710,7 @@ def test_gaussian_cdf_gap_is_pmcprg_quadrature():
     references use, reaches 10⁻¹⁶. Measured at the worst point: pmcprg
     1.15e-14 (7.1e-11 relative), each reference ≤ 1.1e-16.
     """
+    pytest.importorskip("mpmath")
     worst = (-1.0, None, None)
     for key in CASE_KEYS:
         if key[0] != "gaussian":
