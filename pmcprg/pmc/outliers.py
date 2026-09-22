@@ -76,6 +76,12 @@ that underflows keeps its ratio).
   margins' own ``sf`` without a copula; 1 − h with one), so p-values in the
   upper tail are not lost to cancellation for the margin-only variants; for
   the copula variants 1 − h resolves p-values down to ~1e-15.
+* **Empty states** — a state with an all-zero row of p (ICE and SEM leave
+  one when a state loses every observation, :mod:`pmcprg.pmc.inference`)
+  has no transition law, T_i· = 0/0; its message is 0 and its T is taken as
+  0 (log −∞): the results are those of the model without the state (8.9e-16
+  measured). As NaN, 0 · NaN made every PIT after row 1 NaN and nothing was
+  flagged.
 * **Non-ignorable missingness** (``model.missingness``) — the filter is given
   (y_obs, m) as in :mod:`pmcprg.pmc.gaps`, and so is the PIT: with e_n(j) the
   factor of the observed mask value m_n = 0, P(Y_n ≤ y | past, m_1:n) =
@@ -131,6 +137,17 @@ cell): on clean ``pmc_gauss_k2`` series the false-flag rate is 1.27 per
 1000 with gating and 0.97 without (0.98 for both on ``hmc_in_gauss_k2``);
 with 5 % of +6 sd spikes it is 1.26 with gating and 2.26 without, and the
 false flags on the row right after a spike drop from 11 to 1.
+Without gating, a run of erroneous readings is judged conditionally on its
+own first value: under a strongly dependent copula the second reading of a
+plateau is *not* surprising given the first. Measured on the Intel Lab
+battery failures (``report/erroneous_data/intel_lab``): the non-sequential
+recall stops near 0.5 because every missed row follows another failing
+reading, whereas gating flags them all. This is the model's answer, not a
+numerical artefact, so use ``sequential=True`` for detection. One
+approximation does enter at the extreme: copula arguments are clipped to
+[EPS, 1 − EPS], so two consecutive readings both beyond F⁻¹(1 − EPS) are
+evaluated at the clipped corner (Gauss, τ = 0.99, 50 after 50 on N(0, 1)
+margins: PIT 0.525, where the exact copula gives about 0.65).
 With ``"bh"`` the threshold depends on all the p-values, which depend
 on the gating: the gated filter is rerun from the Bonferroni threshold with
 the BH threshold of its p-values until the threshold repeats (at most
@@ -475,6 +492,20 @@ def _margin_cdf_sf(model: PMCModel, y: np.ndarray):
     return F, S
 
 
+def _log_x_transition(model: PMCModel, lf: np.ndarray) -> np.ndarray:
+    """log T_ij(y) = log P(x_n = j | x_{n−1} = i, y_{n−1} = y) at the rows of lf.
+
+    :func:`pmcprg.pmc.gaps._x_transition` with its NaN set to −∞: the row
+    of an empty state (all-zero row of p, 0/0) and, for pair margins, a row
+    whose densities p_ik f_ik(y) all vanish. The filter gives such a state
+    probability 0, and 0 · NaN would turn every PIT after it into NaN
+    (module docstring, "Empty states").
+    """
+    T = np.array(_x_transition(model, lf, log=True))
+    T[np.isnan(T)] = -np.inf
+    return T
+
+
 def _h(cop, v: np.ndarray, u: np.ndarray) -> np.ndarray:
     """h(v | u) = ``cop.conditional_cdf(v, u)`` elementwise (broadcast)."""
     v, u = np.broadcast_arrays(np.asarray(v, dtype=float), np.asarray(u, dtype=float))
@@ -509,7 +540,7 @@ class _Grid:
         self.G = grid.G
         self.lw = np.log(grid.omega)
         self.lf, self.F = _margin_eval(model, grid.nodes, log=True)          # (G, K, K)
-        self.logT = np.array(_x_transition(model, self.lf, log=True))       # (G, K, K)
+        self.logT = _log_x_transition(model, self.lf)                        # (G, K, K)
         self._Q = None
         self.model = model
 
@@ -563,7 +594,7 @@ class _Filter:
         if N > 1:
             self.logW = _log_kernel(model, self.lf[:-1], _take(self.Fc, slice(0, -1)),
                                     self.lf[1:], _take(self.Fc, slice(1, None)))
-            self.logT = np.array(_x_transition(model, self.lf[:-1], log=True))
+            self.logT = _log_x_transition(model, self.lf[:-1])
             # K_ij(y_n | y_{n−1}) and its complement for every observed pair.
             self.Kc = np.full((N - 1, K, K), np.nan)
             self.Ks = np.full((N - 1, K, K), np.nan)
@@ -681,8 +712,7 @@ class _Filter:
         rep = np.zeros(G, dtype=int) + (n - 1)
         ker = _log_kernel(self.model, self.lf[rep], _take(self.Fc, rep), g.lf, g.F)  # (G, K, K)
         ker = ker.transpose(1, 2, 0)[None] + g.lw                             # (1, K, K, G)
-        E, _ = _normalise_blocks(ker, _x_transition(self.model, self.lf[n - 1:n], log=True),
-                                 log=True)
+        E, _ = _normalise_blocks(ker, _log_x_transition(self.model, self.lf[n - 1:n]), log=True)
         return E[0] + self._ev(n, True), True
 
     def _marginal(self, la: np.ndarray, aug: bool) -> np.ndarray:

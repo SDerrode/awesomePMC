@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — an empty state gave NaN in the one-step PIT and hid every outlier
+
+- When a row of the prior p is all zero (a state that ICE or SEM emptied,
+  which both can do: see the degenerate-state WARNING), its transition row is
+  0/0. `predictive_pit` then returned NaN for every row after the first, and
+  `flag_outliers` flagged nothing, not even an 8-sd spike. The forecasting
+  study found it (199 NaN PITs of 200).
+- The empty row is now −∞ in log space (`inference._log_transition_weights`)
+  and in the PIT filter (`outliers`). An empty state carries zero
+  probability: results equal the model with that state deleted to 9e-16, for
+  PMC and PMC-IN (state and pair margins) and HMC, with and without missing
+  rows.
+- Models without an empty state are bit-identical.
+- `outliers` documents that without gating a run of erroneous readings is
+  judged given its own first value (a plateau is then plausible), and why
+  `sequential=True` is the mode for detection.
+
 ### Added — erroneous data: predictive PIT, outlier flags, flag-and-mask estimation (pilot)
 
 - **Why.** Missing values are integrated out exactly, but a wrong value,

@@ -89,6 +89,18 @@ Devijver (1985) normalization (Baum-Welch revisited):
     state) raises :class:`IncompatibleObservationError` in ``forward``, as
     Y[0] already did. The fast linear path is unchanged otherwise.
 
+  Empty states
+    A state i with π_i = 0 — an all-zero row and column of p. ICE leaves
+    one when the state's density underflows to 0.0 at every row (γ and ξ
+    are then exactly 0 there, and so is p̂ at the next M-step), SEM when a
+    posterior draw never visits it; both report it (``degenerate_states``,
+    π = 0). Such a state has α̂_n(i) = γ_n(i) = 0 at every n and changes
+    nothing else: forward, backward, classify and FFBS give the results of
+    the model without it, in linear and log space (to 8.9e-16 on α̂, γ and
+    the PIT of :mod:`pmcprg.pmc.outliers`, equal log-likelihoods:
+    ``test_empty_state_clip_corner.py``). Its row of log transition weights
+    is −∞, not log 0 − log 0 = NaN.
+
 Missing observations (NaN)
 --------------------------
 A row of Y holding a non-finite value (NaN, ±inf; for d > 1 any component)
@@ -497,12 +509,17 @@ def _log_transition_weights(
             _refuse_weights_with_gaps(model, "_log_transition_weights")
         Y = _fill_missing(Y, miss)
 
-    with np.errstate(divide="ignore"):
+    with np.errstate(divide="ignore", invalid="ignore"):
         if var.has_markov_prior:
             log_kernel = np.log(model.transition_A)                      # (K, K)
         else:
             p = model.prior_p
-            log_kernel = np.log(p) - np.log(p.sum(axis=1, keepdims=True))
+            rows = p.sum(axis=1, keepdims=True)
+            # An empty state (all-zero row of p, e.g. emptied by ICE/SEM) has
+            # no transition out of it: −∞, not log 0 − log 0 = NaN (and a
+            # RuntimeWarning). Its forward probability is 0, so any value
+            # works for the likelihood; −∞ keeps the pass NaN-free.
+            log_kernel = np.where(rows > 0.0, np.log(p) - np.log(rows), -np.inf)
         log_p = np.log(model.prior_p)
 
     if model.margin_structure == "pair":
