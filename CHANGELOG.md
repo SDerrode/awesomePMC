@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — erroneous data: predictive PIT, outlier flags, flag-and-mask estimation (pilot)
+
+- **Why.** Missing values are integrated out exactly, but a wrong value,
+  such as a spike or a sensor glitch, still enters the likelihood as if it
+  were true. On simulated data, 1 % of +4 sd spikes are enough for PMC's
+  ICE to turn a regime into a "spike state". Its clean-row classification
+  error then rises from 11.5 % to 44–46 %.
+- **What.** A new module, `pmcprg.pmc.outliers`, exported from
+  `pmcprg.pmc`:
+  - `predictive_pit` gives, for every observed row, PIT_n = P(Y_n ≤ y_n |
+    past), a two-sided p-value, a normal score and the log predictive
+    density. It is derived from the forward filter and the transition's
+    conditional CDFs. That is the margin CDF, or the copula h-function
+    h_ij(F_ji(y) | F_ij(y_{n−1})), weighted as in `precompute_weights`:
+    state or pair margins, and the division by D for the PMC variants.
+    Missing rows before n are integrated out through the grid message of
+    `gaps.py`. Scalar series only.
+  - `flag_outliers` flags a row when its p-value falls below α, per row,
+    with Bonferroni, or with Benjamini–Hochberg. With `sequential=True`, a
+    flagged row is integrated out of the filter of the rows after it
+    (innovation gating), so a spike does not also corrupt the prediction of
+    its neighbour.
+  - `pit_checks` runs a KS test on the PITs and Ljung–Box tests on the
+    normal scores and on their squares.
+  - `robust_estimate` fits, flags, sets the flagged rows to NaN and refits
+    from the initial model, until the mask is a fixed point. With
+    `missing_strategy = "available"` this is a trimmed ICE (or SEM). An
+    optional `initial_mask` takes a pre-screen.
+  - The docstrings give the formulas per variant, the multiplicity issue
+    and the design of the loop. The API page `apidoc/api/pmc.md` lists the
+    new functions.
+- **Measured, exactness** (`test_outliers.py`, 32 tests, each tolerance
+  quoted with its measured error):
+  - brute force over the state paths: HMC-IN 2e-16, Gaussian regimes 6e-16,
+    pair-margin PMC 4.5e-14;
+  - across gaps, the quadrature error of the grid: 1.6e-8 at G = 64,
+    1.1e-10 at G = 128;
+  - the Gaussian AR(1) closed form: 1.3e-10;
+  - the quadrature of the predictive density (Clayton, Clayton90, Frank):
+    1e-15;
+  - the filter equals `gap_posterior`'s to 6e-16, and its log-likelihood to
+    6e-14;
+  - the PIT of `forecast`'s quantiles is their level to 7e-15 (HMC-IN) and
+    1.3e-9 (PMC).
+- **Measured, calibration.** Under the true model the PITs are uniform and
+  independent. Over 20 series of 2000 rows per fixture, the pooled KS
+  p-values are 0.61, 0.99 and 0.65. The minimum over the 36 per-series KS
+  and Ljung–Box p-values in the test is 0.03.
+- **Measured, simulation** (`report/erroneous_data`: HMC-IN and PMC,
+  N = 2000, spikes of 4, 6 and 8 sd at 1 % and 5 %, 30 replicates per cell,
+  6 min):
+  - with the true model, spikes of 6 and 8 sd are all flagged, and 90–94 %
+    of those of 4 sd, at about α false flags per clean row;
+  - masking the flags brings the true model's clean-row error on PMC from
+    14–25 % back to 11.5–11.7 % (11.3 % without spikes);
+  - at 1 %, flag-and-mask reaches the oracle mask: biases within 0.02,
+    RMSE within 15 %, clean-row error 11.7 % on PMC. It takes 2 to 6 fits,
+    2 to 5 times the cost of one ICE;
+  - it breaks down when the spikes form a state: PMC at 5 %, and HMC-IN at
+    5 % of 6–8 sd. A Hampel `initial_mask` restores the oracle level at 6
+    and 8 sd in all 120 runs, but not for PMC at 5 % of 4 sd (3 of 30
+    runs);
+  - refits started from the previous fit merge the PMC regimes in 70 of 90
+    runs at 1 %, which is why every refit restarts from the initial model;
+  - a DPD re-estimate of τ on the raw fit's pairs changes τ by less than
+    0.01. The damage is in the states and the margins, not in the copula
+    fit;
+  - the cost of gating on clean PMC series is 1.27 false flags per 1000
+    against 0.97 without. Under 5 % of 6 sd spikes it halves them (1.26
+    against 2.26).
+- No existing function changes. The ICE/SEM goldens and the gap and
+  missingness suites pass unchanged.
+
 ---
 
 ## [1.4.0] - 2026-09-21

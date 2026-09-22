@@ -1,0 +1,13 @@
+{
+  "N": 2000,
+  "reps": 30,
+  "n_series": 420,
+  "jobs": 4,
+  "wall_seconds": 355.01144633400145,
+  "alpha": 0.001,
+  "machine": "Darwin arm64",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "scipy": "1.18.1",
+  "omp_num_threads": "1"
+}

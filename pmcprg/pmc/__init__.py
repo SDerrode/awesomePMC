@@ -35,6 +35,12 @@ StateMissingness, StateMarkovMissingness : non-ignorable missingness mechanisms
             config key ``missingness``.
 missingness_lr_test : likelihood-ratio test of state-dependent missingness
             (asymptotic χ² and parametric bootstrap).
+predictive_pit : one-step-ahead predictive PIT, p-values and normal scores
+            (erroneous observations, :mod:`pmcprg.pmc.outliers`).
+flag_outliers : flag the rows with a too-small predictive p-value; flagged
+            rows are gated out of the filter (innovation gating).
+pit_checks : uniformity and independence checks of a PIT sequence.
+robust_estimate : flag-and-mask ICE/SEM — fit, flag, mask as NaN, refit.
 ice       : unsupervised ICE parameter estimation (DerrodePieczynski_CSDA2013 §4 +
             DerrodePieczynski_SP2016 §3 GICE).
 sem       : unsupervised Stochastic-EM parameter estimation (sister of ICE).
@@ -63,6 +69,10 @@ from pmcprg.pmc.ice           import (
 )
 from pmcprg.pmc.sem           import SemResult, SemTrace, sem, sem_image
 from pmcprg.pmc.missingness_lr import MissingnessLRTest, missingness_lr_test
+from pmcprg.pmc.outliers      import (
+    OutlierFlags, PitChecks, PredictivePIT, RobustFit,
+    flag_outliers, pit_checks, predictive_pit, robust_estimate,
+)
 from pmcprg.pmc.peano         import (
     peano_path,
     image_to_signal,
@@ -104,6 +114,15 @@ __all__ = [
     "StateMarkovMissingness",
     "missingness_lr_test",
     "MissingnessLRTest",
+    # erroneous observations: predictive PIT, flags, flag-and-mask estimation
+    "predictive_pit",
+    "flag_outliers",
+    "pit_checks",
+    "robust_estimate",
+    "PredictivePIT",
+    "OutlierFlags",
+    "PitChecks",
+    "RobustFit",
     # unsupervised estimation
     "ice",
     "ice_image",

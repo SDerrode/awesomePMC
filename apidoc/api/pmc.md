@@ -68,6 +68,32 @@ itself carries evidence on the hidden states.
 
 ::: pmcprg.pmc.MissingnessLRTest
 
+## Erroneous observations: predictive PIT, flags, flag-and-mask estimation
+
+One-step-ahead predictive PIT of every observed row (exact per variant,
+missing rows integrated out), outlier flags with innovation gating and
+multiplicity corrections, calibration checks, and a flag-and-mask ICE/SEM
+that trims the flagged rows through the missing-data machinery. The
+formulas, the multiplicity discussion and the design of the robust loop are
+in the docstring of `pmcprg/pmc/outliers.py`; the simulation study is in
+`report/erroneous_data`.
+
+::: pmcprg.pmc.predictive_pit
+
+::: pmcprg.pmc.PredictivePIT
+
+::: pmcprg.pmc.flag_outliers
+
+::: pmcprg.pmc.OutlierFlags
+
+::: pmcprg.pmc.pit_checks
+
+::: pmcprg.pmc.PitChecks
+
+::: pmcprg.pmc.robust_estimate
+
+::: pmcprg.pmc.RobustFit
+
 ## ICE / SEM unsupervised estimation
 
 Both estimators share the same M-step; ICE uses the soft forward-backward
