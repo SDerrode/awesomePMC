@@ -1,0 +1,205 @@
+{
+ "leading_gaps": {
+  "fits_with_leading_gap": [],
+  "mote20_selection_fits_with_leading_gap": [
+   "pmc_pair K=3 (\u03c4 max 0.997, leading gap 1)",
+   "pmc_state K=3 (\u03c4 max 0.996, leading gap 1)",
+   "pmc_state K=2 (\u03c4 max 0.994, leading gap 1)",
+   "pmc_pair K=2 (\u03c4 max 0.994, leading gap 1)"
+  ]
+ },
+ "quantile_inconsistent_rows": {
+  "pmc_state_K2|raw": 6,
+  "pmc_state_K2|raw+gate": 6,
+  "pmc_state_K2|robust": 28,
+  "pmc_state_K2|robust+gate": 26
+ },
+ "quantile_inconsistent_rows_reference_nodes": {
+  "pmc_state_K2|raw": 6,
+  "pmc_state_K2|raw+gate": 6,
+  "pmc_state_K2|robust": 34,
+  "pmc_state_K2|robust+gate": 26,
+  "pmc_state_K2|true": 31
+ },
+ "quantile_check_stats": {
+  "n_grid_rows": 276726,
+  "q_check_max": 0.3756619844067825,
+  "q_check_p99": 0.10378811547984909,
+  "q_check_ref_max": 3.210945933677482,
+  "q_check_tail_max": 0.3545698129250693,
+  "q_check_tail_p99": 0.016677140985876544,
+  "q_check_tail_rows_above_0.05": 463,
+  "q_check_tail_rows_above_0.05_by_method": {
+   "pmc_pair_K3|hampel+gate": 2,
+   "pmc_pair_K3|raw": 58,
+   "pmc_pair_K3|raw+gate": 59,
+   "pmc_pair_K3|robust": 5,
+   "pmc_pair_K3|robust+gate": 5,
+   "pmc_state_K2|raw": 68,
+   "pmc_state_K2|raw+gate": 68,
+   "pmc_state_K2|robust": 97,
+   "pmc_state_K2|robust+gate": 92,
+   "pmc_state_K2|true": 9
+  }
+ },
+ "pmcprg_warnings": {
+  "other": {
+   "records": 289,
+   "task_steps": 32,
+   "max_value": null,
+   "steps": [
+    "fit",
+    "forecast"
+   ]
+  },
+  "quad_error": {
+   "records": 3710,
+   "task_steps": 131,
+   "max_value": 160.0,
+   "steps": [
+    "choose_nodes",
+    "classify",
+    "fit",
+    "forecast",
+    "quad_error gated",
+    "quad_error observed"
+   ]
+  },
+  "quantile_fallback": {
+   "records": 489,
+   "task_steps": 28,
+   "max_value": null,
+   "steps": [
+    "choose_nodes",
+    "forecast"
+   ]
+  }
+ },
+ "crps_quantile_vs_exact": {
+  "gaussian": {
+   "n": 468135,
+   "mean_rel_diff": 3.7409298167066247e-05,
+   "max_rel_diff": 0.0003036628052002386,
+   "rel_diff_of_mean": 3.450984695462589e-05
+  },
+  "hmc_in_mixture": {
+   "n": 342438,
+   "mean_rel_diff": 8.298970350852841e-05,
+   "max_rel_diff": 0.0021164674819841387,
+   "rel_diff_of_mean": 3.21674236069811e-05
+  },
+  "pmc_node_law_vs_200_quantiles": {
+   "n": 2832,
+   "mean_rel_diff": 0.0007392849962199574,
+   "max_rel_diff": 0.023199298231480862,
+   "rel_diff_of_mean": 0.00013558889564567003
+  }
+ },
+ "date": "2026-09-23 19:45",
+ "quick": false,
+ "jobs": 6,
+ "pmm_workers": 4,
+ "python": "3.14.7",
+ "numpy": "2.5.3",
+ "pandas": "3.0.5",
+ "machine": "arm64",
+ "system": "Darwin",
+ "data": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/data/timeseries",
+ "n_records": 1228446,
+ "n_errors": 0,
+ "errors": [],
+ "wall_s": 5555.2070082499995,
+ "sum_task_s": 22036.221427958968,
+ "pmm_sum_s": 7590.259432285035,
+ "settings": {
+  "ALPHA": 0.001,
+  "HAMPEL_HALF": 5,
+  "HAMPEL_T": 4.0,
+  "SPIKE_K": 6,
+  "PMM_RESTARTS": 4,
+  "PMM_SEED": 0,
+  "PMM_THEORY_N0": 500,
+  "FIX_N_TRAIN": 2000,
+  "FIX_N_TEST": 1000,
+  "FIX_H": 10,
+  "FIX_STEP": 10,
+  "FIX_RATES": [
+   0.0,
+   0.01,
+   0.05
+  ],
+  "FIX_REPS": 10,
+  "REAL_RATES": [
+   0.01,
+   0.05
+  ],
+  "REAL_SEEDS": 3,
+  "REAL_PMC_SEEDS": 1,
+  "CONTAMINATED_PMC_FORECAST": true,
+  "MOTE_ID": 20,
+  "MOTE_EPOCHS": 28800,
+  "QUAD_TOL_TAIL": 0.05,
+  "QUAD_TOL": 0.01,
+  "G_LADDER": [
+   64,
+   128,
+   256
+  ],
+  "QCOV": [
+   0.025,
+   0.1,
+   0.25,
+   0.5,
+   0.75,
+   0.9,
+   0.975
+  ]
+ },
+ "real": {
+  "aotizhongxin": {
+   "H": 24,
+   "step": 24,
+   "train_frac": 0.75,
+   "models": [
+    [
+     "pmc_pair",
+     3
+    ],
+    [
+     "hmc_in",
+     3
+    ]
+   ],
+   "label": "Beijing Aotizhongxin, ln PM2.5, 1 h"
+  },
+  "tsnh4": {
+   "H": 24,
+   "step": 12,
+   "train_frac": 0.75,
+   "models": [
+    [
+     "pmc_state",
+     2
+    ],
+    [
+     "hmc_in",
+     3
+    ]
+   ],
+   "label": "tsNH4 complete, ln NH4, 10 min"
+  },
+  "mote20": {
+   "H": 24,
+   "step": 60,
+   "train_frac": 0.75,
+   "models": [
+    [
+     "hmc_in",
+     3
+    ]
+   ],
+   "label": "Intel Lab mote 20, temperature \u00b0C, 30 s"
+  }
+ },
+ "n_quantile_levels_crps": 200
+}

@@ -9,12 +9,18 @@ pre-screen are those of ``report/erroneous_data``.
 
 Every task is a pure function of its spec (seeds fixed in the spec), so the
 results do not depend on the number of worker processes.
+
+pmcprg's WARNINGs are not printed by the tasks; they are collected with the
+step that raised them (``WarningLog``) and returned with the task's results,
+in particular the quadrature WARNING of ``pmcprg.pmc.gaps`` (``quad_error``
+above its limit) and the fallback of the missing-value quantiles.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import re
 import sys
 import time
 import zlib
@@ -32,7 +38,16 @@ for _p in (str(ROOT), str(ROOT / "report" / "real_series")):
 
 import rs_common as rc  # noqa: E402
 
-from pmcprg.pmc import PMCModel, classify, flag_outliers, forecast, ice, robust_estimate, simulate  # noqa: E402
+from pmcprg.pmc import (  # noqa: E402
+    PMCModel,
+    classify,
+    flag_outliers,
+    forecast,
+    gap_posterior,
+    ice,
+    robust_estimate,
+    simulate,
+)
 
 DEFAULT_DATA = rc.DEFAULT_DATA
 logger = logging.getLogger("forecasting")
@@ -91,6 +106,65 @@ FIX_RATES = (0.0, 0.01, 0.05)
 FIX_REPS = 10
 REAL_RATES = (0.01, 0.05)
 REAL_SEEDS = 3
+#: Seeds of the contaminated Aotizhongxin cases on which the copula PMC is fitted
+#: (every model with an exact filter runs on all REAL_SEEDS).
+REAL_PMC_SEEDS = 1
+#: False: the copula PMC fitted on contaminated Aotizhongxin is only fitted and
+#: its quadrature checked, not forecast (a forecast at G = 256 costs 9 s, about
+#: 70 min per case and seed).
+CONTAMINATED_PMC_FORECAST = True
+
+
+# ---------------------------------------------------------------------------
+# pmcprg WARNINGs, collected per task step
+# ---------------------------------------------------------------------------
+
+_QUAD_RE = re.compile(r"relative error ([0-9.eE+-]+) > ([0-9.eE+-]+) .*\((\d+) missing rows, gap_nodes = (\d+)\)")
+
+
+class WarningLog(logging.Handler):
+    """Collects the WARNINGs of the ``pmcprg`` loggers instead of printing them.
+
+    Each record is counted under (step, kind, template): ``step`` is the
+    current step of the task (``set_step``), ``kind`` is ``quad_error`` (the
+    WARNING of ``pmcprg.pmc.gaps`` when ``GapPosterior.quad_error`` exceeds
+    its limit; its value, limit, missing rows and G are parsed),
+    ``quantile_fallback`` (the monotone-CDF fallback of the missing-value
+    quantiles) or ``other``.
+    """
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.step = ""
+        self.items: dict = {}
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        kind = ("quad_error" if msg.startswith("Missing-data quadrature not converged") else
+                "quantile_fallback" if msg.startswith("Quantiles of the missing values") else "other")
+        key = (self.step, record.name, kind, str(record.msg)[:160])
+        it = self.items.setdefault(key, {"step": self.step, "logger": record.name, "kind": kind,
+                                         "template": str(record.msg)[:160], "count": 0, "example": msg[:300],
+                                         "max_value": np.nan, "limit": np.nan, "n_missing": np.nan,
+                                         "gap_nodes": np.nan})
+        it["count"] += 1
+        m = _QUAD_RE.search(msg) if kind == "quad_error" else None
+        if m and not (float(m.group(1)) <= it["max_value"]):
+            it.update(max_value=float(m.group(1)), limit=float(m.group(2)), n_missing=int(m.group(3)),
+                      gap_nodes=int(m.group(4)), example=msg[:300])
+
+    def take(self) -> list[dict]:
+        out = list(self.items.values())
+        self.items = {}
+        self.step = ""
+        return out
+
+
+WARNINGS = WarningLog()
+
+
+def set_step(label: str) -> None:
+    WARNINGS.step = label
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +372,57 @@ def crps_quantiles(y, qv) -> np.ndarray:
     return 2.0 * np.mean(((y < q).astype(float) - TAUS[None, :]) * (q - y), axis=1)
 
 
+#: Quantile levels requested from the grid (copula) models: the coverage levels.
+#: Their CRPS and PIT come from the node law (``node_law_scores``); the 200-level
+#: quantile CRPS costs ~30× more with pmcprg's quantile code (README, "Cost")
+#: and is computed at one origin per model for comparison.
+QCOV = (0.025, 0.10, 0.25, 0.5, 0.75, 0.90, 0.975)
+
+
+def _seg_sq(L, a, b):
+    """∫ over a segment of length L of g², g linear from a to b."""
+    return L * (a * a + a * b + b * b) / 3.0
+
+
+def node_law_scores(y: np.ndarray, nodes: np.ndarray, mass: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """CRPS and PIT of y under each row's node law, exactly for its piecewise-linear CDF.
+
+    Row k of (nodes, mass) is a discrete law (``Forecast.grid_nodes`` /
+    ``grid_mass``: the quadrature nodes of horizon k and their predictive
+    masses). Each node's mass is spread uniformly on its cell (between the
+    mid-points of the sorted nodes; half a spacing beyond the end nodes), so
+    the CDF F is piecewise linear, and CRPS = ∫ (F(x) − 1{x ≥ y})² dx is
+    integrated in closed form segment by segment. NaN y gives NaN.
+    """
+    H = nodes.shape[0]
+    crps, pit = np.full(H, np.nan), np.full(H, np.nan)
+    for k in range(H):
+        if not np.isfinite(y[k]):
+            continue
+        o = np.argsort(nodes[k])
+        x, m = nodes[k][o], np.clip(mass[k][o], 0.0, None)
+        m = m / m.sum()
+        b = np.empty(x.size + 1)
+        b[1:-1] = 0.5 * (x[1:] + x[:-1])
+        b[0], b[-1] = x[0] - 0.5 * (x[1] - x[0]), x[-1] + 0.5 * (x[-1] - x[-2])
+        F = np.r_[0.0, np.cumsum(m)]
+        F[-1] = 1.0
+        L = np.diff(b)
+        yk = float(y[k])
+        if yk <= b[0]:
+            crps[k], pit[k] = (b[0] - yk) + _seg_sq(L, 1 - F[:-1], 1 - F[1:]).sum(), 0.0
+            continue
+        if yk >= b[-1]:
+            crps[k], pit[k] = _seg_sq(L, F[:-1], F[1:]).sum() + (yk - b[-1]), 1.0
+            continue
+        j = int(np.searchsorted(b, yk, side="right")) - 1        # b[j] <= y < b[j+1]
+        Fy = F[j] + (F[j + 1] - F[j]) * ((yk - b[j]) / L[j] if L[j] > 0 else 0.0)
+        left = _seg_sq(L[:j], F[:j], F[1:j + 1]).sum() + _seg_sq(yk - b[j], F[j], Fy)
+        right = _seg_sq(b[j + 1] - yk, 1 - Fy, 1 - F[j + 1]) + _seg_sq(L[j + 1:], 1 - F[j + 1:-1], 1 - F[j + 2:]).sum()
+        crps[k], pit[k] = left + right, Fy
+    return crps, pit
+
+
 def gauss_quantiles(m, s) -> np.ndarray:
     z = ndtri(np.array(QLEVELS))
     return np.asarray(m, float)[:, None] + np.asarray(s, float)[:, None] * z[None, :]
@@ -407,9 +532,9 @@ def ar1_flags(Y: np.ndarray, par: dict, alpha: float = ALPHA) -> np.ndarray:
     from the last accepted row L (k = n − L; the stationary law for the first
     row), p = 2 min(Φ, 1 − Φ); a flagged row is treated as missing. This is
     ``flag_outliers`` on ``ar1_model(par)`` in exact arithmetic (checked in
-    ``run_forecasting.py --quick``). The closed form is used because pmcprg's
-    gap quadrature collapses when φ ≳ 0.998 (README, "Library problems"): a
-    flagged row is a missing row for the filter of the next ones.
+    ``run_forecasting.py --quick``). The closed form was introduced when
+    pmcprg's gap quadrature collapsed for φ ≳ 0.998 (README, P1, fixed since);
+    it is kept because it is exact and costs nothing.
     """
     from scipy.stats import norm
     mu, phi, s2 = par["mu"], par["phi"], par["sigma2"]
@@ -453,52 +578,154 @@ def ar1_robust(Y: np.ndarray, max_rounds: int = 10) -> tuple[dict, np.ndarray, i
     return par, mask, fits, bool(np.array_equal(f, mask))
 
 
-def quad_diff(model: PMCModel, Y: np.ndarray, origins, H: int, G: int, G_ref: int) -> float:
-    """Worst relative change of the forecasts (mean and sd, in units of the G_ref sd)
-    between G and G_ref quadrature nodes, at the first, middle and last origin;
-    inf when a predictive sd collapses (< 1e-3 of the series sd)."""
+def node_law_quantiles(nodes: np.ndarray, mass: np.ndarray, levels) -> np.ndarray:
+    """Quantiles of each row's node law, inverse of its piecewise-linear CDF (``node_law_scores``)."""
+    out = np.empty((nodes.shape[0], len(levels)))
+    for k in range(nodes.shape[0]):
+        o = np.argsort(nodes[k])
+        x, m = nodes[k][o], np.clip(mass[k][o], 0.0, None)
+        b = np.r_[x[0] - 0.5 * (x[1] - x[0]), 0.5 * (x[1:] + x[:-1]), x[-1] + 0.5 * (x[-1] - x[-2])]
+        F = np.r_[0.0, np.cumsum(m / m.sum())]
+        out[k] = np.interp(levels, F, b)
+    return out
+
+
+def quad_diff(model: PMCModel, Y: np.ndarray, origins, H: int, G: int, G_ref: int) -> tuple[float, float]:
+    """Convergence of the forecasts in the quadrature, at the first, middle and last origin.
+
+    Returns (mean/sd change, tail change): the largest change of the predictive
+    mean and sd between G and G_ref nodes, in units of the G_ref sd (inf when a
+    predictive sd collapses, < 1e-3 of the series sd); and the largest change of
+    the 2.5 / 97.5 % quantiles of the node law (the law the scores use,
+    ``node_law_scores``), in the same unit.
+    """
     sd_y = float(np.nanstd(Y))
-    worst = 0.0
+    worst, tail = 0.0, 0.0
     origins = list(origins)
     for o in sorted({origins[0], origins[len(origins) // 2], origins[-1]}):
         a = forecast(model, Y[:o], H, quantiles=(0.5,), gap_nodes=G)
         b = forecast(model, Y[:o], H, quantiles=(0.5,), gap_nodes=G_ref)
         if np.min(a.sd) < 1e-3 * sd_y or np.min(b.sd) < 1e-3 * sd_y:
-            return math.inf
+            return math.inf, math.inf
         worst = max(worst, float(np.max(np.abs(a.sd - b.sd) / b.sd)),
                     float(np.max(np.abs(a.mean - b.mean) / b.sd)))
-    return worst
+        qa = node_law_quantiles(np.asarray(a.grid_nodes), np.asarray(a.grid_mass), (0.025, 0.975))
+        qb = node_law_quantiles(np.asarray(b.grid_nodes), np.asarray(b.grid_mass), (0.025, 0.975))
+        tail = max(tail, float(np.max(np.abs(qa - qb) / b.sd[:, None])))
+    return worst, tail
+
+
+def quad_ratio(model: PMCModel, Y: np.ndarray, origins, H: int, G: int) -> float:
+    """Largest quad_error / WARNING limit of the forecast chains at the check origins of ``quad_diff``."""
+    origins = list(origins)
+    ratio = 0.0
+    for o in sorted({origins[0], origins[len(origins) // 2], origins[-1]}):
+        qe, lim = quad_error_of(model, np.r_[Y[:o], np.full(H, np.nan)], G)
+        ratio = max(ratio, qe / lim)
+    return ratio
 
 
 #: Relative tolerance of the quadrature convergence check.
 QUAD_TOL = 0.01
+#: Tolerance on the change of the node-law 2.5 / 97.5 % quantiles (the CRPS and
+#: the coverage are scored on the node law).
+QUAD_TOL_TAIL = 0.05
 #: Node counts tried in turn (the library default first; a forecast at 256
 #: nodes costs ~4× one at 64 for a K = 3 pair-margin PMC, 512 was too slow).
 G_LADDER = (64, 128, 256)
 
 
-def choose_nodes(model: PMCModel, Y: np.ndarray, origins, H: int) -> tuple[int, float, float]:
+def choose_nodes(model: PMCModel, Y: np.ndarray, origins, H: int) -> dict:
     """Quadrature nodes for the forecasts and the gating of a fitted model.
 
-    pmcprg integrates missing and future rows on a fixed grid of ``gap_nodes``
-    nodes (default 64, ``pmcprg.pmc.gaps``). With strong copula dependence the
-    conditional laws are narrower than the node spacing and the forecasts are
-    silently wrong (README, "Library problems"). Returns (G, check of G,
-    check of 64): the first G of G_LADDER whose forecasts change by less than
-    QUAD_TOL when the nodes are doubled (``quad_diff``); if none does, the
-    last G with the check of the step before it (flagged when > QUAD_TOL).
+    pmcprg integrates missing and future rows on grids of ``gap_nodes`` nodes
+    (default 64, ``pmcprg.pmc.gaps``). Before the local grids of pmcprg's P1
+    fix, strong copula dependence made the conditional laws narrower than the
+    node spacing and the forecasts were silently wrong (README, P1); this check
+    is kept as an independent convergence test. ``gap_nodes``: the first G of
+    G_LADDER whose predictive means and sds change by less than QUAD_TOL, and
+    whose node-law 2.5 / 97.5 % quantiles by less than QUAD_TOL_TAIL, of the
+    predictive sd when G is doubled (``quad_diff``), else the last G (flagged:
+    ``quad_check`` > QUAD_TOL or ``quad_check_tail`` > QUAD_TOL_TAIL). Also
+    recorded: the check at G = 64 (``quad_check_64``) and pmcprg's own diagnostic, quad_error / WARNING
+    limit of the forecast chains (``quad_ratio``, at G, and at 64). The ratio
+    is not required: it is a screen, not a bound (pmcprg's CHANGELOG), and on
+    the §4 Aotizhongxin model the forecasts at G = 64 are within 3e-4
+    predictive sd of G = 512 while some forecast chains exceed the limit.
     Checks are 0 for the exact variants (no grid).
     """
     from pmcprg.pmc.gaps import needs_grid
     if not needs_grid(model):
-        return 64, 0.0, 0.0
-    first = None
+        return {"gap_nodes": 64, "quad_check": 0.0, "quad_check_64": 0.0, "quad_check_tail": 0.0,
+                "quad_ratio": 0.0, "quad_ratio_64": 0.0}
+    out = {}
     for G, G2 in zip(G_LADDER[:-1], G_LADDER[1:]):
-        chk = quad_diff(model, Y, origins, H, G, G2)
-        first = chk if first is None else first
-        if chk <= QUAD_TOL:
-            return G, chk, first
-    return G_LADDER[-1], chk, first
+        chk, tail = quad_diff(model, Y, origins, H, G, G2)
+        if G == G_LADDER[0]:
+            out["quad_check_64"] = chk
+            out["quad_ratio_64"] = quad_ratio(model, Y, origins, H, G)
+        if chk <= QUAD_TOL and tail <= QUAD_TOL_TAIL:
+            break
+    else:
+        G = G_LADDER[-1]
+    out.update(gap_nodes=G, quad_check=chk, quad_check_tail=tail,
+               quad_ratio=out["quad_ratio_64"] if G == G_LADDER[0] else quad_ratio(model, Y, origins, H, G))
+    return out
+
+
+def quad_error_of(model: PMCModel, Y: np.ndarray, G: int) -> tuple[float, float]:
+    """(``GapPosterior.quad_error``, its WARNING limit) of a conditioning series.
+
+    NaN for the exact variants or a series without missing rows (no grid).
+    The limit is ``gaps.quad_warn_limit``: QUAD_WARN · √(number of runs of
+    missing rows).
+    """
+    from pmcprg.pmc.gaps import needs_grid, quad_warn_limit
+    miss = ~np.isfinite(Y)
+    if not needs_grid(model) or not miss.any():
+        return np.nan, np.nan
+    post = gap_posterior(model, Y, gap_nodes=G, xi=False)
+    return float(post.quad_error), float(quad_warn_limit(miss))
+
+
+def _node_median(nodes: np.ndarray, mass: np.ndarray) -> np.ndarray:
+    """Median of each row's discrete law (nodes, masses; nodes in any order)."""
+    o = np.argsort(nodes, axis=1)
+    n_s, m_s = np.take_along_axis(nodes, o, 1), np.take_along_axis(mass, o, 1)
+    cum = np.cumsum(m_s, axis=1) / m_s.sum(axis=1, keepdims=True)
+    idx = np.minimum((cum < 0.5).sum(axis=1), nodes.shape[1] - 1)
+    return n_s[np.arange(len(n_s)), idx]
+
+
+def node_median_check(fc, omega: np.ndarray, q50: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Consistency of the returned median with the forecast's own discrete law.
+
+    ``q_check``: distance, in predictive sd, of the returned median to the
+    median of the node law of each horizon, on that horizon's own quadrature
+    nodes and masses (``Forecast.grid_nodes`` / ``grid_mass``: the reference
+    grid or a local one). ``q_check_ref``: the same on the reference nodes,
+    density × quadrature weight ``omega`` (the check of the stopped run; with
+    local grids the reference nodes may not resolve a narrow law). pmcprg's
+    P3 returned quantiles far from that law; > 0.25 marks the row. ``q50``:
+    the returned medians.
+    """
+    sd = np.maximum(fc.sd, 1e-12)
+    own = np.abs(q50 - _node_median(np.asarray(fc.grid_nodes), np.asarray(fc.grid_mass))) / sd
+    dens = np.asarray(fc.density)
+    ref = np.abs(q50 - _node_median(np.broadcast_to(fc.nodes, dens.shape), dens * omega[None, :])) / sd
+    return own, ref
+
+
+def leading_gap(Y: np.ndarray) -> int:
+    """Number of missing rows at the start of Y (pmcprg's leading-gap problem, README)."""
+    fin = np.isfinite(np.asarray(Y, float))
+    return int(np.argmax(fin)) if fin.any() else len(fin)
+
+
+def max_diag_tau(model: PMCModel) -> float:
+    """Largest Kendall τ of the diagonal copulas c_ii (NaN without copulas)."""
+    taus = [float(c["tau"]) for c in model.raw.get("copulas", []) if c.get("i") == c.get("j") and "tau" in c]
+    return max(taus) if taus else np.nan
 
 
 def n_params(model: PMCModel) -> int:
@@ -529,30 +756,52 @@ def pmc_rows(method: str, model: PMCModel, Yc: np.ndarray, case: dict, extra_fn=
     if exact_mix:
         mus = np.array([float(model.margin(k)._frozen.mean()) for k in range(model.K)])
         sds = np.array([float(model.margin(k)._frozen.std()) for k in range(model.K)])
-    omega = reference_grid(model, gap_nodes).omega if needs_grid(model) else None
-    for o in case["origins"]:
-        fc = forecast(model, Yc[:o], H, quantiles=QLEVELS, gap_nodes=gap_nodes)
+    grid = needs_grid(model)
+    omega = reference_grid(model, gap_nodes).omega if grid else None
+    origins = list(case["origins"])
+    o_check = origins[len(origins) // 2]
+    for o in origins:
         fut = truth[o:o + H]
-        crps = None
-        if exact_mix and all(model.margin(k).dist_name == "norm" for k in range(model.K)):
-            # State-margin mixture of Gaussians: exact CRPS (the quantile one, kept
-            # in ``crps_q``, is checked against it).
-            crps = crps_gauss_mixture(np.where(np.isfinite(fut), fut, 0.0), fc.state_probs, mus, sds)
         extra = dict(extra_fn(o)) if extra_fn else {}
-        qcheck = np.zeros(H)
-        if omega is not None:
-            # Consistency of the returned quantiles with the forecast's own node law
-            # (density × quadrature weight, the law of its mean and sd): distance of
-            # the returned median to the node-law median, in predictive sd. pmcprg
-            # returns quantiles far from that law for some multimodal predictive laws
-            # (README, "Library problems", P3); > 0.25 marks the row.
-            mass = fc.density * omega[None, :]
-            cum = np.cumsum(mass, axis=1) / mass.sum(axis=1, keepdims=True)
-            med = np.array([fc.nodes[min(int(np.searchsorted(c, 0.5)), len(fc.nodes) - 1)] for c in cum])
-            qcheck = np.abs(fc.quantile_values[:, _QIDX[0.5]] - med) / np.maximum(fc.sd, 1e-12)
-        out = rows_for(method, o, fut, fc.mean, fc.sd, fc.quantile_values, crps, extra)
+        if not grid:
+            fc = forecast(model, Yc[:o], H, quantiles=QLEVELS, gap_nodes=gap_nodes)
+            crps = None
+            if exact_mix and all(model.margin(k).dist_name == "norm" for k in range(model.K)):
+                # State-margin mixture of Gaussians: exact CRPS (the quantile one, kept
+                # in ``crps_q``, is checked against it).
+                crps = crps_gauss_mixture(np.where(np.isfinite(fut), fut, 0.0), fc.state_probs, mus, sds)
+            rows += rows_for(method, o, fut, fc.mean, fc.sd, fc.quantile_values, crps, extra)
+            continue
+        # Grid (copula) models: the coverage levels only; CRPS and PIT of the node law
+        # (exact for its piecewise-linear CDF, ``node_law_scores``); at the middle origin
+        # the 200-level quantile CRPS too (``crps_q``), for comparison.
+        qs = QLEVELS if o == o_check else QCOV
+        fc = forecast(model, Yc[:o], H, quantiles=qs, gap_nodes=gap_nodes)
+        qv = np.full((H, len(QLEVELS)), np.nan)
+        for j, q in enumerate(qs):
+            qv[:, _QIDX[q]] = fc.quantile_values[:, j]
+        gn, gm = np.asarray(fc.grid_nodes), np.asarray(fc.grid_mass)
+        crps, pit = node_law_scores(fut, gn, gm)
+        # Consistency of the returned quantiles with the forecast's own node law
+        # (README, P3 — fixed in pmcprg; kept as a per-row check): the median
+        # (q_check) and the 2.5 / 97.5 % quantiles (q_check_tail), in predictive sd.
+        qcheck, qcheck_ref = node_median_check(fc, omega, qv[:, _QIDX[0.5]])
+        qn = node_law_quantiles(gn, gm, (0.025, 0.975))
+        qtail = np.max(np.abs(qv[:, [_QIDX[0.025], _QIDX[0.975]]] - qn), axis=1) / np.maximum(fc.sd, 1e-12)
+        out = rows_for(method, o, fut, fc.mean, fc.sd, qv, crps, extra)
         for r in out:
-            r["q_check"] = float(qcheck[r["h"] - 1])
+            k = r["h"] - 1
+            # Scores of the node law: PIT, coverage and 95 % width (the returned
+            # quantiles are only checked, q_check / q_check_tail).
+            r["pit"] = float(pit[k])
+            for lev, (lo, hi) in COVERAGE.items():
+                r[f"c{lev}"] = bool(lo <= pit[k] <= hi)
+            r["w95"] = float(qn[k, 1] - qn[k, 0])
+            if o != o_check:
+                r["crps_q"] = np.nan
+            r["q_check"] = float(qcheck[k])
+            r["q_check_ref"] = float(qcheck_ref[k])
+            r["q_check_tail"] = float(qtail[k])
         rows += out
     return rows
 
@@ -629,7 +878,12 @@ def mask_stats(mask: np.ndarray, case: dict, part: slice) -> dict:
 # ---------------------------------------------------------------------------
 
 def _quiet():
-    logging.getLogger("pmcprg").setLevel(logging.ERROR)
+    """pmcprg WARNINGs go to ``WARNINGS`` (collected, not printed)."""
+    lg = logging.getLogger("pmcprg")
+    lg.setLevel(logging.WARNING)
+    lg.propagate = False
+    if WARNINGS not in lg.handlers:
+        lg.addHandler(WARNINGS)
 
 
 def task_select(spec: dict) -> dict:
@@ -637,17 +891,21 @@ def task_select(spec: dict) -> dict:
     _quiet()
     case = build_case("mote20__clean", spec["data_dir"], spec["quick"])
     Ytr = case["Y"][:case["n_train"]]
+    fam = family(spec["kind"], spec["K"])
+    set_step(f"{fam}|select fit")
     t0 = time.perf_counter()
     model, trace = fit_kmeans(spec["kind"], spec["K"], Ytr)
     secs = time.perf_counter() - t0
+    set_step(f"{fam}|select classify")
     ll = float(classify(model, Ytr)[2])
     k = n_params(model)
     n_obs = int(np.isfinite(Ytr).sum())
     s = rc.model_summary(model)
-    G, chk, chk64 = choose_nodes(model, case["Y"], case["origins"], case["H"])
+    set_step(f"{fam}|select choose_nodes")
+    qd = choose_nodes(model, case["Y"], case["origins"], case["H"])
     return {"select": [{"series": "mote20", "kind": spec["kind"], "K": spec["K"], "ll": ll, "n_params": k,
                         "bic": -2 * ll + k * math.log(n_obs), "degenerate": degenerate(model, Ytr),
-                        "gap_nodes": G, "quad_check": chk, "quad_check_64": chk64,
+                        **qd, "lead_gap": leading_gap(Ytr), "max_diag_tau": max_diag_tau(model),
                         "min_margin_sd": float(rc.min_margin_sd(model)), "min_pi": float(np.min(model.stationary_pi)),
                         "mean_sorted": s["mean_sorted"], "sd_sorted": s["sd_sorted"], "copulas": s["copulas"],
                         "seconds": secs, "n_iter": len(trace.log_liks)}],
@@ -669,20 +927,31 @@ def _evaluate(case: dict, fam: str, fit: str, model: PMCModel, rows: list, fits:
     n_train = case["n_train"]
     Ytr = case["Y"][:n_train]
     ex = spike_extra(case)
-    G, chk, chk64 = choose_nodes(model, Y, case["origins"], case["H"])
+    set_step(f"{fam}|{fit} choose_nodes")
+    qd = choose_nodes(model, Y, case["origins"], case["H"])
+    G = qd["gap_nodes"]
     r = {"case": case["case"], "family": fam, "fit": fit, "seconds": secs,
-         "n_iter": len(trace.log_liks) if trace is not None else np.nan,
-         "gap_nodes": G, "quad_check": chk, "quad_check_64": chk64,
+         "n_iter": len(trace.log_liks) if trace is not None else np.nan, **qd,
+         "max_diag_tau": max_diag_tau(model), "lead_gap_fit": leading_gap(Ytr), "lead_gap_cond": leading_gap(Y),
          "min_pi": float(np.min(model.stationary_pi)), "min_margin_sd": float(rc.min_margin_sd(model)),
          "degenerate": degenerate(model, Ytr)}
     s = rc.model_summary(model)
     r.update({k: s.get(k, "") for k in ("pi_sorted", "mean_sorted", "sd_sorted", "stay_sorted", "copulas")})
+    if plain:
+        set_step(f"{fam}|{fit} quad_error observed")
+        r["quad_error_obs"], r["quad_limit_obs"] = quad_error_of(model, Y, G)
     if gated:
+        set_step(f"{fam}|{fit} gate")
         Yg, f = gate(model, Y, G)
         r.update({f"gate_train_{k}": v for k, v in mask_stats(f, case, slice(0, n_train)).items()})
         r.update({f"gate_test_{k}": v for k, v in mask_stats(f, case, slice(n_train, len(Y))).items()})
+        r["lead_gap_gated"] = leading_gap(Yg)
+        set_step(f"{fam}|{fit} quad_error gated")
+        r["quad_error_gated"], r["quad_limit_gated"] = quad_error_of(model, Yg, G)
+        set_step(f"{fam}|{fit}+gate forecast")
         rows += pmc_rows(f"{fam}|{fit}+gate", model, Yg, case, ex, G)
     if plain:
+        set_step(f"{fam}|{plain_name or fit} forecast")
         rows += pmc_rows(f"{fam}|{plain_name or fit}", model, Y, case, ex, G)
     if extra:
         r.update(extra)
@@ -692,7 +961,8 @@ def _evaluate(case: dict, fam: str, fit: str, model: PMCModel, rows: list, fits:
 def _robust_extra(rf, case: dict, init_mask=None) -> dict:
     n_train, N = case["n_train"], len(case["Y"])
     pad = np.zeros(N - n_train, bool)
-    out = {"n_fits": rf.n_fits, "converged": rf.converged,
+    Ym = np.where(rf.mask, np.nan, case["Y"][:n_train])
+    out = {"n_fits": rf.n_fits, "converged": rf.converged, "lead_gap_fit": leading_gap(Ym),
            **{f"mask_{k}": v for k, v in mask_stats(np.r_[rf.mask, pad], case, slice(0, n_train)).items()}}
     if init_mask is not None:
         out.update({f"prescreen_{k}": v for k, v in
@@ -722,24 +992,29 @@ def task_pmc(spec: dict) -> dict:
     fam = family(kind, K)
     Ytr = case["Y"][:case["n_train"]]
     rows, fits = [], []
+    fcst = spec.get("forecast", True)   # False: fits and quadrature checks only (P4)
     t0 = time.perf_counter()
+    set_step(f"{fam}|raw fit")
     if spec.get("model_raw") is not None:
         raw, trace = PMCModel.from_dict(spec["model_raw"]), None
     else:
         raw, trace = fit_kmeans(kind, K, Ytr)
     _evaluate(case, fam, "raw", raw, rows, fits, trace=trace, secs=time.perf_counter() - t0,
-              extra={"ll_train": float(classify(raw, Ytr)[2])})
+              extra={"ll_train": float(classify(raw, Ytr)[2])}, plain=fcst, gated=fcst)
     variants = [("robust", None)]
     if spec.get("hampel", False):
         variants.append(("hampel", hampel_nan(Ytr)))
     for name, init_mask in variants:
         t0 = time.perf_counter()
+        set_step(f"{fam}|{name} fit")
         rf = robust_estimate(rc.initial_model(kind, K, Ytr), Ytr, kmeans_cfg(kind),
                              flag_cfg={"alpha": ALPHA}, initial_mask=init_mask)
         _evaluate(case, fam, name, rf.model, rows, fits, trace=rf.trace, secs=time.perf_counter() - t0,
-                  extra=_robust_extra(rf, case, init_mask), plain=(name == "robust"))
+                  extra=_robust_extra(rf, case, init_mask), plain=fcst and (name == "robust"), gated=fcst)
     df = pd.DataFrame(rows)
     df.insert(0, "case", case["case"])
+    for f in fits:
+        f["forecast"] = fcst
     return {"records": df, "fits": fits}
 
 
@@ -797,14 +1072,17 @@ def task_fixture(spec: dict) -> dict:
     rows, fits = [], []
     _evaluate(case, fam, "true", model, rows, fits)
     t0 = time.perf_counter()
+    set_step(f"{fam}|clean fit")
     cl, trc = ice(model, Y0[:n_train], cfg)
     _evaluate(case, fam, "clean", cl, rows, fits, trace=trc, secs=time.perf_counter() - t0,
               gated=False, Y_cond=Y0)
     t0 = time.perf_counter()
+    set_step(f"{fam}|raw fit")
     raw, tr = ice(model, Ytr, cfg)
     _evaluate(case, fam, "raw", raw, rows, fits, trace=tr, secs=time.perf_counter() - t0)
     for nm, init_mask in (("robust", None), ("hampel", hampel_nan(Ytr))):
         t0 = time.perf_counter()
+        set_step(f"{fam}|{nm} fit")
         rf = robust_estimate(model, Ytr, cfg, flag_cfg={"alpha": ALPHA}, initial_mask=init_mask)
         _evaluate(case, fam, nm, rf.model, rows, fits, trace=rf.trace, secs=time.perf_counter() - t0,
                   extra=_robust_extra(rf, case, init_mask), plain=(nm == "robust"))
@@ -846,9 +1124,12 @@ TASKS = {"select": task_select, "pmc": task_pmc, "baselines": task_baselines, "f
 
 def run_task(spec: dict):
     t0 = time.perf_counter()
+    _quiet()
+    WARNINGS.take()
     try:
         res = TASKS[spec["task"]](spec)
     except Exception as exc:  # recorded; the campaign goes on
         import traceback
         res = {"error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc()[-2000:]}
+    res["warnings"] = [{"task": spec["task"], "case": spec.get("case", ""), **w} for w in WARNINGS.take()]
     return spec, res, time.perf_counter() - t0

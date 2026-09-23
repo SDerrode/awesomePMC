@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — forecasting study completed: pmcprg against pmmforecast (report)
+
+- **Setup.** `report/forecasting/` was rerun on the gap-quadrature fix
+  (39f249f), against pmmforecast 58ac3b6 used read-only: 92.6 min of
+  compute, no task errors. Copula-model forecasts are scored on each
+  horizon's own node law.
+- **Discrete regimes against a continuous state.** Paired CRPS, relative to
+  pmmforecast's Gaussian PMM.
+  - The PMC wins on regime data (−1.1 %) and on spiky data: −6.8 % with 1 %
+    spikes, −13.7 % with 5 %. ICE turns one regime into a "spike state" and
+    forecasts a return to normal.
+  - The PMM wins on the smooth tsNH4 series (7 %).
+  - Clean Beijing is a tie.
+- **Gating.** With the fit's own model, gating buys at most 0.3 % on clean
+  data. At 5 % spikes only a Hampel pre-screen helps.
+- **Kalman innovation gate.** A Gaussian innovation gate, as pmmforecast's
+  Kalman filter would apply it, pays only with a refit loop. It costs 13 % on
+  clean Beijing and fails on 30-s sensor data. It is not worth making it a
+  default there.
+- **Not yet final.**
+  - Mote 20's copula models still do not converge at 256 nodes.
+  - Its selection rows wait for the leading-gap fix.
+  - Five contaminated fits are converged to 2–3 % only; they are marked in
+    the README.
+- **pmmforecast issues found**, listed for its author: identifiability of
+  the Y-only fit, default starts, NaN handling, `TheoreticalMSE`, and the
+  18–29 min Y-only MLE on 21 599 rows.
+
 ### Fixed — missing values under strong serial dependence, and forecast / impute quantiles
 
 - **What was wrong (P1).** A missing y was integrated on one grid, the

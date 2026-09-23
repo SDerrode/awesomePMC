@@ -17,12 +17,15 @@ of 6 sd at 0 / 1 / 5 %, 10 replicates), on Aotizhongxin with injected spikes
 (6 sd, 1 / 5 %, 3 seeds) and on mote 20 as recorded (3 suspect readings of
 −38.4 °C in the training part).
 
-STATUS (2026-09-22): the full campaign was stopped on three pmcprg problems
-that make parts of its output silently wrong (README, "Library problems"
-P1–P3). The driver detects P1 (per-model quadrature check, ``choose_nodes``)
-and P3 (``q_check`` of every grid forecast, ``quantile_inconsistent_rows`` in
-run_info.json); rerun it once they are fixed. Part 2 (``cross_check.py``) is
-not affected.
+A first campaign (2026-09-22) was stopped on three pmcprg problems P1–P3
+(README, "Library problems"), fixed since. The driver keeps their checks: a
+per-model quadrature convergence check (``choose_nodes``, ``quad_check`` in
+fits.csv), the quadrature diagnostic ``GapPosterior.quad_error`` of every
+conditioning series (fits.csv), every pmcprg WARNING collected per task step
+(results/pmcprg_warnings.csv; the ``quad_error`` WARNING counted in
+run_info.json) and a per-row quantile check (``q_check``,
+``quantile_inconsistent_rows`` in run_info.json). Part 2 (``cross_check.py``)
+is not affected by P1–P3.
 
 Phases: (0) pmmforecast jobs are written and ``pmm_side.py jobs`` is started in
 the background with ``--pmm-python`` (skipped with a message otherwise);
@@ -243,7 +246,7 @@ def main(argv=None) -> int:
     sdf = pd.DataFrame(select_rows).sort_values("bic")
     # Degenerate fits (real_series rule) and fits whose forecasts are not converged in
     # the quadrature (the pmcprg problem of README "Library problems") are not chosen.
-    ok = sdf[~sdf.degenerate.astype(bool) & (sdf.quad_check <= fc.QUAD_TOL)]
+    ok = sdf[~sdf.degenerate.astype(bool) & (sdf.quad_check <= fc.QUAD_TOL) & (sdf.quad_check_tail <= fc.QUAD_TOL_TAIL)]
     chosen = []
     for pool in (ok[ok.kind == "hmc_in"], ok[ok.kind != "hmc_in"]):
         if len(pool):
@@ -262,7 +265,12 @@ def main(argv=None) -> int:
             continue
         series, variant = cid.split("__")
         for kind, K in fc.REAL[series]["models"]:
+            copula_spikes = kind != "hmc_in" and variant.startswith("spikes")
+            if copula_spikes and int(variant.split("_s")[-1]) >= fc.REAL_PMC_SEEDS:
+                continue   # copula PMC on the first REAL_PMC_SEEDS seeds only
             sp = {**base, "task": "pmc", "case": cid, "kind": kind, "K": K, "hampel": variant != "clean"}
+            if copula_spikes and not fc.CONTAMINATED_PMC_FORECAST:
+                sp["forecast"] = False   # fits and quadrature checks only (README, P4)
             if cid == "mote20__clean":
                 sp["model_raw"] = mote_models[f"mote20__{fc.family(kind, K)}"]
             specs.append(sp)
@@ -277,6 +285,9 @@ def main(argv=None) -> int:
     fits = [r for _, res, _ in done if "error" not in res for r in res["fits"]]
     task_times = [{"task": sp["task"], "case": sp.get("case", ""), "kind": sp.get("kind", ""),
                    "K": sp.get("K", ""), "seconds": secs} for sp, _, secs in done + sel]
+    # pmcprg WARNINGs collected by the tasks (fc_common.WarningLog)
+    warn = pd.DataFrame([{"kind_task": sp.get("kind", ""), "K_task": sp.get("K", ""), **w}
+                         for sp, res, _ in sel + done for w in res.get("warnings", [])])
 
     # ---- phase 3: pmmforecast forecasts
     have_pmm = wait_pmm(proc) if proc is not None else False
@@ -356,11 +367,23 @@ def main(argv=None) -> int:
             pdf[col] = [" ".join(f"{v:.6g}" for v in x) if isinstance(x, list) else "" for x in pdf[col]]
         pdf.to_csv(R / "pmm_fits.csv", index=False, float_format="%.6g")
     pd.DataFrame(task_times).to_csv(R / "tasks.csv", index=False, float_format="%.3f")
+    warn.to_csv(R / "pmcprg_warnings.csv", index=False, float_format="%.4g")
+    warn_summary = {}
+    if len(warn):
+        for kind, g in warn.groupby("kind"):
+            warn_summary[kind] = {"records": int(g["count"].sum()), "task_steps": int(len(g)),
+                                  "max_value": float(g.max_value.max()) if g.max_value.notna().any() else None,
+                                  "steps": sorted({s.split(" ", 1)[-1] for s in g.step})}
+        if "quad_error" in warn_summary:
+            print(f"WARNING: pmcprg quadrature WARNING (quad_error above its limit): {warn_summary['quad_error']}",
+                  flush=True)
     # quantile CRPS (200 levels) against the exact CRPS where it exists
     # (Gaussian laws: AR(1), PMM; Gaussian mixtures: HMC-IN)
     crps_chk = {}
+    grid_rows = rec.method.str.startswith("pmc_") & rec.crps_q.notna()
     for lab, sel in (("gaussian", rec.method.str.startswith(("ar1|", "pmm|", "pmm_default|"))),
-                     ("hmc_in_mixture", rec.method.str.startswith("hmc_in_"))):
+                     ("hmc_in_mixture", rec.method.str.startswith("hmc_in_")),
+                     ("pmc_node_law_vs_200_quantiles", grid_rows)):
         d = rec.loc[sel]
         if len(d):
             rel = (d.crps_q - d.crps).abs() / d.crps.clip(lower=1e-12)
@@ -369,14 +392,44 @@ def main(argv=None) -> int:
                              "rel_diff_of_mean": float(abs(d.crps_q.mean() - d.crps.mean()) / d.crps.mean())}
     # Rows whose returned quantiles disagree with the forecast's own node law
     # (pmcprg problem P3 of the README): CRPS and coverage of those rows are wrong.
-    q_bad = {}
+    q_bad, q_bad_ref, q_stats = {}, {}, {}
     if "q_check" in rec.columns:
         q_bad = {m: int(n) for m, n in rec[rec.q_check > 0.25].groupby("method").size().items()}
+        q_bad_ref = {m: int(n) for m, n in rec[rec.q_check_ref > 0.25].groupby("method").size().items()}
+        grid_rows = rec[rec.q_check.notna() & (rec.q_check > 0)]
+        q_stats = {"n_grid_rows": int(len(grid_rows)), "q_check_max": float(rec.q_check.max()),
+                   "q_check_p99": float(grid_rows.q_check.quantile(0.99)) if len(grid_rows) else 0.0,
+                   "q_check_ref_max": float(rec.q_check_ref.max())}
+        if "q_check_tail" in rec.columns:
+            qt = rec.q_check_tail.dropna()
+            q_stats.update({"q_check_tail_max": float(qt.max()) if len(qt) else 0.0,
+                            "q_check_tail_p99": float(qt.quantile(0.99)) if len(qt) else 0.0,
+                            "q_check_tail_rows_above_0.05": int((qt > 0.05).sum()),
+                            "q_check_tail_rows_above_0.05_by_method":
+                                {m: int(n) for m, n in rec[rec.q_check_tail > 0.05].groupby("method").size().items()}})
         if q_bad:
             print(f"WARNING: {sum(q_bad.values())} score rows have quantiles inconsistent with the "
                   f"forecast's node law (pmcprg problem P3): {q_bad}", flush=True)
+    # Leading gaps under strong dependence (pmcprg's leading-gap problem, README):
+    # fits or conditioning series that start with missing rows, grid models only.
+    fdf = pd.DataFrame(fits)
+    lead = {}
+    if len(fdf) and "max_diag_tau" in fdf.columns:
+        lg = [c for c in ("lead_gap_fit", "lead_gap_cond", "lead_gap_gated") if c in fdf.columns]
+        g = fdf[fdf.max_diag_tau.notna()]
+        hit = g[(g[lg].fillna(0) > 0).any(axis=1)]
+        lead = {"fits_with_leading_gap": [f"{r.case} {r.family}|{r.fit} (τ max {r.max_diag_tau:.3f}; "
+                                          + ", ".join(f"{c} {int(r[c])}" for c in lg if r[c] == r[c] and r[c] > 0) + ")"
+                                          for _, r in hit.iterrows()]}
+    sel_lead = [f"{r.kind} K={r.K} (τ max {r.max_diag_tau:.3f}, leading gap {int(r.lead_gap)})"
+                for _, r in sdf.iterrows() if "lead_gap" in sdf.columns and r.lead_gap > 0 and r.max_diag_tau == r.max_diag_tau]
+    lead["mote20_selection_fits_with_leading_gap"] = sel_lead
     info = {
+        "leading_gaps": lead,
         "quantile_inconsistent_rows": q_bad,
+        "quantile_inconsistent_rows_reference_nodes": q_bad_ref,
+        "quantile_check_stats": q_stats,
+        "pmcprg_warnings": warn_summary,
         "crps_quantile_vs_exact": crps_chk,
         "date": time.strftime("%Y-%m-%d %H:%M"), "quick": args.quick, "jobs": args.jobs,
         "pmm_workers": args.pmm_workers, "python": platform.python_version(),
@@ -389,7 +442,8 @@ def main(argv=None) -> int:
         "settings": {k: getattr(fc, k) for k in ("ALPHA", "HAMPEL_HALF", "HAMPEL_T", "SPIKE_K", "PMM_RESTARTS",
                                                   "PMM_SEED", "PMM_THEORY_N0", "FIX_N_TRAIN", "FIX_N_TEST",
                                                   "FIX_H", "FIX_STEP", "FIX_RATES", "FIX_REPS", "REAL_RATES",
-                                                  "REAL_SEEDS", "MOTE_ID", "MOTE_EPOCHS")},
+                                                  "REAL_SEEDS", "REAL_PMC_SEEDS", "CONTAMINATED_PMC_FORECAST", "MOTE_ID", "MOTE_EPOCHS", "QUAD_TOL_TAIL",
+                                                  "QUAD_TOL", "G_LADDER", "QCOV")},
         "real": {k: {kk: vv for kk, vv in v.items()} for k, v in fc.REAL.items()},
         "n_quantile_levels_crps": int(len(fc.TAUS)),
     }

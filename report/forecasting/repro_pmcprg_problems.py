@@ -5,6 +5,9 @@ the exact (or self-consistent) one; after a fix the two agree.
 
     PYTHONPATH=. .venv/bin/python report/forecasting/repro_pmcprg_problems.py
 
+Status: all three are fixed at pmcprg 39f249f; its output there is recorded
+in README.md ("P1–P3: fixed at 39f249f").
+
 P1  gaps quadrature: strong copula dependence → forecasts / PIT after a missing
     row collapse (predictive sd 0 instead of 0.02 at ρ = 0.9999), silently.
 P2  predictive_pit / flag_outliers: NaN PIT on every row after the first when a

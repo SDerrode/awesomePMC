@@ -302,18 +302,46 @@ def fits_tables(R: Path) -> None:
         emit(md(t, {"test rows flagged": "{:.0f}", "per 1000": "{:.2f}", "masked train rows": "{:.0f}",
                     "change %": "{:+.1f}"}, "{:.4f}"))
         emit("")
-    section("Quadrature nodes chosen per fitted copula model (see Library problems)", 3)
+    section("Quadrature: nodes chosen per fitted copula model and quad_error (see Library problems, P1)", 3)
     q = fits[fits.gap_nodes.notna() & (fits.quad_check_64 > 0)].copy()
     if len(q):
         q["study"] = [c.split("__")[0] for c in q.case]
+        for c in ("quad_error_obs", "quad_limit_obs", "quad_error_gated", "quad_limit_gated"):
+            if c not in q.columns:
+                q[c] = np.nan
+        q["qe_ratio"] = np.fmax(q.quad_error_obs / q.quad_limit_obs, q.quad_error_gated / q.quad_limit_gated)
+        q["unconv"] = (q.quad_check > 0.01) | (q.quad_check_tail > 0.05)
         agg = q.groupby(["study", "family"]).agg(fits=("fit", "size"), G64=("gap_nodes", lambda s: int((s == 64).sum())),
                                                   G128=("gap_nodes", lambda s: int((s == 128).sum())),
                                                   G256=("gap_nodes", lambda s: int((s == 256).sum())),
-                                                  unconverged=("quad_check", lambda s: int((s > 0.01).sum())),
-                                                  worst_check_64=("quad_check_64", "max"),
-                                                  worst_final=("quad_check", "max")).reset_index()
+                                                  unconverged=("unconv", "sum"),
+                                                  check_64=("quad_check_64", "max"),
+                                                  check_G=("quad_check", "max"),
+                                                  tail_G=("quad_check_tail", "max"),
+                                                  ratio_64=("quad_ratio_64", "max"),
+                                                  ratio_G=("quad_ratio", "max"),
+                                                  cond_ratio_G=("qe_ratio", "max")).reset_index()
+        emit("G: first of 64 / 128 / 256 nodes whose predictive means and sds (first, middle and last origin) "
+             "change by less than 1 % of the predictive sd when G is doubled (`check`; `unconverged`: > 1 % at "
+             "G = 256). `tail_G`: change of the node-law 2.5 / 97.5 % quantiles at the chosen G. `ratio`: "
+             "pmcprg's `GapPosterior.quad_error` / WARNING limit of the same forecast chains (recorded, not "
+             "required). Worst values over the fits; `cond_ratio_G`: quad_error / limit of the whole "
+             "conditioning series, observed and gated (– : no missing row).")
+        emit("")
         emit(md(agg, {"fits": "{:d}", "G64": "{:d}", "G128": "{:d}", "G256": "{:d}", "unconverged": "{:d}",
-                      "worst_check_64": "{:.2e}", "worst_final": "{:.2e}"}))
+                      "check_64": "{:.1e}", "check_G": "{:.1e}", "tail_G": "{:.1e}", "ratio_64": "{:.2g}",
+                      "ratio_G": "{:.2g}", "cond_ratio_G": "{:.2g}"}))
+        emit("")
+    wp = R / "pmcprg_warnings.csv"
+    if wp.exists() and wp.stat().st_size > 5:
+        w = pd.read_csv(wp)
+        section("pmcprg WARNINGs collected during the campaign", 3)
+        w["study"] = [c.split("__")[0] for c in w.case.fillna("mote20__select")]
+        w["step"] = [s.split(" ", 1)[-1] for s in w.step.fillna("")]
+        t = w.groupby(["kind", "study", "step", "template"], dropna=False).agg(
+            records=("count", "sum"), max_value=("max_value", "max")).reset_index()
+        t["template"] = [s[:90] for s in t.template]
+        emit(md(t, {"records": "{:d}", "max_value": "{:.2e}"}))
         emit("")
 
 
@@ -457,11 +485,32 @@ def part3(R: Path, F: Path) -> None:
                 r[f"CRPS h=1 {lab}"] = float(h1.crps.mean()) if len(h1) else np.nan
             rows.append(r)
         t = pd.DataFrame(rows)
-        emit(f"CRPS averaged over h = 1…{H} and the origins (and the seeds), and at h = 1:")
+        emit(f"CRPS averaged over h = 1…{H} and the origins (and the seeds), and at h = 1"
+             + (" (the copula PMC ran on seed 0 only: compare it in the seed-0 table below):"
+                if study == "aotizhongxin" else ":"))
         emit("")
         emit(md(t))
         emit("")
         tex(t, title)
+        if study == "aotizhongxin":
+            s0 = g[g.case.str.endswith("__clean") | g.case.str.endswith("_s0")]
+            rows = []
+            for m in meths:
+                r = {"method": mlabel(m)}
+                for rate in cols:
+                    lab = "clean" if rate == 0 else f"{rate:.0%}"
+                    x = s0[(s0.method == m) & (s0.rate == rate)]
+                    r[f"CRPS {lab}"] = x.crps.mean() if len(x) else np.nan
+                    h1 = rh[(rh.study == study) & (rh.method == m) & (rh.rate == rate) & (rh.h == 1)
+                            & (rh.variant.str.endswith("_s0") | (rh.variant == "clean"))]
+                    r[f"CRPS h=1 {lab}"] = float(h1.crps.mean()) if len(h1) else np.nan
+                rows.append(r)
+            t0 = pd.DataFrame(rows)
+            emit("Seed 0 only (every method ran on the same contaminated series):")
+            emit("")
+            emit(md(t0))
+            emit("")
+            tex(t0, "Aotizhongxin with injected spikes, seed 0")
     fits = pd.read_csv(R / "fits.csv")
     section("Robust fits on the real series", 3)
     rf = fits[~fits.case.str.startswith("fix_") & fits.fit.isin(["robust", "hampel"])].copy()
@@ -520,7 +569,7 @@ def figure_part3(fxc: pd.DataFrame, rh: pd.DataFrame, F: Path) -> None:
         ax.set_xticks([0, 1, 5])
         ax.legend(fontsize=6.5, frameon=False)
     ax = axes[-1]
-    g = rh[(rh.study == "aotizhongxin")]
+    g = rh[(rh.study == "aotizhongxin") & (rh.variant.str.endswith("_s0") | (rh.variant == "clean"))]
     fam = "pmc_pair_K3"
     for m, col, ls in ((f"{fam}|raw", C[0], "-"), (f"{fam}|raw+gate", C[0], "--"), (f"{fam}|hampel+gate", C[2], "-"),
                        ("pmm|raw", C[1], "-"), ("ar1|robust+gate", C[3], "--")):
@@ -530,7 +579,7 @@ def figure_part3(fxc: pd.DataFrame, rh: pd.DataFrame, F: Path) -> None:
     t = g[(g.method == f"{fam}|raw") & (g.rate == 0)].groupby("h").crps.mean()
     ax.plot(t.index, t.values, color=INK2, lw=1, ls=":", label="PMC pair K=3 on the clean series")
     style(ax)
-    ax.set_title("Aotizhongxin, 5 % spikes of 6 sd (3 seeds)", fontsize=9, color=INK)
+    ax.set_title("Aotizhongxin, 5 % spikes of 6 sd (seed 0)", fontsize=9, color=INK)
     ax.set_xlabel("horizon h (hours)", fontsize=8, color=INK2)
     ax.set_ylabel("CRPS", fontsize=8, color=INK2)
     ax.legend(fontsize=6.5, frameon=False)
@@ -554,8 +603,11 @@ def main(argv=None) -> int:
              f"{(info.get('pmm_sum_s') or 0) / 60:.1f} min ({info['python']}, numpy {info['numpy']}, "
              f"{info['machine']}).")
         emit(f"Quantile CRPS (200 levels) against the exact CRPS: {json.dumps(info.get('crps_quantile_vs_exact'))}")
-        emit(f"Rows with quantiles inconsistent with the node law (pmcprg P3): "
-             f"{json.dumps(info.get('quantile_inconsistent_rows'))}")
+        emit(f"Rows with quantiles inconsistent with the node law (pmcprg P3; q_check > 0.25 on each horizon's "
+             f"own grid): {json.dumps(info.get('quantile_inconsistent_rows'))}; on the reference nodes: "
+             f"{json.dumps(info.get('quantile_inconsistent_rows_reference_nodes'))}; "
+             f"statistics {json.dumps(info.get('quantile_check_stats'))}")
+        emit(f"pmcprg WARNINGs: {json.dumps(info.get('pmcprg_warnings'))}")
         part1(R, args.figures)
         fits_tables(R)
     else:
