@@ -1,0 +1,7 @@
+{
+ "pmmforecast_version": "0.22.1",
+ "MU": 2.0,
+ "SIGMA": 0.5,
+ "mc_window": 200,
+ "seconds_pmcprg_side": 353.2876964169991
+}

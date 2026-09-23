@@ -1,0 +1,24 @@
+{
+  "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-a4050c8c28087d6c4/pmcprg/__init__.py",
+  "flag_seconds_wall": 497.450635833,
+  "jobs": 4,
+  "flag_seconds_sum": 1981.9794511269956,
+  "window_epochs": [
+    28801,
+    102706
+  ],
+  "labels": {
+    "48": {
+      "first_suspect": 74940,
+      "climb_onset": 73479
+    },
+    "22": {
+      "first_suspect": 71746,
+      "climb_onset": 71044
+    },
+    "47": {
+      "first_suspect": 74454,
+      "climb_onset": 72679
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-a4050c8c28087d6c4/pmcprg/__init__.py",
+  "fit_seconds": 69.60999758300022,
+  "pit_seconds": 52.96381166699939,
+  "jobs": 4,
+  "selected": {
+    "48|hmc_in": 3,
+    "48|pmc_state": 3,
+    "22|hmc_in": 3,
+    "22|pmc_state": 3,
+    "47|hmc_in": 3,
+    "47|pmc_state": 3
+  }
+}

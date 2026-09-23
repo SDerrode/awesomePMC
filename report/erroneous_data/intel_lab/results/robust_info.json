@@ -1,0 +1,20 @@
+{
+  "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-a4050c8c28087d6c4/pmcprg/__init__.py",
+  "wall_seconds": 1327.126744000001,
+  "jobs": 3,
+  "fit_seconds_sum": 3773.799872085001,
+  "windows": {
+    "48": [
+      63420,
+      77820
+    ],
+    "22": [
+      60226,
+      74626
+    ],
+    "47": [
+      62934,
+      77334
+    ]
+  }
+}

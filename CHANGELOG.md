@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — two real-data studies: erroneous readings (Intel Lab) and forecasting against pmmforecast
+
+- **`report/erroneous_data/intel_lab/`.** Intel Berkeley Lab temperatures
+  (motes 48, 22 and 47), where a dying battery drives a smooth climb to
+  122 °C.
+  - **Detection works.** A model fitted on the clean window, held fixed and
+    gated, flags every reading above 60 °C, often hours before that
+    threshold. With the PMC and BH at α = 1e-3 the lead is 9.7, 0.9 and
+    13.8 h, for 0–21 false flags in two weeks. The Hampel filter and a
+    rolling robust z-score miss the failure.
+  - **Estimation breaks down.** Flag-and-mask fails because the failure
+    forms its own persistent, broad state. This argues for a Markov
+    contamination indicator with a fixed broad law.
+- **`report/forecasting/`.** Compares pmcprg with pmmforecast, the Gaussian
+  pairwise Markov model with a continuous hidden state, used read-only from
+  commit 58ac3b6.
+  - **When the two coincide.** They describe the same law of Y exactly when
+    the PMM has (d − bc)(e − bc) = 0 and the PMC has identical regimes with
+    Gaussian copulas of ρ = c. There, likelihoods agree to 3e-12 and
+    forecasts to 1e-7, and the paper's theoretical MSE matches Monte Carlo.
+  - **Pipeline.** Real-series and robust-forecasting runs are implemented.
+- **Library problems.** Both studies were stopped by library problems, each
+  reproduced by a script there: `repro_pmcprg_problems.py`,
+  `repro_gap_nodes.py` and `repro_clipped_corner.py`.
+  - The empty state is fixed (above).
+  - The gap quadrature under strong serial dependence and the forecast/impute
+    quantiles are open, so their copula-model numbers are provisional.
+  - The pmmforecast issues found are listed in its README section, for its
+    author.
+
 ### Fixed — an empty state gave NaN in the one-step PIT and hid every outlier
 
 - When a row of the prior p is all zero (a state that ICE or SEM emptied,

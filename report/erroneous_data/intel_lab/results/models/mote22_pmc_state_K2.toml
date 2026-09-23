@@ -1,0 +1,28 @@
+margins = [
+    { i = 0, dist = "norm", params = { loc = 22.85197904987571, scale = 5.116020719269362 } },
+    { i = 1, dist = "norm", params = { loc = 20.802508303349548, scale = 3.4223425918085346 } },
+]
+copulas = [
+    { i = 0, j = 0, name = "Clayton", tau = 0.9969003499065676 },
+    { i = 0, j = 1, name = "Clayton", tau = 0.6826254064979648 },
+    { i = 1, j = 0, name = "Clayton", tau = 0.7503957987209668 },
+    { i = 1, j = 1, name = "Clayton", tau = 0.981672610520274 },
+]
+
+[model]
+name = "pmc_state K=2"
+K = 2
+N_default = 20160
+variant = "PMC"
+
+[prior]
+p = [
+    [
+        0.8491707209773315,
+        0.04966825779261996,
+    ],
+    [
+        0.04966825779261996,
+        0.05149276343742872,
+    ],
+]
