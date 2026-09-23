@@ -22,14 +22,19 @@ climb before the first suspect; the ambiguous 24 h before it; normal
 operation): recall and precision against ``suspect``, flags per label, false
 alarms in normal operation, lead times.
 
+Every PMC flag uses the library default ``gap_nodes`` = 64 (GAP_NODES).
+``--check`` reruns the PMC settings at 256 nodes (and 64) on the rows up to
+6 h after the first reading > 60 °C, to measure the dependence on the
+quadrature (results/detect_check.csv).
+
 Usage (from the repository root, after fit_clean.py)
 ----------------------------------------------------
     .venv/bin/python report/erroneous_data/intel_lab/detect.py --jobs 4
+    .venv/bin/python report/erroneous_data/intel_lab/detect.py --check --jobs 4
 """
 from __future__ import annotations
 
 import argparse
-import logging
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -37,9 +42,16 @@ import numpy as np
 import pandas as pd
 
 import il_common as C
-from pmcprg.pmc import flag_outliers
+from pmcprg.pmc import flag_outliers, predictive_pit
+from pmcprg.pmc.outliers import _bh_threshold
 
 LO = C.CLEAN_END + 1          # first epoch of the detection window
+#: Sensitivity check (``--check``): the PMC at GAP_NODES_CHECK nodes on the
+#: rows up to CHECK_AFTER_H hours after the first reading > 60 °C (normal
+#: operation, the ambiguous zone, the climb and the start of the failure; the
+#: long gated plateau after it is left out to bound the cost).
+CHECK_AFTER_H = 6.0
+CHECK_SETTINGS = [(True, C.MAIN_ALPHA, None), (True, C.MAIN_ALPHA, "bh"), (False, None, None)]
 
 
 def settings() -> list[tuple[bool, float, str | None]]:
@@ -54,18 +66,53 @@ def setting_name(kind: str, seq: bool, alpha: float, corr) -> str:
     return f"{C.KIND_LABEL[kind]} {'seq' if seq else 'nonseq'} {'BH ' if corr else ''}α={alpha:g}"
 
 
-def task_flag(spec: dict) -> dict:
-    logging.getLogger("pmcprg").setLevel(logging.ERROR)
+def nonseq_settings() -> list[tuple[float, str | None]]:
+    return [(a, None) for a in C.ALPHAS] + [(a, "bh") for a in C.BH_ALPHAS]
+
+
+def task_flag(spec: dict) -> list[dict]:
+    """One sequential setting, or every non-sequential one (``alpha`` None).
+
+    Without gating the p-values do not depend on α: one ``predictive_pit``
+    pass gives them, and each setting thresholds them as
+    ``flag_outliers(sequential=False)`` does (per row: p < α; BH: the
+    library's own threshold), so the flags are those of ``flag_outliers``.
+    """
+    wlog = C.capture_warnings()
     d = C.load_mote(spec["mote"], spec["data"])
     model = C.load_model(C.model_path(spec["mote"], spec["kind"], spec["K"]))
-    Y = d["y"][LO - 1:]
+    Y = d["y"][LO - 1:spec["hi"]]
+    G = spec["gap_nodes"]
+    keys = {k: spec[k] for k in ("mote", "kind", "K", "seq")}
     t0 = time.perf_counter()
-    F = flag_outliers(model, Y, alpha=spec["alpha"], sequential=spec["seq"],
-                      correction=spec["corr"])
-    return {**{k: spec[k] for k in ("mote", "kind", "K", "seq", "alpha", "corr")},
-            "flagged": np.packbits(F.flagged), "pvalue": F.pvalue.astype(np.float32),
-            "threshold": F.threshold, "n_tests": F.n_tests, "method": F.method,
-            "seconds": time.perf_counter() - t0}
+    if spec["seq"]:
+        F = flag_outliers(model, Y, alpha=spec["alpha"], sequential=True,
+                          correction=spec["corr"], gap_nodes=G)
+        out = [{**keys, "alpha": spec["alpha"], "corr": spec["corr"],
+                "flagged": np.packbits(F.flagged), "pvalue": F.pvalue.astype(np.float32),
+                "threshold": F.threshold, "n_tests": F.n_tests, "method": F.method}]
+        q = {"quad_error": np.nan, "quad_limit": np.nan}
+    else:
+        P = predictive_pit(model, Y, gap_nodes=G)
+        obs = ~P.miss
+        out = []
+        for alpha, corr in nonseq_settings():
+            thr = _bh_threshold(P.pvalue[obs], alpha) if corr == "bh" else alpha
+            with np.errstate(invalid="ignore"):
+                flagged = obs & (P.pvalue < thr)
+            out.append({**keys, "alpha": alpha, "corr": corr, "flagged": np.packbits(flagged),
+                        "pvalue": P.pvalue.astype(np.float32), "threshold": float(thr),
+                        "n_tests": int(obs.sum()), "method": P.method})
+        # The quadrature diagnostic of the pass over the window's own gaps.
+        warned_before = len(wlog.messages)
+        q = C.quad_check(model, Y, G)
+        del wlog.messages[warned_before:]
+    sec = time.perf_counter() - t0
+    warned = C.warning_summary(wlog)
+    for r in out:
+        r.update({"seconds": sec / len(out), "gap_nodes": G, "quad_error": q["quad_error"],
+                  "quad_limit": q["quad_limit"], **warned})
+    return out
 
 
 def baselines(d: dict) -> dict:
@@ -93,13 +140,14 @@ def run(args):
     sel = C.selected_models()
     C.CACHE.mkdir(parents=True, exist_ok=True)
     specs = [{"mote": m, "kind": k, "K": sel[(m, k)][0], "seq": s, "alpha": a, "corr": c,
-              "data": args.data}
-             for m in C.MOTES for k in C.KINDS for (s, a, c) in settings()]
+              "data": args.data, "hi": None, "gap_nodes": C.GAP_NODES}
+             for m in C.MOTES for k in C.KINDS
+             for (s, a, c) in [x for x in settings() if x[0]] + [(False, None, None)]]
     # Longest first (PMC sequential BH) for a better load balance.
     specs.sort(key=lambda s: (s["kind"] != "pmc_state", not s["seq"], s["corr"] is None))
     t0 = time.perf_counter()
     with ProcessPoolExecutor(args.jobs) as ex:
-        res = list(ex.map(task_flag, specs))
+        res = [r for out in ex.map(task_flag, specs) for r in out]
     t_flag = time.perf_counter() - t0
     rows, store = [], {}
     for m in C.MOTES:
@@ -118,7 +166,11 @@ def run(args):
             rows.append({"mote": m, "method": name, "family": C.KIND_LABEL[r["kind"]],
                          "K": r["K"], "sequential": r["seq"], "alpha": r["alpha"],
                          "correction": r["corr"] or "none", "threshold": r["threshold"],
-                         "seconds": r["seconds"], **C.score_flags(flag, lab, fs)})
+                         "seconds": r["seconds"],
+                         **{k: r[k] for k in ("gap_nodes", "quad_error", "quad_limit",
+                                              "quad_warnings", "quad_error_max_warned",
+                                              "other_warnings", "other_warning_kinds")},
+                         **C.score_flags(flag, lab, fs)})
         t1 = time.perf_counter()
         base = baselines(d)
         t_base = time.perf_counter() - t1
@@ -132,7 +184,7 @@ def run(args):
     df.to_csv(C.RESULTS / "detect_scores.csv", index=False)
     np.savez_compressed(C.CACHE / "detect_flags.npz", **{k: v for k, v in store.items()})
     C.save_json(C.RESULTS / "detect_info.json", {
-        "pmcprg": C.check_import(), "flag_seconds_wall": t_flag, "jobs": args.jobs,
+        "pmcprg": C.check_import(), "pmcprg_commit": C.git_commit(), "flag_seconds_wall": t_flag, "jobs": args.jobs,
         "flag_seconds_sum": float(sum(r["seconds"] for r in res)),
         "window_epochs": [LO, int(C.load_mote(C.MOTES[0], args.data)["epoch"].size)],
         "labels": {str(m): {"first_suspect": C.load_mote(m, args.data)["first_suspect"],
@@ -140,6 +192,56 @@ def run(args):
                    for m in C.MOTES}})
     episodes_table(store, args)
     figures(store, args)
+
+
+def run_check(args):
+    """The PMC flags at --gap-nodes nodes against the default GAP_NODES.
+
+    Window: epochs LO … first reading > 60 °C + CHECK_AFTER_H hours, per
+    mote; the settings of CHECK_SETTINGS (sequential α = 1e-3, sequential BH
+    α = 1e-3, every non-sequential one), each run at both node counts on
+    that window (a BH threshold depends on the window). The per-row flags
+    at GAP_NODES are also compared with the main run's, cut to the window
+    (equal: the filter is causal). Writes results/detect_check.csv.
+    """
+    sel = C.selected_models()
+    with np.load(C.CACHE / "detect_flags.npz") as z:
+        main = {k: z[k] for k in z.files}
+    his = {m: int(C.load_mote(m, args.data)["first_suspect"] + round(CHECK_AFTER_H * C.EPH))
+           for m in C.MOTES}
+    specs = [{"mote": m, "kind": "pmc_state", "K": sel[(m, "pmc_state")][0], "seq": s_,
+              "alpha": a, "corr": c, "data": args.data, "hi": his[m], "gap_nodes": G}
+             for G in (args.gap_nodes, C.GAP_NODES) for m in C.MOTES
+             for (s_, a, c) in CHECK_SETTINGS]
+    specs.sort(key=lambda s: (-s["gap_nodes"], not s["seq"], s["corr"] is None))
+    t0 = time.perf_counter()
+    with ProcessPoolExecutor(args.jobs) as ex:
+        res = [r for out in ex.map(task_flag, specs) for r in out]
+    wall = time.perf_counter() - t0
+    flags = {}
+    for r in res:
+        n = his[r["mote"]] - LO + 1
+        name = setting_name(r["kind"], r["seq"], r["alpha"], r["corr"])
+        flags[(r["mote"], name, r["gap_nodes"])] = (np.unpackbits(r["flagged"])[:n].astype(bool), r)
+    rows = []
+    for (m, name, G), (flag, r) in flags.items():
+        d = C.load_mote(m, args.data)
+        lab = C.truth_labels(d, LO, his[m])
+        base = flags[(m, name, C.GAP_NODES)][0]
+        cut = main[f"{m}|{name}"][:base.size]
+        rows.append({"mote": m, "method": name, "gap_nodes": G, "window_hi": his[m],
+                     "n_differ_from_default": int((flag != base).sum()),
+                     "same_as_main_run": (bool(np.array_equal(flag, cut)) if G == C.GAP_NODES
+                                          and "BH" not in name else np.nan),
+                     "seconds": r["seconds"], "quad_error": r["quad_error"],
+                     "quad_limit": r["quad_limit"],
+                     **C.score_flags(flag, lab, d["first_suspect"])})
+    df = pd.DataFrame(rows).sort_values(["mote", "method", "gap_nodes"])
+    df.to_csv(C.RESULTS / "detect_check.csv", index=False)
+    C.save_json(C.RESULTS / "detect_check_info.json", {
+        "pmcprg": C.check_import(), "pmcprg_commit": C.git_commit(), "wall_seconds": wall,
+        "jobs": args.jobs, "gap_nodes": [C.GAP_NODES, args.gap_nodes],
+        "after_first_suspect_h": CHECK_AFTER_H})
 
 
 MAIN = [("PMC seq α=0.001", C.C_ORANGE), ("PMC nonseq α=0.001", C.C_YELLOW),
@@ -303,9 +405,15 @@ def main():
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--figures-only", action="store_true",
                     help="episodes table and figures from results/cache/detect_flags.npz")
+    ap.add_argument("--check", action="store_true",
+                    help="after the main run: the PMC flags at --gap-nodes nodes against it")
+    ap.add_argument("--gap-nodes", type=int, default=C.GAP_NODES_CHECK,
+                    help=f"nodes of --check (default {C.GAP_NODES_CHECK})")
     args = ap.parse_args()
     print("pmcprg:", C.check_import())
-    if args.figures_only:
+    if args.check:
+        run_check(args)
+    elif args.figures_only:
         with np.load(C.CACHE / "detect_flags.npz") as z:
             store = {k: z[k] for k in z.files}
         episodes_table(store, args)

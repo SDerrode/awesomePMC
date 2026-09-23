@@ -25,6 +25,8 @@ Scores: parameters (states sorted by mean), a "failure state" (a state whose
 mean exceeds the fit-window maximum by more than 2 °C), the mask against the
 labels, and the MPM classification of the normal-operation rows against the
 ``oracle_ext`` fit and against the clean-window model (Hungarian alignment).
+The quadrature WARNINGs of pmcprg are counted per task, and ``quad_error`` of
+the returned fit on its masked window is recorded.
 
 Usage (from the repository root, after fit_clean.py)
 ----------------------------------------------------
@@ -33,7 +35,6 @@ Usage (from the repository root, after fit_clean.py)
 from __future__ import annotations
 
 import argparse
-import logging
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -56,7 +57,7 @@ def window(d: dict) -> tuple[int, int]:
 
 
 def task(spec: dict) -> dict:
-    logging.getLogger("pmcprg").setLevel(logging.ERROR)
+    wlog = C.capture_warnings()
     m, kind, K, meth = spec["mote"], spec["kind"], spec["K"], spec["method"]
     d = C.load_mote(m, spec["data"])
     lo, hi = window(d)
@@ -100,6 +101,10 @@ def task(spec: dict) -> dict:
     Ym = Y.copy()
     Ym[mask] = np.nan
     X, _, ll = classify(model, Ym)
+    out.update(C.warning_summary(wlog))
+    # Quadrature diagnostic of the returned model on its own (masked) window.
+    q = C.quad_check(model, Ym)
+    out.update({"quad_error": q["quad_error"], "quad_limit": q["quad_limit"]})
     out["seconds"] = time.perf_counter() - t0
     out.update({"n_fits": n_fits, "converged": converged, "loglik": ll,
                 "n_masked": int(mask.sum())})
@@ -172,7 +177,7 @@ def run(args):
                         **{f"{r['mote']}|{r['kind']}|{r['method']}|labels": r["labels"] for r in res},
                         **{f"{r['mote']}|{r['kind']}|{r['method']}|mask": r["mask"] for r in res})
     C.save_json(C.RESULTS / "robust_info.json", {
-        "pmcprg": C.check_import(), "wall_seconds": wall, "jobs": args.jobs,
+        "pmcprg": C.check_import(), "pmcprg_commit": C.git_commit(), "wall_seconds": wall, "jobs": args.jobs,
         "fit_seconds_sum": float(sum(r["seconds"] for r in res)),
         "windows": {str(m): list(window(C.load_mote(m, args.data))) for m in C.MOTES}})
     figures(res, args)

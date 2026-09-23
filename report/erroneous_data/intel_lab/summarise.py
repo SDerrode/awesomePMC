@@ -82,10 +82,63 @@ def pit_table(part: str) -> pd.DataFrame:
                      "LB(10) z (p)": f"{r.lb_stat:.0f} ({pval(r.lb_p)})",
                      "LB(10) z² (p)": f"{r.lb2_stat:.0f} ({pval(r.lb2_p)})",
                      "z mean": f2(r.z_mean), "z sd": f2(r.z_sd), "acf1(z)": f2(r.acf1_z),
+                     "z sd after a gap (n)": (f"{f2(r.z_sd_after_gap)} ({int(r.n_after_gap)})"
+                                              if hasattr(r, "z_sd_after_gap") else "–"),
                      "flags α=1e-2 / 1e-3 / 1e-4 (expected)":
                          f"{getattr(r, 'nonseq_0_01')} / {getattr(r, 'nonseq_0_001')} / "
                          f"{getattr(r, 'nonseq_0_0001')} ({r.n * 1e-2:.0f} / {r.n * 1e-3:.0f} / {r.n * 1e-4:.1f})",
                      "seq flags α=1e-3": getattr(r, "seq_0_001")})
+    return pd.DataFrame(rows)
+
+
+def quad_fit_table() -> pd.DataFrame:
+    """Quadrature WARNINGs of the PMC fits (every start) and the diagnostic of the kept fit."""
+    df = pd.read_csv(R / "fits.csv")
+    df = df[df.kind == "pmc_state"]
+    rows = []
+    for (m, K), g in df.groupby(["mote", "K"], sort=False):
+        b = g[g.best].iloc[0]
+        rows.append({"mote": m, "K": int(K),
+                     "passes that warned (3 starts)": int(g.quad_warnings.sum()),
+                     "largest warned error": f"{g.quad_error_max_warned.max():.3g}",
+                     "kept fit: quad_error (limit)": f"{b.quad_error:.3g} ({b.quad_limit:.3g})",
+                     "other warnings": int(g.other_warnings.sum())})
+    return pd.DataFrame(rows)
+
+
+def quad_pit_table() -> pd.DataFrame:
+    """The selected PMC on days 1–10 at GAP_NODES and GAP_NODES_CHECK nodes."""
+    pc = pd.read_csv(R / "pit_checks.csv")
+    pc = pc[(pc.kind == "pmc_state") & pc.selected & (pc.part == "held-out")]
+    rows = []
+    for r in pc.to_dict("records"):
+        G, G2 = int(r["gap_nodes"]), int(r["check_gap_nodes"])
+        rows.append({"mote": r["mote"],
+                     f"quad_error G={G} (limit)": f"{r['quad_error_days_1_10']:.3g} ({r['quad_limit_days_1_10']:.3g})",
+                     f"quad_error G={G2}": f"{r['check_quad_error_days_1_10']:.3g}",
+                     f"log-lik G={G}: PIT filter / batch pass": f"{r['log_lik_days_1_10']:.2f} / {r['batch_log_lik_days_1_10']:.2f}",
+                     f"log-lik G={G2}": f"{r['check_log_lik_days_1_10']:.2f}",
+                     f"held-out z sd after a gap G={G} / {G2}": f"{r['z_sd_after_gap']:.3f} / {r['check_z_sd_after_gap']:.3f}",
+                     f"held-out flags nonseq α=1e-3 G={G} / {G2}": f"{int(r['nonseq_0.001'])} / {int(r['check_nonseq_0.001'])}",
+                     f"held-out flags seq α=1e-3 G={G} / {G2}": f"{int(r['seq_0.001'])} / {int(r['check_seq_0.001'])}",
+                     "same seq rows": "yes" if r["check_seq_same_rows"] else "no"})
+    return pd.DataFrame(rows)
+
+
+def detect_check_table() -> pd.DataFrame:
+    df = pd.read_csv(R / "detect_check.csv")
+    rows = []
+    for r in df.itertuples():
+        rows.append({"method": r.method, "mote": r.mote, "G": int(r.gap_nodes),
+                     "rows differing from G=64": int(r.n_differ_from_default),
+                     "flags": int(r.n_flag), "recall": f2(r.recall, 3),
+                     "climb flagged": f"{int(r.flag_climb)}/{int(r.n_climb)}",
+                     "ambig flagged": f"{int(r.flag_ambig)}/{int(r.n_ambig)}",
+                     "normal flags (episodes)": f"{int(r.flag_normal)} ({int(r.fa_episodes)})",
+                     "lead episode (h)": f2(r.lead_episode_h, 1),
+                     "quad_error (limit)": ("–" if not np.isfinite(r.quad_error)
+                                            else f"{r.quad_error:.3g} ({r.quad_limit:.3g})"),
+                     "seconds": f"{r.seconds:.0f}"})
     return pd.DataFrame(rows)
 
 
@@ -141,7 +194,10 @@ def robust_table(kind: str) -> pd.DataFrame:
                      "failure state (mean, sd, stay)": (f"{r.fail_mean:.1f}, {r.fail_sd:.1f}, {r.fail_stay:.4f}"
                                                         if r.fail_state else "none"),
                      "agree oracle_ext": f2(r.agree_oracle_ext, 3),
-                     "agree clean model": f2(r.agree_clean_model, 3)})
+                     "agree clean model": f2(r.agree_clean_model, 3),
+                     "quad WARNINGs": int(getattr(r, "quad_warnings", 0)),
+                     "final quad_error (limit)": ("–" if not np.isfinite(getattr(r, "quad_error", np.nan))
+                                                  else f"{r.quad_error:.3g} ({r.quad_limit:.3g})")})
     return pd.DataFrame(rows)
 
 
@@ -180,6 +236,13 @@ def main():
     tex.append(tex_table(t[["mote", "model", "BIC K=2", "BIC K=3", "K", "means (°C)", "sd (°C)",
                             "diagonal copulas (τ)"]],
                          "Clean-window fits (days 1--7): BIC and the selected model.", "tab:il-fits"))
+    if "quad_warnings" in pd.read_csv(R / "fits.csv").columns:
+        t = quad_fit_table()
+        parts += ["## 1. Gap quadrature of the PMC fits (ICE E-steps at the default gap_nodes)", "",
+                  md_table(t), ""]
+    if "check_gap_nodes" in pd.read_csv(R / "pit_checks.csv").columns:
+        t = quad_pit_table()
+        parts += ["## 1. Gap quadrature of the selected PMC on days 1–10", "", md_table(t), ""]
     for part in ("held-out", "fit"):
         t = pit_table(part)
         parts += [f"## 1. PIT checks, {part} rows (selected K)", "", md_table(t), ""]
@@ -202,6 +265,19 @@ def main():
                              "tab:il-detect"))
         t = detect_table(df, list(dict.fromkeys(df.method)))
         parts += ["## 2. Detection, every setting", "", md_table(t), ""]
+        if "quad_error" in df.columns:
+            q = df[df.family == "PMC"].groupby("mote").agg(
+                quad_error=("quad_error", "max"), quad_limit=("quad_limit", "max"),
+                warnings=("other_warnings", "sum")).reset_index()
+            parts += ["## 2. Gap quadrature of the PMC over the detection window (non-gated pass)",
+                      "", md_table(q.round(4)), ""]
+    if (R / "detect_check.csv").exists():
+        t = detect_check_table()
+        parts += ["## 2. PMC flags at 64 and 256 quadrature nodes (up to 6 h after the first "
+                  "reading > 60 °C)", "", md_table(t), ""]
+        tex.append(tex_table(t[["method", "mote", "G", "rows differing from G=64", "flags",
+                                "normal flags (episodes)", "lead episode (h)"]],
+                             "PMC flags at 64 and 256 quadrature nodes.", "tab:il-detect-check"))
     if (R / "alarm_episodes.csv").exists():
         ep = pd.read_csv(R / "alarm_episodes.csv")
         t = ep.groupby(["method", "mote", "zone"]).agg(episodes=("n_flags", "size"),

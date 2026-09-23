@@ -1,13 +1,29 @@
 # Erroneous data on real sensors: the Intel Berkeley Lab temperatures
 
-> **Status (2026-09-23).** Of the library problems reported below, the empty
-> state (P2) is fixed on main. The PIT at the clipped copula corner is left as
-> is and documented in `pmcprg/pmc/outliers.py`: without gating, the model
-> itself finds a plateau after a jump plausible, so use `sequential=True`. The
-> gap quadrature under strong dependence (P1) and the forecast/impute
-> quantiles (P3) are still open, so the copula-model (PMC) numbers here are
-> provisional. The HMC-IN numbers, the baselines and the Gaussian cross-check
-> are not affected.
+> **Status (2026-09-23, pmcprg 39f249f).** The copula-model (PMC) numbers
+> below are still provisional: they come from the run with the unconverged
+> gap quadrature. The HMC-IN numbers, the baselines and the labels are final.
+>
+> * **Fixed on main.** The gap quadrature under strong dependence (library
+>   problem 2 below) is fixed at 39f249f, with local grids and the
+>   `GapPosterior.quad_error` WARNING. `repro_gap_nodes.py` now gives the
+>   same log-likelihood and the same flags at every G (section "Library
+>   problems found"). The empty state (NaN PIT) is fixed too.
+> * **Clipped corner: decided, not changed.** The PIT at the clipped copula
+>   corner (library problem 1) is left as is. `pmcprg/pmc/outliers.py`
+>   documents why: without gating, a run of erroneous readings is judged
+>   given its own first value, so `sequential=True` is the detection mode.
+> * **The rerun stopped at a new library problem.** The rerun of the PMC
+>   parts on 39f249f began with step 1 (`fit_clean.py`), whose results are
+>   not committed. It stopped there, as the brief requires for a library
+>   bug: a leading gap under strong dependence is misintegrated, and no
+>   WARNING is logged (library problem 3, `repro_leading_gap.py`).
+>   - In this study only the clean windows start with a gap (17, 2 and 17
+>     rows on motes 48, 22 and 47).
+>   - The detection and robust-estimation windows start with a reading.
+> * **HMC-IN.** It does not depend on anything that changed: it uses the
+>   exact K-state message, and none of its fits has an empty state. The
+>   step-1 rerun reproduced its fits and PIT checks bit for bit.
 
 The simulation study of `report/erroneous_data` measured `pmcprg.pmc.outliers`
 on isolated spikes. This study runs the same tools on a real failure mode.
@@ -30,10 +46,10 @@ Every number below is printed by `summarise.py` from the CSVs in `results/`.
 ones. The sensitivity numbers at G = 256 quadrature nodes are an exception:
 they come from one-off runs, quoted in the text.
 
-> **Status: the PMC numbers are provisional.** The study found two library
-> problems (section "Library problems found"). The second is a gap
-> quadrature that has not converged at the default `gap_nodes = 64`. It
-> affects every PMC number that involves a missing row:
+> **Why the PMC numbers are provisional.** They were computed before the
+> fix of library problem 2: a gap quadrature that had not converged at the
+> default `gap_nodes = 64`. That affects every PMC number that involves a
+> missing row:
 >
 > * the PMC fits (the ICE E-step, with 12 % single-epoch gaps);
 > * the PMC log-likelihoods and BIC;
@@ -41,11 +57,9 @@ they come from one-off runs, quoted in the text.
 > * under gating, every row that follows a flag.
 >
 > The HMC-IN results (exact K-state filter), the baselines and the labels
-> are not affected. As the brief requires for a library bug, the study
-> stopped there: the library is untouched and nothing was rerun at a larger
-> G. The main PMC detection numbers were checked at G = 256 (section 2).
-> Recall and lead times are unchanged there; the false-alarm counts are
-> not.
+> are not affected. The main PMC detection numbers were checked at G = 256
+> in that run (section 2). Recall and lead times were unchanged there; the
+> false-alarm counts were not.
 
 ## Summary
 
@@ -127,20 +141,26 @@ they come from one-off runs, quoted in the text.
   fits. The indicator must therefore be Markov, not Bernoulli, and its law
   must be fixed, not a regular state that ICE can reshape. Conclusion
   below.
-* **Two library problems found** (below, each with a reproduction).
-  1. **Clipped corner.** The non-gated PIT of a reading that follows
-     another reading beyond F⁻¹(1 − EPS) is about 0.5 for the Gaussian and
-     Gumbel–Hougaard copulas, although its log predictive density is about
-     −1 200. It explains the 0.51–0.53 non-sequential recall of the PMC on
-     motes 48 and 47. The sequential (default) flags are not affected.
-  2. **Gap quadrature.** With strongly dependent copulas (τ ≈ 0.99–0.997
-     at 30 s), the quadrature has not converged at the default
-     `gap_nodes = 64`, nor at 512.
-     - The PMC log-likelihood of mote 48's clean days 1–10 is 51 798,
+* **Three library problems found** (below, each with a reproduction).
+  1. **Clipped corner** (left as is, documented). The non-gated PIT of a
+     reading that follows another reading beyond F⁻¹(1 − EPS) is about 0.5
+     for the Gaussian and Gumbel–Hougaard copulas, although its log
+     predictive density is about −1 200. It explains the 0.51–0.53
+     non-sequential recall of the PMC on motes 48 and 47. The sequential
+     (default) flags are not affected.
+  2. **Gap quadrature** (fixed at 39f249f). With strongly dependent copulas
+     (τ ≈ 0.99–0.997 at 30 s), the quadrature had not converged at the
+     default `gap_nodes = 64`, nor at 512.
+     - The PMC log-likelihood of mote 48's clean days 1–10 was 51 798,
        57 574, 63 096 and 65 364 nats at G = 64, 128, 256 and 512.
-     - The normal scores of the rows after a gap have an sd of 1.53, 1.29,
+     - The normal scores of the rows after a gap had an sd of 1.53, 1.29,
        1.04 and 0.80.
      - Every PMC fit, PIT and gated flag of the study used G = 64.
+  3. **Leading gap** (open). When a series starts with missing rows, the
+     first reading after them is misintegrated under strong dependence,
+     with no WARNING. On a 400-row simulated series with a 17-row leading
+     gap, the error is −4.3 nats at τ = 0.997 and −22 nats at τ = 0.999
+     (G = 64).
 
 ## Data and labels
 
@@ -274,10 +294,34 @@ From the repository root (the scripts put the repository first on
 OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/fit_clean.py --jobs 4
 OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/detect.py --jobs 4
 OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/robust.py --jobs 3
+OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/detect.py --check --jobs 4
 .venv/bin/python report/erroneous_data/intel_lab/summarise.py
 .venv/bin/python report/erroneous_data/intel_lab/repro_clipped_corner.py   # library problem 1
-.venv/bin/python report/erroneous_data/intel_lab/repro_gap_nodes.py        # library problem 2 (≈ 1 min)
+.venv/bin/python report/erroneous_data/intel_lab/repro_gap_nodes.py        # library problem 2 (≈ 20 s)
+.venv/bin/python report/erroneous_data/intel_lab/repro_leading_gap.py      # library problem 3 (≈ 20 s)
 ```
+
+The scripts now keep the WARNINGs of pmcprg instead of hiding them. The
+CSVs committed here predate that change and lack these columns. Every
+task counts the quadrature WARNINGs of its passes and records `quad_error`
+against its threshold:
+
+* `fits.csv`: per ICE start;
+* `pit_checks.csv`: days 1–10;
+* `detect_scores.csv`: the non-gated pass over the detection window;
+* `robust_fits.csv`: the returned fit on its masked window.
+
+The PMC computations use the library default `gap_nodes = 64`. Two checks
+at 256 nodes are scripted:
+
+* `fit_clean.py` reruns the selected PMC's PIT and sequential flags on days
+  1–10 (the `check_*` columns of `pit_checks.csv`);
+* `detect.py --check` reruns the PMC flags at 64 and 256 nodes on the rows
+  up to 6 h after the first reading above 60 °C (`results/detect_check.csv`).
+
+The non-sequential settings of `detect.py` share one `predictive_pit` pass
+per model, thresholded as `flag_outliers(sequential=False)` does; the flags
+are identical.
 
 The wall times on an Apple arm64 laptop (Python 3.14.7, numpy 2.5.3, scipy
 1.18.1) add up to 32 min:
@@ -832,6 +876,127 @@ at α = 1e-3, against 0.3 expected.
   - at least, a warning when the conditional spread at the nodes is below
     the node spacing, and a documented range of validity of the default G.
 
+**Fixed at 39f249f** (local grids per missing position, and the
+`GapPosterior.quad_error` WARNING; see the CHANGELOG). The same script now
+prints:
+
+```text
+tau = 0.6: 299 rows after a gap
+  G =  64: log-lik    -2541.2   sd of z after a gap 0.99 (after an observed row 0.99)   p < 1e-3 after a gap: 1
+  G = 128: log-lik    -2541.2   sd of z after a gap 0.99 (after an observed row 0.99)   p < 1e-3 after a gap: 1
+  G = 256: log-lik    -2541.2   sd of z after a gap 0.99 (after an observed row 0.99)   p < 1e-3 after a gap: 1
+  G = 512: log-lik    -2541.2   sd of z after a gap 0.99 (after an observed row 0.99)   p < 1e-3 after a gap: 1
+tau = 0.99: 299 rows after a gap
+  G =  64: log-lik     7023.5   sd of z after a gap 0.96 (after an observed row 0.99)   p < 1e-3 after a gap: 0
+  G = 128: log-lik     7023.5   sd of z after a gap 0.96 (after an observed row 0.99)   p < 1e-3 after a gap: 0
+  G = 256: log-lik     7023.3   sd of z after a gap 0.96 (after an observed row 0.99)   p < 1e-3 after a gap: 0
+  G = 512: log-lik     7023.5   sd of z after a gap 0.96 (after an observed row 0.99)   p < 1e-3 after a gap: 0
+```
+
+A one-off check with more digits, at G = 32, 64, 128, 256, 512 and 1024:
+
+* **Log-likelihood at τ = 0.99.**
+  - At G ≥ 64 it is within 0.008 nats of 7023.515 (the value at
+    G = 512), except at G = 256: −0.26 nats.
+  - A WARNING is logged at G = 32–256 (`quad_error` 2.1, 0.29, 0.10 and
+    0.073, against a threshold of 0.017), and none at G ≥ 512.
+  - The residual is therefore flagged, but it is not monotone in G.
+* **Flags do not depend on G.**
+  - `flag_outliers` at α = 1e-3 flags the same 4 rows (sequential) and 3
+    rows (non-sequential) at every G.
+  - Before the fix, 17 rows after a gap had p < 1e-3 at G = 64.
+* **τ = 0.6.** Nothing moves: 1e-6 nats between G = 64 and 1024.
+
+### 3. A leading gap under strong dependence is misintegrated, with no WARNING
+
+Found while rerunning step 1 on 39f249f.
+
+**The exact reference.** Take a stationary PMC (symmetric p) whose first L
+rows are missing. The rows after the gap have the law of the series started
+at row L + 1. So the exact log p(y_obs) is the gap-free forward pass on
+Y[L:], and P(x_n | nothing observed) = π at every missing row n < L.
+
+Reproduction (`repro_leading_gap.py`, the PMC of `repro_gap_nodes.py`,
+N = 400, the first 17 rows removed):
+
+```text
+tau = 0.997: rows 0-16 missing, exact log p(y_obs) = 1470.175, WARNING above quad_error = 1e-03
+  G =   64: gap_posterior   -4.324 nats, max |alpha_hat - pi| 0.171, quad_error 3e-05   predictive_pit   -4.324 nats, max |alpha_hat - pi| 3e-16
+  G =  256: gap_posterior   -0.130 nats, max |alpha_hat - pi| 0.000, quad_error 1e-08   predictive_pit   -0.130 nats, max |alpha_hat - pi| 2e-16
+  G = 1024: gap_posterior   -0.000 nats, max |alpha_hat - pi| 0.000, quad_error 4e-14   predictive_pit   -0.000 nats, max |alpha_hat - pi| 6e-16
+tau = 0.999: rows 0-16 missing, exact log p(y_obs) = 1889.843, WARNING above quad_error = 1e-03
+  G =   64: gap_posterior  -22.096 nats, max |alpha_hat - pi| 0.290, quad_error 3e-05   predictive_pit  -23.019 nats, max |alpha_hat - pi| 2e-15
+  G =  256: gap_posterior   -1.654 nats, max |alpha_hat - pi| 0.063, quad_error 1e-08   predictive_pit   -0.921 nats, max |alpha_hat - pi| 2e-16
+  G = 1024: gap_posterior   +0.085 nats, max |alpha_hat - pi| 0.000, quad_error 4e-14   predictive_pit   +0.085 nats, max |alpha_hat - pi| 8e-16
+```
+
+* **Both passes are off.** The batch pass (`gap_posterior`, hence
+  `classify` and the ICE / SEM E-steps) and the PIT filter
+  (`predictive_pit`, `flag_outliers`) are both wrong.
+  - The error is 4–23 nats at the default G, and still 0.1–1.7 nats at
+    256.
+  - It grows with τ and with the length of the gap. A scan of the same
+    series at G = 64 gives:
+    - at τ = 0.99: −0.04, −0.03 and −0.10 nats for L = 2, 5 and 17;
+    - at τ = 0.995 and L = 17: −0.62 nats;
+    - at τ = 0.9: nothing (below 1e-3 nats).
+* **The diagnostic is silent.** `quad_error` is 3e-5 at G = 64, far below
+  its threshold. `_quadrature_report` leaves out the rows inside a leading
+  gap, on the ground that "the renormalisation conserves that mass wherever
+  it relocates it".
+  - The renormalisation does conserve the state masses in log space: the
+    PIT filter keeps π to 1e-15.
+  - Probably, it does not conserve the law of y on the nodes. The prior is
+    broad, while the local grids of the gap are narrow, pinned by the first
+    reading after it. The raw block masses inside the gap are far from
+    their targets (up to 92 against at most 1 on mote 48 at G = 64), and
+    the renormalisation moves that mass onto nodes where the stationary
+    law does not put it.
+* **The two passes disagree.** The batch pass also drifts from π inside
+  the gap, by up to 0.29.
+  - **Mote 48.** In the 17-row gap of the clean window (old model, G = 64)
+    it gives P(x_8) = (0.46, 0.14, 0.39) against π = (0.52, 0.09, 0.39).
+  - **Cause.** The same chain run in log space keeps π. In linear space,
+    18 blocks into rows 8, 15 and 16 have a kernel that underflows to
+    zero, so they cannot be renormalised and lose their mass. The drift
+    starts at row 8.
+  - **Consequence.** The batch and filter log-likelihoods differ, although
+    `outliers.py` and the CHANGELOG state that they are equal:
+    - in the reproduction, errors of −22.10 and −23.02 nats at τ = 0.999
+      and G = 64, and −1.65 and −0.92 nats at G = 256;
+    - on mote 48's days 1–10 at G = 64, 0.36 nats. The grids of the two
+      passes are identical there (checked on the first 3 000 rows), and
+      the passes agree to 4e-12 at G = 256.
+  - **Interior runs too.** The two passes also differ after interior runs
+    of 2–3 missing rows: state probabilities up to 1e-2 apart on mote 48.
+    There the diagnostic does warn, at G = 64 on this data.
+* **Exposure of this study: small.**
+  - Only the clean windows start with a gap: 17, 2 and 17 rows on motes
+    48, 22 and 47. The detection and robust-estimation windows start with
+    a reading.
+  - The refitted models of step 1 on 39f249f (stationary p) were checked
+    by dropping the leading gap, which leaves log p(y_obs) unchanged for a
+    stationary model. At G = 64 it changes:
+    - the days 1–7 log-likelihood of the batch pass by 0.06, 1.5 and
+      0.005 nats (motes 48, 22 and 47);
+    - that of the PIT filter, on the first 200 readings, by 0.06, 0.015
+      and 0.0005 nats.
+
+    At G = 256 it changes nothing (≤ 1e-4 nats).
+  - The PIT of the first reading moves by 4e-4 at most.
+  - Inside the gap, the batch state probabilities are off by up to 0.27
+    (mote 47).
+* **Fix (not attempted, library code untouched).**
+  - Inside a leading gap, keep the reference (stationary) grid, which
+    carries the prior, up to the positions where the backward piece is
+    narrower than the prior.
+  - Or give the first reading its exact stationary law when the model is
+    stationary.
+  - Count the leading-gap rows in `_quadrature_report` (at least the exit
+    into the first reading).
+  - Make the batch pass renormalise zero-mass blocks in log space, as the
+    filter does.
+
 ## Limits
 
 * **Three motes and one failure each.** The failures are the same battery
@@ -873,8 +1038,9 @@ at α = 1e-3, against 0.3 expected.
 |---|---|
 | `il_common.py` | constants, data loader, dequantisation, labels, model helpers, baselines, scores |
 | `fit_clean.py` | step 1 → `results/fits.csv`, `results/models/*.toml` (the 12 best clean fits), `results/selected_models.json`, `results/pit_checks.csv`, `results/regimes_by_hour.csv`, `figures/clean_pit.png`, `figures/clean_regimes.png` |
-| `detect.py` | step 2 → `results/detect_scores.csv` (one row per mote × method × setting), `results/alarm_episodes.csv`, `figures/detect_*.png` |
+| `detect.py` | step 2 → `results/detect_scores.csv` (one row per mote × method × setting), `results/alarm_episodes.csv`, `figures/detect_*.png`; `--check` → `results/detect_check.csv` |
 | `robust.py` | step 3 → `results/robust_fits.csv`, `figures/robust_*.png` |
 | `summarise.py` | `results/tables.md`, `results/tables.tex` |
 | `repro_clipped_corner.py` | library problem 1 (clipped corner) |
-| `repro_gap_nodes.py` | library problem 2 (gap quadrature) |
+| `repro_gap_nodes.py` | library problem 2 (gap quadrature, fixed at 39f249f) |
+| `repro_leading_gap.py` | library problem 3 (leading gap) |

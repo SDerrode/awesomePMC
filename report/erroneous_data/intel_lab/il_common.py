@@ -13,6 +13,8 @@ Every choice below is a named constant, quoted by the README.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -81,6 +83,13 @@ ICE_TOL = 1e-4
 ALPHAS = (1e-2, 1e-3, 1e-4)
 BH_ALPHAS = (1e-2, 1e-3)
 MAIN_ALPHA = 1e-3
+#: Quadrature nodes of the missing rows (grid variants: the PMC): the
+#: library default, used by every fit, PIT and flag of the study.
+GAP_NODES = 64
+#: The sensitivity check of the PMC computations (``--gap-nodes`` of
+#: fit_clean.py and detect.py): the node count at which the library's
+#: quadrature diagnostic falls below its WARNING threshold on this data.
+GAP_NODES_CHECK = 256
 
 # ---------------------------------------------------------------------------
 # Baselines and scoring choices
@@ -136,6 +145,88 @@ def check_import() -> str:
     if not path.startswith(str(ROOT)):
         raise RuntimeError(f"pmcprg imported from {path}, not from {ROOT}")
     return path
+
+
+def git_commit() -> str:
+    """The commit of this checkout (for the *_info.json files); "+dirty" if pmcprg/ is modified."""
+    import subprocess
+    try:
+        head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "pmcprg"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+        return head + ("+dirty" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+class _WarningLog(logging.Handler):
+    """Keeps the messages of the WARNING records of ``pmcprg`` in a worker."""
+
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+def capture_warnings() -> _WarningLog:
+    """Collect (instead of printing) the WARNINGs of ``pmcprg`` from now on.
+
+    Called at the start of every worker task: the quadrature WARNING of the
+    missing-data passes ("Missing-data quadrature not converged …",
+    ``GapPosterior.quad_error`` above its threshold) is logged by every pass
+    that integrates a gap (each ICE E-step, ``classify``), and
+    :func:`warning_summary` counts it per task for the result tables.
+    """
+    lg = logging.getLogger("pmcprg")
+    for h in list(lg.handlers):
+        if isinstance(h, _WarningLog):
+            lg.removeHandler(h)
+    h = _WarningLog()
+    lg.addHandler(h)
+    lg.setLevel(logging.WARNING)
+    lg.propagate = False
+    return h
+
+
+_QUAD_RE = re.compile(r"Missing-data quadrature not converged: relative error "
+                      r"([0-9.eE+-]+) > ([0-9.eE+-]+)")
+
+
+def warning_summary(log: _WarningLog) -> dict:
+    """Counts of the captured WARNINGs: the quadrature ones and the others."""
+    quad, lim, other = [], [], []
+    for msg in log.messages:
+        m = _QUAD_RE.search(msg)
+        if m:
+            quad.append(float(m.group(1)))
+            lim.append(float(m.group(2)))
+        else:
+            other.append(msg.split(";")[0][:160])
+    return {"quad_warnings": len(quad),
+            "quad_error_max_warned": max(quad) if quad else np.nan,
+            "quad_limit_warned": max(lim) if lim else np.nan,
+            "other_warnings": len(other),
+            "other_warning_kinds": " || ".join(sorted(set(other)))}
+
+
+def quad_check(model: PMCModel, Y: np.ndarray, gap_nodes: int = GAP_NODES) -> dict:
+    """The library's quadrature diagnostic of one missing-data pass over Y.
+
+    ``gap_posterior`` builds the grids that ``predictive_pit`` builds on the
+    same missing rows (its log-likelihood is the PIT filter's). Returns
+    ``quad_error``, its WARNING threshold and the log-likelihood; NaN for a
+    model without a grid (HMC-IN) or a Y without gaps.
+    """
+    from pmcprg.pmc import gaps
+    miss = ~np.isfinite(np.asarray(Y, float))
+    post = gaps.gap_posterior(model, Y, gap_nodes=gap_nodes, xi=False)
+    qe = post.quad_error
+    return {"quad_error": float(qe) if qe is not None else np.nan,
+            "quad_limit": float(gaps.quad_warn_limit(miss)) if qe is not None else np.nan,
+            "log_lik": float(post.log_lik)}
 
 
 def epoch_time(epoch) -> pd.DatetimeIndex:

@@ -14,6 +14,11 @@ on the held-out days 8–10 (epochs 20 161–28 800) and on the fit days; the
 flag counts of ``flag_outliers`` on the held-out rows. Regimes: MPM
 classification of days 1–10 and state occupancy by hour of day.
 
+Quadrature: every PMC pass uses the library default ``gap_nodes`` = 64; the
+WARNINGs of pmcprg are counted per task and ``quad_error`` is recorded. The
+selected PMC's PIT and sequential flags are rerun at 256 nodes (the
+``check_*`` columns of pit_checks.csv).
+
 Usage (from the repository root)
 --------------------------------
     .venv/bin/python report/erroneous_data/intel_lab/fit_clean.py --jobs 4
@@ -24,7 +29,6 @@ results/pit_checks.csv, results/regimes_by_hour.csv and figures/clean_*.png.
 from __future__ import annotations
 
 import argparse
-import logging
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -36,17 +40,21 @@ from pmcprg.pmc import classify, flag_outliers, pit_checks, predictive_pit
 
 
 def task_fit(spec: dict) -> dict:
-    logging.getLogger("pmcprg").setLevel(logging.ERROR)
+    wlog = C.capture_warnings()
     d = C.load_mote(spec["mote"], spec["data"])
     Y = d["y"][:C.FIT_END]
     t0 = time.perf_counter()
     model, trace, tag, t_ice = C.fit_start(spec["kind"], spec["K"], Y, spec["start"])
     ll = C.exact_loglik(model, Y)
     n_obs = int(np.isfinite(Y).sum())
+    warned = C.warning_summary(wlog)        # the ICE E-steps and the log-likelihood pass
+    # The quadrature diagnostic of the returned model on the fit rows (NaN: HMC-IN).
+    q = C.quad_check(model, Y)
     return {**{k: spec[k] for k in ("mote", "kind", "K", "start")}, "tag": tag,
             "n_obs": n_obs, "loglik": ll, "bic": C.bic(model, ll, n_obs),
             "k_params": int(C.rc.n_free_params(model)), "iters": len(trace.log_liks),
             "best_iter": int(getattr(trace, "best_iter", -1)),
+            "quad_error": q["quad_error"], "quad_limit": q["quad_limit"], **warned,
             "seconds": time.perf_counter() - t0, "raw": model.raw}
 
 
@@ -57,13 +65,15 @@ def acf1(z: np.ndarray) -> float:
 
 
 def task_pit(spec: dict) -> dict:
-    logging.getLogger("pmcprg").setLevel(logging.ERROR)
+    wlog = C.capture_warnings()
     d = C.load_mote(spec["mote"], spec["data"])
     model = C.load_model(C.model_path(spec["mote"], spec["kind"], spec["K"]))
     Y = d["y"][:C.CLEAN_END]
     t0 = time.perf_counter()
-    P = predictive_pit(model, Y)
+    P = predictive_pit(model, Y, gap_nodes=C.GAP_NODES)
     t_pit = time.perf_counter() - t0
+    after_gap = np.r_[False, ~np.isfinite(Y[:-1])] & np.isfinite(Y)
+    after_obs = np.r_[False, np.isfinite(Y[:-1])] & np.isfinite(Y)
     fit_rows = np.zeros(Y.size, bool)
     fit_rows[:C.FIT_END] = True
     rows = []
@@ -74,14 +84,41 @@ def task_pit(spec: dict) -> dict:
              "n": c.n, "ks_stat": c.ks_stat, "ks_p": c.ks_pvalue, "lb_stat": c.lb_stat,
              "lb_p": c.lb_pvalue, "lb2_stat": c.lb2_stat, "lb2_p": c.lb2_pvalue,
              "z_mean": c.z_mean, "z_sd": c.z_sd, "acf1_z": acf1(P.z[keep]),
+             "n_after_gap": int((after_gap & keep).sum()),
+             "z_sd_after_gap": float(np.std(P.z[after_gap & keep])),
+             "z_sd_after_obs": float(np.std(P.z[after_obs & keep])),
+             "nonseq_after_gap_0.001": int((P.pvalue[after_gap & keep] < C.MAIN_ALPHA).sum()),
+             "log_lik_days_1_10": P.log_lik, "gap_nodes": C.GAP_NODES,
              "pit_seconds": t_pit}
         for a in C.ALPHAS:
             r[f"nonseq_{a:g}"] = int((P.pvalue[keep] < a).sum())
         rows.append(r)
-    F = flag_outliers(model, Y, alpha=C.MAIN_ALPHA, sequential=True)
+    F = flag_outliers(model, Y, alpha=C.MAIN_ALPHA, sequential=True, gap_nodes=C.GAP_NODES)
     for r, exclude in zip(rows, (fit_rows, ~fit_rows)):
         r[f"seq_{C.MAIN_ALPHA:g}"] = int((F.flagged & ~exclude).sum())
     X, gamma, _ = classify(model, Y)
+    warned = C.warning_summary(wlog)        # classify: the batch pass over days 1–10
+    # Quadrature diagnostic of the pass over days 1–10 (the grids of predictive_pit).
+    q = C.quad_check(model, Y, C.GAP_NODES)
+    extra = {"quad_error_days_1_10": q["quad_error"], "quad_limit_days_1_10": q["quad_limit"],
+             "batch_log_lik_days_1_10": q["log_lik"], **warned}
+    if spec.get("check"):
+        # Sensitivity: the same PIT and sequential flags at GAP_NODES_CHECK nodes.
+        G = C.GAP_NODES_CHECK
+        P2 = predictive_pit(model, Y, gap_nodes=G)
+        F2 = flag_outliers(model, Y, alpha=C.MAIN_ALPHA, sequential=True, gap_nodes=G)
+        q2 = C.quad_check(model, Y, G)
+        extra.update({"check_gap_nodes": G, "check_log_lik_days_1_10": P2.log_lik,
+                      "check_quad_error_days_1_10": q2["quad_error"]})
+        for r, exclude in zip(rows, (fit_rows, ~fit_rows)):
+            keep = np.isfinite(P2.pit) & ~exclude
+            r.update({"check_z_sd_after_gap": float(np.std(P2.z[after_gap & keep])),
+                      "check_nonseq_0.001": int((P2.pvalue[keep] < C.MAIN_ALPHA).sum()),
+                      f"check_seq_{C.MAIN_ALPHA:g}": int((F2.flagged & ~exclude).sum()),
+                      "check_seq_same_rows": bool(np.array_equal(F2.flagged & ~exclude,
+                                                                 F.flagged & ~exclude))})
+    for r in rows:
+        r.update(extra)
     out = {"rows": rows, "pit": P.pit.tolist(), "z": P.z.tolist(), "labels": X.tolist(),
            "order": C.params(model)["order"].tolist()}
     return out
@@ -123,7 +160,9 @@ def run(args):
     df.to_csv(C.RESULTS / "fits.csv", index=False)
     C.save_json(C.RESULTS / "selected_models.json", sel)
 
-    pspecs = [{"mote": m, "kind": k, "K": K, "data": args.data}
+    # The selected PMC models are also checked at GAP_NODES_CHECK nodes.
+    pspecs = [{"mote": m, "kind": k, "K": K, "data": args.data,
+               "check": k == "pmc_state" and sel[f"{m}|{k}"] == K}
               for m in C.MOTES for k in C.KINDS for K in C.KS]
     t1 = time.perf_counter()
     with ProcessPoolExecutor(args.jobs) as ex:
@@ -134,7 +173,7 @@ def run(args):
     pc["selected"] = [sel[f"{r.mote}|{r.kind}"] == r.K for r in pc.itertuples()]
     pc.to_csv(C.RESULTS / "pit_checks.csv", index=False)
     C.save_json(C.RESULTS / "fit_clean_info.json", {
-        "pmcprg": C.check_import(), "fit_seconds": t_fit, "pit_seconds": t_pit,
+        "pmcprg": C.check_import(), "pmcprg_commit": C.git_commit(), "fit_seconds": t_fit, "pit_seconds": t_pit,
         "jobs": args.jobs, "selected": sel})
     figures(pspecs, pits, sel, args)
 
