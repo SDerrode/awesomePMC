@@ -567,7 +567,7 @@ def pre_p6():
             sys.modules.pop(n, None)
 
 
-def _same(a, b):
+def _same(a, b, exclude=()):
     if isinstance(a, (tuple, list)):
         return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b))
     if a is None or b is None:
@@ -576,14 +576,34 @@ def _same(a, b):
         return np.array_equal(np.asarray(a), np.asarray(b))
     fields = getattr(a, "__dataclass_fields__", None)
     if fields is not None:
+        # fields added since BASE_COMMIT (e.g. the per-position ``nodes`` of
+        # the local grids) have no pre-P6 counterpart to compare with
+        old = getattr(b, "__dataclass_fields__", {})
         return all(_same(getattr(a, k), getattr(b, k)) for k in fields
-                   if k not in ("grid",))
+                   if k not in ("grid", *exclude) and k in old)
     return a == b
+
+
+# The gap-quadrature fix (P1: local grids where the stationary grid cannot
+# resolve a strongly dependent transition; P3: the quantile density propagated
+# through the exact kernel) changes, on purpose, two things this test used to
+# pin. Everything else stays bit-identical to the pre-P6 code. Measured
+# against the converged value (G = 2048), decision of the author, 2026-09-23:
+# * the posterior/predictive **quantiles** of every grid fixture: hmc_dn and
+#   pmc forecast error 3.5e-8 → 2.2e-9 and 5.0e-9 → 9.3e-10; pmc_pair forecast
+#   7.4e-6 → 5.6e-6, impute 2.3e-4 → 1.6e-4 — compared with the rest excluded;
+# * **sp2016_gice_k2**, where the local grids switch on: the pre-P6 values
+#   were wrong (log-lik 0.092 nat off, γ 5.1e-2, quantiles 0.97; now 2.5e-3,
+#   8.0e-4, 9.1e-3) — not compared.
+_P1P3_CHANGED = ("quantile_values",)
+_P1P3_WRONG_BEFORE = {"sp2016_gice_k2"}
 
 
 @pytest.mark.parametrize("path", MODELS, ids=lambda p: p.stem)
 def test_missing_data_results_are_bit_identical_to_pre_p6(pre_p6, path):
     old_inf, old_gaps = pre_p6
+    if path.stem in _P1P3_WRONG_BEFORE:
+        pytest.skip("pre-P6 values were wrong for this model (gap-quadrature fix, P1/P3)")
     m = PMCModel(path)
     assert m.missingness is None
     _, Y, Yn = _gapped(m, N=80, idx=[0, 1, 17, 40, 41, 42, 60, 79], tag="bit")
@@ -594,8 +614,9 @@ def test_missing_data_results_are_bit_identical_to_pre_p6(pre_p6, path):
         assert _same(inf.sample_posterior(m, Z, np.random.default_rng(3), return_y=True),
                      old_inf.sample_posterior(m, Z, np.random.default_rng(3), return_y=True))
         assert _same(gaps.gap_posterior(m, Z), old_gaps.gap_posterior(m, Z))
-        assert _same(gaps.impute(m, Z, n_samples=5, rng=2), old_gaps.impute(m, Z, n_samples=5, rng=2))
-        assert _same(gaps.forecast(m, Z, 3), old_gaps.forecast(m, Z, 3))
+        assert _same(gaps.impute(m, Z, n_samples=5, rng=2), old_gaps.impute(m, Z, n_samples=5, rng=2),
+                     exclude=_P1P3_CHANGED)
+        assert _same(gaps.forecast(m, Z, 3), old_gaps.forecast(m, Z, 3), exclude=_P1P3_CHANGED)
     if not gaps.needs_grid(m):
         assert _same(inf.precompute_weights(m, Yn), old_inf.precompute_weights(m, Yn))
         assert _same(inf._forward_log_space(m, Yn), old_inf._forward_log_space(m, Yn))

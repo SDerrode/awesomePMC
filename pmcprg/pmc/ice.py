@@ -1642,14 +1642,36 @@ class _GapEStep:
     Y_draws: np.ndarray | None = None
 
 
-def _grid_cell_draw(grid, g: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Missing values drawn on quadrature nodes ``g`` — decoded per :data:`_GAP_DRAW`."""
+def _grid_cell_draw(chain, idx: np.ndarray, g: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Missing values drawn on quadrature nodes ``g`` (S, M) of the missing
+    positions ``idx`` — decoded per :data:`_GAP_DRAW` on each position's grid
+    (the reference grid or a local one, :mod:`pmcprg.pmc.gaps`)."""
     if _GAP_DRAW == "nodes":
-        return grid.nodes[g]
-    edges = np.concatenate(([0.0], np.cumsum(grid.ws)))
-    edges[-1] = 1.0
-    s = edges[g] + rng.random(g.shape) * (edges[g + 1] - edges[g])
-    return grid.y_of_s(s)
+        return chain.nodes_at(idx)[np.arange(len(idx)), g]
+    grids = [chain.grids[int(n)] for n in idx]
+    if all(gr is chain.grid for gr in grids):
+        grid = chain.grid
+        edges = np.concatenate(([0.0], np.cumsum(grid.ws)))
+        edges[-1] = 1.0
+        s = edges[g] + rng.random(g.shape) * (edges[g + 1] - edges[g])
+        return grid.y_of_s(s)
+    out = np.empty(g.shape)
+    for c, grid in enumerate(grids):
+        gc = g[:, c]
+        if grid.mix is None:
+            k = np.zeros(gc.shape, dtype=int)
+            edges = np.concatenate(([0.0], np.cumsum(grid.ws)))
+            lo_, hi_ = edges[gc], edges[gc + 1]
+        else:
+            k = grid.mix.panel[gc]
+            start = np.concatenate(([0], np.cumsum(grid.mix.sizes)))[k]
+            cw = np.cumsum(grid.ws)                      # per-panel cumulative weights
+            base = np.where(start > 0, cw[np.maximum(start - 1, 0)], 0.0)
+            hi_ = cw[gc] - base
+            lo_ = hi_ - grid.ws[gc]
+        s = np.clip(lo_ + rng.random(gc.shape) * (hi_ - lo_), 0.0, 1.0)
+        out[:, c] = grid.y_of_s(s) if grid.mix is None else grid.y_of_s(s, k)
+    return out
 
 
 def _gap_e_step(
@@ -1671,12 +1693,12 @@ def _gap_e_step(
     forward-filter backward-sample draws of (x_{1:N}, y_mis) are taken from
     the same forward messages: for the shortcut variants the states, then
     each missing y_n ~ f_{x_n}; for the grid variants the augmented path, the
-    missing y then sitting on the quadrature nodes (decoded by
-    :func:`_grid_cell_draw`).
+    missing y then sitting on the quadrature nodes of its position (decoded
+    by :func:`_grid_cell_draw`).
     """
     from pmcprg.pmc import gaps
 
-    trans = alphas = grid = None
+    trans = alphas = grid = chain = None
     log_space = False
     out = _GapEStep(log_lik=float("nan"))
     if posterior:
@@ -1703,7 +1725,7 @@ def _gap_e_step(
         Yd = np.repeat(np.asarray(Y, dtype=float)[None], int(n_draws), axis=0)
         if grid is not None:
             X = np.where(miss[None, :], U // grid.G, U).astype(int)
-            Yd[:, idx] = _grid_cell_draw(grid, U[:, idx] % grid.G, rng)
+            Yd[:, idx] = _grid_cell_draw(chain, idx, U[:, idx] % grid.G, rng)
         else:
             X = U.astype(int)
             Yd[:, idx] = gaps._draw_state_margins(model, X[:, idx], rng)

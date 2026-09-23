@@ -61,7 +61,9 @@ that underflows keeps its ratio).
 * **After missing rows** — at a missing n−1 the filter of the grid variants
   is the augmented message α̃_{n−1}(i, g) = P(x_{n−1} = i, y_{n−1} ∈ node g
   | past) of :mod:`pmcprg.pmc.gaps` (block-renormalised quadrature, G =
-  ``gap_nodes``), and
+  ``gap_nodes``, on the grid of that row: the reference grid or a local
+  one, built as the filter enters each run of missing or gated rows — the
+  grids of ``gap_posterior`` on the same rows), and
 
       P(Y_n ≤ y | past) = Σ_{i,g} α̃_{n−1}(i, g) Σ_j T_ij(y_g) K_ij(y | y_g),
 
@@ -271,6 +273,7 @@ from pmcprg.pmc.gaps import (
     _log_kernel,
     _margin_eval,
     _normalise_blocks,
+    _run_grids,
     _x_transition,
     missing_mask,
     needs_grid,
@@ -533,10 +536,11 @@ def _normal_score(c: np.ndarray, s: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 class _Grid:
-    """Quadrature-grid pieces shared by the steps of one filter (lazy)."""
+    """Quadrature-grid pieces of one missing position (the reference grid by
+    default, or ``grid``: a local grid of :mod:`pmcprg.pmc.gaps`)."""
 
-    def __init__(self, model: PMCModel, gap_nodes):
-        self.grid = grid = reference_grid(model, gap_nodes)
+    def __init__(self, model: PMCModel, gap_nodes, grid=None):
+        self.grid = grid = reference_grid(model, gap_nodes) if grid is None else grid
         self.G = grid.G
         self.lw = np.log(grid.omega)
         self.lf, self.F = _margin_eval(model, grid.nodes, log=True)          # (G, K, K)
@@ -555,6 +559,18 @@ class _Grid:
             Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True)
             self._Q = Q.reshape(K * G, K * G)
         return self._Q
+
+    def Q_to(self, other: "_Grid") -> np.ndarray:
+        """log Q from the nodes of this grid to those of ``other``, as ``gaps._Chain``."""
+        if other is self and not self.grid.local:
+            return self.Q()
+        model, G, K = self.model, self.G, self.model.K
+        rep, til = np.repeat(np.arange(G), G), np.tile(np.arange(G), G)
+        ker = _log_kernel(model, self.lf[rep], _take(self.F, rep),
+                          other.lf[til], _take(other.F, til)).reshape(G, G, K, K)
+        Q = ker.transpose(2, 0, 3, 1) + other.lw[None, None, None, :]         # (K, G, K, G)
+        Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True)
+        return Q.reshape(K * G, K * G)
 
 
 def _take(F, idx):
@@ -589,6 +605,7 @@ class _Filter:
         with np.errstate(divide="ignore"):
             self.lev = None if ev is None else np.log(ev)
         self._grid = None
+        self._reset_grids()
         self.cops = ([[model.copula(i, j) for j in range(K)] for i in range(K)]
                      if self.uses_cop else None)
         if N > 1:
@@ -622,6 +639,32 @@ class _Filter:
             self._grid = _Grid(self.model, self.gap_nodes)
         return self._grid
 
+    def _reset_grids(self) -> None:
+        # _cur: grid of the augmented message; _run: grids of the rest of the
+        # current run of missing / gated rows; _fwd: its forward components.
+        self._cur, self._run, self._fwd = None, [], None
+
+    def _grid_at(self, n: int, aug: bool) -> _Grid:
+        """Grid of the missing (or gated) row n — local grids, :mod:`pmcprg.pmc.gaps`.
+
+        On entering a run, its grids are built from its observed neighbours:
+        the row before it (or, when row n−1 is itself missing or gated, the
+        forward components of the gap so far) and the next row with a value.
+        """
+        if not self._run or self._run[0][0] != n:
+            ref = self.grid()
+            r = n + 1
+            while r < self.N and self.miss[r]:
+                r += 1
+            yR = float(self.Y[r]) if r < self.N else np.nan
+            fwd0 = self._fwd if aug else None
+            yL = float(self.Y[n - 1]) if (n >= 1 and not aug) else np.nan
+            grids, fwd = _run_grids(self.model, ref.grid, yL, yR, r - n, fwd0, n)
+            self._run = [(n + k, self.grid() if g is ref.grid else _Grid(self.model, None, g), f)
+                         for k, (g, f) in enumerate(zip(grids, fwd))]
+        _, g, self._fwd = self._run.pop(0)
+        return g
+
     def _ev(self, n: int, aug: bool):
         """log e_n in the layout of a destination (augmented if ``aug``)."""
         if self.lev is None:
@@ -640,7 +683,7 @@ class _Filter:
         prior = _initial(model, np.zeros((1, K, K)), log=True)                # (1, K)
         if not self.grid_needed:
             return prior[0] + (0.0 if self.lev is None else self.lev[0]), False
-        g = self.grid()
+        g = self._cur = self._grid_at(0, False)
         mu = _initial(model, g.lf, log=True).T + g.lw[None, :]               # (K, G)
         init, _ = _normalise_blocks(mu[None], prior, log=True)
         return init[0] + self._ev(0, True), True
@@ -671,7 +714,7 @@ class _Filter:
             den = float(a @ T @ e)
             c, s = float(a @ Tc @ e), float(a @ Ts @ e)
         else:
-            g = self.grid()
+            g = self._cur
             G = g.G
             a = a.reshape(K, G)
             T = np.exp(g.logT)                                                 # (G, K, K)
@@ -694,7 +737,7 @@ class _Filter:
         """log transition into an observed y_n from the message at n−1."""
         if not aug:
             return self.logW[n - 1] + (0.0 if self.lev is None else self.lev[n][None, :])
-        g, K = self.grid(), self.K
+        g, K = self._cur, self.K
         G = g.G
         rep = np.zeros(G, dtype=int) + n
         ker = _log_kernel(self.model, g.lf, g.F, self.lf[rep], _take(self.Fc, rep))  # (G, K, K)
@@ -705,10 +748,11 @@ class _Filter:
         """log transition into a missing (or gated) y_n; returns (L, augmented)."""
         if not self.grid_needed:
             return self.logT[n - 1] + (0.0 if self.lev is None else self.lev[n][None, :]), False
-        g = self.grid()
+        prev, g = self._cur, self._grid_at(n, aug)
+        self._cur = g
         G = g.G
         if aug:
-            return g.Q() + self._ev(n, True), True
+            return prev.Q_to(g) + self._ev(n, True), True
         rep = np.zeros(G, dtype=int) + (n - 1)
         ker = _log_kernel(self.model, self.lf[rep], _take(self.Fc, rep), g.lf, g.F)  # (G, K, K)
         ker = ker.transpose(1, 2, 0)[None] + g.lw                             # (1, K, K, G)
@@ -732,6 +776,8 @@ class _Filter:
 
         def gate(c, s) -> bool:
             return threshold is not None and _pvalue(c, s) < threshold
+
+        self._reset_grids()
 
         lden = 0.0
         if self.miss[0]:

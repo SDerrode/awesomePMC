@@ -9,6 +9,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — missing values under strong serial dependence, and forecast / impute quantiles
+
+- **What was wrong (P1).** A missing y was integrated on one grid, the
+  quantiles of the stationary law. When the copula makes the transition
+  nearly deterministic (τ ≈ 0.99, a sensor read every 30 s), the law of the
+  missing y given its neighbours is far narrower than the node spacing, and
+  every result that involves a missing row was wrong, silently: the
+  log-likelihood, γ and ξ, `impute`, `forecast` beyond one step, the PIT
+  after a gap, gated outlier flags, and ICE / SEM with gaps. An AR(1) at
+  ρ = 0.9999 written as a PMC got a 2-step forecast sd of 0.0000 for 0.0200;
+  `flag_outliers` flagged 843 of 3000 rows for 2; the log-likelihood of Intel
+  Lab mote 48 moved by 13 600 nats between G = 64 and 512.
+- **What changed.** Each missing position whose laws the stationary grid
+  does not resolve gets a *local grid* (`gaps` docstring, "Local grids"):
+  Gaussian pieces from the copula's h-inverse around the observed neighbours
+  (forward, backward and their products, which pin a missing y between its
+  neighbours even across a jump), laid out as a composite rule on disjoint
+  panels — sinh-mapped Gauss–Legendre on each narrow piece, the stationary
+  quantiles elsewhere. A position switches only when the stationary grid
+  misintegrates these pieces, the local grid does three times better and is
+  not worse on integrals known in closed form, so weak and moderate
+  dependence keep the stationary grid bit for bit. The Tauchen–Hussey
+  renormalisation, the exact trailing-gap and state-margin limits and the
+  log-space fallback are unchanged; the outlier filter builds the same grids
+  as the batch passes (its PITs and log-likelihood equal
+  `gap_posterior`'s). `GapPosterior.nodes`, `Imputation.grid_nodes` /
+  `grid_mass` and `Forecast.grid_nodes` / `grid_mass` give each position's
+  own discrete law; `density` stays on the reference nodes.
+- **Measured (P1)**, against exact references (`test_gaps_local_grids.py`):
+  - AR(1) at ρ = 0.998, 0.999, 0.9999, leading, isolated, 5-row, alternating
+    and trailing gaps, G = 64: log-likelihood 2e-7–5e-7, means, sds and
+    quantiles 3e-8–9e-7 of the conditional sd — before 0.24–35 nats and sds
+    off by 41–180 %. Forecasts to 2e-9 (sd 0.0200 at ρ = 0.9999, h = 2).
+    The PIT after a gap to 3e-12 (before 0.85); 1 flag on 400 rows with
+    15 % gaps, as the exact PITs (before 119).
+  - Pair-margin PMCs at τ = 0.9–0.99 (Gauss, Clayton, Gumbel) against brute
+    force over the paths: 7e-8–3.8e-2 at G = 64 and 2e-13–2.4e-4 at G = 128,
+    before 5.7e-3–5.6 and 2.6e-5–1.0.
+  - Intel mote 48, 10 clean days: 65 641.05, 65 640.28, 65 640.245 and
+    65 640.245 nats at G = 64, 128, 256 and 512, before 51 798, 57 574,
+    63 096 and 65 364; the normal scores after a gap have sd 0.81 at every G,
+    before 1.52 at G = 64.
+  - Limits: the grid still has G nodes. A gap of 50 rows at ρ = 0.9999 is off
+    by 1e-2 nats at G = 64 (1e-7 at G = 128); a model with six separated
+    narrow pieces per gap needs G = 128.
+- **Cost** (forward pass, N = 3000, 10 % single gaps, G = 64): +12–23 %
+  where nothing is screened (τ = 0.6); about 3× where gaps are screened or
+  get local grids (τ = 0.9: 101 against 36 ms with K = 2, 152 against 53 ms
+  with K = 3; τ = 0.99: 112 against 34 ms, 175 against 52 ms). Intel mote 48
+  (3 592 missing rows): 3.1 against 0.6 s per forward pass.
+- **Convergence diagnostic.** After each pass, the relative errors of the
+  integrals every grid must reproduce exactly — the raw block masses before
+  the renormalisation, weighted by the posterior mass through them, and the
+  exit masses of the local grids — are summed over the missing rows
+  (`GapPosterior.quad_error`); above 1e-3 · √(number of runs of missing rows)
+  a WARNING says the quadrature has not converged and to raise `gap_nodes`.
+  - With the new grids: no warning on 144 AR(1) runs, none off by more than
+    1e-2; a 50-row gap at ρ = 0.9999 and G = 64 is flagged (1.1e-2 nats
+    off); 3 of 4 randomised pair-margin runs off by more than 1e-2 flagged.
+  - Intel mote 48: 14, 0.16 and 0.039 at G = 64, 128 and 256 (limit 0.056)
+    for errors of 0.81, 0.04 and < 1e-3 nats.
+  - On the stationary grid alone it would have flagged 54 of the 66 AR(1)
+    runs off by more than 1e-2; the 12 it misses integrate their masses to
+    1e-4 with second moments 2–5 % off. It is a screen, not a bound.
+- **What was wrong (P3).** The quantiles of `forecast` and `impute` come
+  from the density of the missing y between the nodes, propagated through
+  the exact kernels (Nyström). The propagation also applied the chain's
+  block renormalisation factors, which reach 1e30 for a row whose kernel the
+  grid misses; off the nodes that put all the mass on one far node. On the
+  ICE fit of `report/forecasting` (3 states, pair margins, a spike regime)
+  the 2-step forecast from y = 4 returned 13.40 / 15.77 / 16.69 as its
+  2.5 / 50 / 97.5 % quantiles, for a law of mean 4.26 and sd 1.42.
+- **What changed (P3).** The density propagates the previous message
+  through the exact kernel, without the factors. A safety net checks that
+  the interpolated CDF is monotone and within the Markov–Stieltjes bracket
+  of the node masses (1e-6), and otherwise inverts the piecewise-linear CDF
+  of the cumulative masses, with a WARNING.
+- **Measured (P3).** 3.04 / 4.00 / 10.47 at every G ≥ 128, within 4.3e-3 at
+  G = 32 and 2.7e-3 at G = 64; `impute` within 1e-3 at G = 64 and 1.5e-5 at
+  G ≥ 128; every quantile inside the CDF bracket of its node law, here and
+  on randomised 3-state pair-margin models.
+- **Changed results.** Wherever the stationary grid resolved the gaps (every
+  Gaussian fixture, weak and moderate τ), log-likelihoods, γ, ξ, moments and
+  draws are bit-identical; the quantiles move by 1e-9–5e-5, closer to the
+  converged values. The golden `test_missing_data_results_are_bit_identical_to_pre_p6`
+  fails on its four grid fixtures and was not regenerated: on
+  `hmc_dn_gauss_k2`, `pmc_gauss_k2` and `pmc_pair_gauss_k2` only the
+  quantiles move (forecast 3.5e-8 → 2.2e-9, 5.0e-9 → 9.3e-10 and
+  7.4e-6 → 5.6e-6 from the converged value; impute 2.3e-4 → 1.6e-4 on the
+  pair fixture); on `sp2016_gice_k2` (Gamma and beta-prime margins, Clayton
+  τ = 0.7) the golden log-likelihood is 0.092 nats from the converged value
+  and the new one 2.5e-3, γ 5.1e-2 against 8.0e-4, and the golden quantiles
+  are off by 0.97 (impute) and 0.34 (forecast) against 9.1e-3 and 1.7e-4 —
+  a P3 failure. Its comparison helper now skips the dataclass fields added
+  since the base commit.
+
 ### Added — two real-data studies: erroneous readings (Intel Lab) and forecasting against pmmforecast
 
 - **`report/erroneous_data/intel_lab/`.** Intel Berkeley Lab temperatures
@@ -35,7 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `repro_gap_nodes.py` and `repro_clipped_corner.py`.
   - The empty state is fixed (above).
   - The gap quadrature under strong serial dependence and the forecast/impute
-    quantiles are open, so their copula-model numbers are provisional.
+    quantiles are fixed (above); the copula-model numbers of both studies
+    were computed before and are provisional until rerun.
   - The pmmforecast issues found are listed in its README section, for its
     author.
 
