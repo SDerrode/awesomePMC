@@ -300,7 +300,10 @@ PAIR_Y = {
 
 
 @pytest.mark.parametrize("cop,tau,case,tol64,tol128", [
-    # max(|Δ log p|, |Δγ|, |Δ mean|, |Δ sd|) measured at G = 64 / 128, new and (old):
+    # max(|Δ log p|, |Δγ|, |Δ mean|, |Δ sd|) measured at G = 64 / 128, new and (old);
+    # with the filter-weighted proposals (test_gaps_filter_weights.py) three changed:
+    # Gauss lower 4.6e-4 -> 9.6e-5, Clayton 0.95 lower 3.3e-4 -> 1.6e-3 (its log-lik;
+    # gamma, mean and sd 4 times smaller), Gumbel 0.95 upper 5.4e-4 -> 6.2e-5 at G = 64
     ("Gauss", 0.99, "central", None, 2e-3),      # 3.8e-2 / 2.4e-4   (4.2 / 1.0)
     ("Gauss", 0.99, "lower", 3e-3, 5e-6),        # 4.6e-4 / 6.6e-7   (5.6 / 0.53)
     ("Gauss", 0.99, "lead-trail", 1e-2, 3e-6),   # 1.5e-3 / 4.2e-7   (2.3 / 0.52)

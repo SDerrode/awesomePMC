@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — gap quadrature: local grids placed from the filter, not from the state law of y alone (cause 4)
+
+- **Why.** The pieces placing a run's local grid were weighted by the state
+  law of its neighbours given y alone; where the filter sits in a state 5.4
+  sds into its margin's tail, no piece represented it: Intel mote 22 was
+  1.1 / 0.14 / 7.1 nats off at G = 64 / 128 / 256 (not monotone), a
+  synthetic tail filter 0.48 nats (sds 90 % off, `quad_error` quiet).
+  Panels centred on light pieces also put a 10-row regime-AR(1) gap 0.11
+  nats off and leading-gap means 0.16 sd off.
+- **What.** A first pass gives α̂ / β̂ at every run's ends; proposals are
+  reweighted by them (bridges divided by the prior they counted twice),
+  runs whose grid misintegrates them are rebuilt (kept if better), merged
+  panels must resolve every piece, unchanged transitions are reused. No
+  narrow kernel: no pass, bit for bit as before. The diagnostic weights the
+  exit integrals by the posterior (`gaps` docstring, "Filter-weighted
+  proposals").
+- **Measured** (sum of |per-run log-lik errors|, G = 64 / 128 / 256): mote
+  22 → 0.18 / 1.1e-2 / 5e-4, monotone; mote 48 0.80 / 6.8e-2 / 2.8e-4 →
+  3.6e-2 / 4.0e-3 / 4.6e-5; mote 47 0.87 / 1.5e-2 / 1.4e-3 → 7.9e-2 /
+  4.0e-4 / 1.2e-4. Regime AR(1), 162 exact cases: monotone in G = 64–512
+  everywhere (2 were not), none worse at G = 64 beyond noise; tail filter
+  → 8.3e-6 nats; leading-gap means → 8.6e-3 sd. Diagnostic, 66 passes: 11
+  off, 3 missed (0.010–0.015 nats), no false alarm. CPU: ICE E-step 1.37×,
+  full ICE start 1.23× (mote 48); robust window, ICE iterate 10, 1.62×.
+- **Tests.** `test_gaps_filter_weights.py` (5, each failing on ca6ac57).
+
 ### Added — forecasting study completed: pmcprg against pmmforecast (report)
 
 - **Setup.** `report/forecasting/` was rerun on the gap-quadrature fix

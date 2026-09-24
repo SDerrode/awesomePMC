@@ -703,12 +703,15 @@ class _Filter:
         # current run of missing / gated rows; _fwd: its forward components.
         self._cur, self._run, self._fwd = None, [], None
 
-    def _grid_at(self, n: int, aug: bool) -> _Grid:
+    def _grid_at(self, n: int, aug: bool, la=None) -> _Grid:
         """Grid of the missing (or gated) row n — local grids, :mod:`pmcprg.pmc.gaps`.
 
         On entering a run, its grids are built from its observed neighbours:
         the row before it (or, when row n−1 is itself missing or gated, the
         forward components of the gap so far) and the next row with a value.
+        A run of gated rows entered from a row of the filter has its proposal
+        weighted by the filter there (``la``, the normalised log message at
+        n − 1; ``gaps`` module docstring, "Filter-weighted proposals").
         """
         if not self._run or self._run[0][0] != n:
             ref = self.grid()
@@ -728,7 +731,8 @@ class _Filter:
                 grids = [self._pre[0][k] for k in range(n, r)]
                 fwd = [self._pre[1][k] for k in range(n, r)]
             else:
-                grids, fwd = _run_grids(self.model, ref.grid, yL, yR, r - n, fwd0, n)
+                w_in = None if (aug or la is None) else np.exp(np.asarray(la, dtype=float))
+                grids, fwd = _run_grids(self.model, ref.grid, yL, yR, r - n, fwd0, n, w_in=w_in)
             self._run = [(n + k, self.grid() if g is ref.grid else _Grid(self.model, None, g), f)
                          for k, (g, f) in enumerate(zip(grids, fwd))]
             if self._lead:
@@ -816,11 +820,14 @@ class _Filter:
         X = ker.transpose(1, 0, 2).reshape(K * G, K)
         return X + (0.0 if self.lev is None else self.lev[n][None, :])
 
-    def _L_missing(self, n: int, aug: bool) -> tuple[np.ndarray, bool]:
-        """log transition into a missing (or gated) y_n; returns (L, augmented)."""
+    def _L_missing(self, n: int, aug: bool, la=None) -> tuple[np.ndarray, bool]:
+        """log transition into a missing (or gated) y_n; returns (L, augmented).
+
+        ``la``: the normalised log message at n − 1 (:meth:`_grid_at`).
+        """
         if not self.grid_needed:
             return self.logT[n - 1] + (0.0 if self.lev is None else self.lev[n][None, :]), False
-        prev, g = self._cur, self._grid_at(n, aug)
+        prev, g = self._cur, self._grid_at(n, aug, la)
         self._cur = g
         G = g.G
         if aug:
@@ -886,7 +893,7 @@ class _Filter:
                 cdf[n], sf[n] = c, s
                 if gate(c, s):
                     gated[n] = True
-                    L, aug_n = self._L_missing(n, aug)
+                    L, aug_n = self._L_missing(n, aug, la)
                 else:
                     L, aug_n = self._L_observed(n, aug), False
                     observed = True

@@ -333,9 +333,12 @@ def _eval_series(name, rho, seed):
 
 
 @pytest.mark.parametrize("name,rho,G,off", [
-    # Measured: |log-lik error| (exact) and quad_error.
-    ("sd", 0.999, 64, True),        # 0.17 nats; 0.92 (old code: 1.2, limit 5.5e-3)
-    ("repro", 0.9999, 128, False),  # 1.1e-3 nats (sum over runs 2.1e-3); 0.026 (old: 0.026 > 5.5e-3)
+    # Measured: |log-lik error| (exact) and quad_error. The filter-weighted
+    # proposals put the first case, 0.17 nats off at G = 64 before them
+    # (quad_error 0.92), at 2.6e-4 nats (quad_error 5.8e-3, quiet): it is
+    # taken at G = 32 instead.
+    ("sd", 0.999, 32, True),        # 0.18 nats; 1.02
+    ("repro", 0.9999, 128, False),  # 2.8e-5 nats; 8.9e-4 (P5: 1.1e-3 nats; 0.026)
     ("sd", 0.99, 128, False),       # 2.3e-8 nats; 4.1e-12
 ])
 def test_diagnostic_warns_when_the_answer_is_off(caplog, name, rho, G, off):

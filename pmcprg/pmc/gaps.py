@@ -191,7 +191,9 @@ laws the reference grid does not resolve gets its own grid instead:
   Q(Φ(±2)), Q(Φ(±3)) (skewed or heavy-tailed laws, Clayton and Gumbel in
   their dependent tail). Weights: the one-observation state law of the
   neighbour times the transition; bridges ½, forward and backward pieces ¼
-  each; near-identical pieces merged, six kept.
+  each; near-identical pieces merged, six kept. These are the proposals of
+  a first pass; the runs they serve badly are rebuilt from proposals
+  weighted by the filter ("Filter-weighted proposals", below).
 * **Grid.** A composite rule on disjoint panels: every narrow piece owns a
   *core* panel m ± 8 e s (e the tail extent), cut where cores meet and given
   to the piece whose density dominates there — or to a piece 4 times
@@ -265,19 +267,11 @@ laws the reference grid does not resolve gets its own grid instead:
   means or scales, 0.02–0.57 nats at G = 64 and 1.8e-3–0.44 at G = 128
   (identical states, the AR(1) itself: ≤ 3.1e-7 at G = 64).
   The Intel Lab clean windows (the step-1 fits of motes 48, 47 and 22, days
-  1–7; G = 512–1024 references), the same sum: 0.80, 0.87 and 1.1 nats at
-  G = 64 (runs off by up to 0.21, 0.19 and 0.16 nats), 6.8e-2, 1.5e-2 and
-  0.16 at G = 128, 2.8e-4 and 1.4e-3 at G = 256 for motes 48 and 47.
-  Mote 22 is 7.1 nats off at G = 256 (1 800 single-row gaps off by up to
-  0.13) and 1.9e-2 at G = 512: the proposal weights are the state law of
-  the neighbour given y alone, not the filter, and where the filter sits in
-  a state whose margin puts y far in its tail (state 2 at 5.4 sds, a
-  Gaussian copula at τ = 0.975) the path that stays in it weighs ~1e-7
-  and no piece represents it; at G = 256 the reference grid resolves every
-  piece and is kept, with nodes 0.17 °C apart for a law of scale 0.05,
-  while at G = 64 and 128 the local grids of the other pieces cover it.
-  The diagnostic warns on all of these but the last (quad_error 1.9, 0.64,
-  0.67; 0.008 at G = 512).
+  1–7; G = 512 references), the same sum before the filter-weighted
+  proposals: 0.80, 0.87 and 1.1 nats at G = 64, 6.8e-2, 1.5e-2 and 0.14 at
+  G = 128, 2.8e-4, 1.4e-3 and 7.1 at G = 256; now 3.6e-2, 7.9e-2 and 0.18,
+  4.0e-3, 4.0e-4 and 1.1e-2, 4.6e-5, 1.2e-4 and 5e-4 ("Filter-weighted
+  proposals").
 * **Cost** (forward pass, N = 3000, 10 % single gaps, Gaussian copulas,
   G = 64): τ = 0.6, no candidate: 38 against 34 ms (K = 2), 64 against
   52 ms (K = 3); τ = 0.9, candidates screened, few or none switched: 101
@@ -294,6 +288,75 @@ laws the reference grid does not resolve gets its own grid instead:
   h-functions). The robust-estimation window (14 401 rows, 8 275 missing,
   4 962 blocks between local grids): 14.1 s against 17.4 s (16.0 s quiet)
   and 16.1 s against 91.4 s (72.6 s quiet).
+
+Filter-weighted proposals
+-------------------------
+The pieces above are weighted by the state law of the neighbours given y
+alone, μ(i, y_{a−1}) and p_ij f_ji(y_{b+1}). Where the filter sits in a
+state whose margin puts y far in its tail — Intel mote 22, a state 5.4 sds
+out under a Gaussian copula at τ = 0.975 — that law gives the path that
+stays in it ~1e-7, no piece represents it and the grid misses the
+integrand: mote 22 was 1.1 nats off at G = 64, 0.16 at 128 and 7.1 at 256
+(not monotone in G). The grids are therefore built in two steps
+(:func:`_gap_grids_pass`):
+
+* a pass on the grids of those proposals gives α̂ at the row before every
+  run and β̂ at the row after it (none is run where no one-step kernel is
+  narrower than the reference grid resolves: bit for bit the results
+  before);
+* the proposals are recomputed with forward pieces weighted by α̂_{a−1}(i)
+  T_ij(y_{a−1}), backward pieces by p_ij f_ji(y_{b+1}) β̂_{b+1}(j), and
+  bridges divided by the prior density μ(k, m) of their state at their
+  location — the forward piece stands for p(x_n, y_n | past), the backward
+  one for p(future | x_n, y_n) μ(x_n, y_n), and their product counted the
+  prior twice (:func:`_bridges`); the transition kernels into a position
+  and the closed-form entry / exit checks are weighted by the bridges
+  through them (a kernel no bridge goes through has no posterior mass:
+  counted at its prior weight, it made the local grid lose to the
+  reference grid at G = 512, 3.5e-4 nats off where it is 2.9e-10);
+* a run is rebuilt from them (:func:`_refine_grids`) when its grid
+  integrates their pieces or kernels worse than 1e-3, or worse than 1e-6 and
+  3 times what it did on the proposal it was built for (a candidate on the
+  reference grid: worse than 1e-6); its new grids are kept when their error
+  on the new proposal is smaller. Rebuilt grids merge panels only while
+  the merged sinh map resolves every piece (_MERGE_RES), or as before where
+  that integrates the proposal better (:func:`_better_layouts`): a panel
+  centred on a light piece with a heavier one 5.5 scales away put the
+  means of a 17-row leading gap 0.16 sd off. One pass (_FILTER_PASSES:
+  a second, from the filter of the refined grids, left the Intel windows
+  unchanged to the last digit); the final pass takes the transitions
+  between unchanged grids from it (:class:`_Chain`, ``reuse``). A run of
+  gated rows of :mod:`pmcprg.pmc.outliers` is weighted by the running
+  filter on its left.
+
+A pass rather than grids built as the forward recursion reaches each run:
+run by run, the grids of Intel mote 48 cost 26 s instead of 1.4 s
+(measured), and the backward messages of the exits would be missing.
+Measured, sum over the runs of |log-likelihood error| at G = 64 / 128 /
+256 / 512, before → now: Intel mote 22 (against G = 512 of this version,
+whose runs that other passes dispute agree with G = 2048 to 5e-6),
+1.1 / 0.14 / 7.1 / 4e-3 → 0.18 / 1.1e-2 / 5e-4 / ~1e-5, monotone; motes 48
+and 47 (against G = 512), 0.80 / 6.8e-2 / 2.8e-4 → 3.6e-2 / 4.0e-3 / 4.6e-5
+and 0.87 / 1.5e-2 / 1.4e-3 → 7.9e-2 / 4.0e-4 / 1.2e-4. (At G = 1024 a few
+multi-row runs of mote 22 keep the reference grid, whose proxy error is
+7e-7 for a run 4e-4 nats off, before and after this version.) Regime AR(1)
+(the exact references of ``test_gaps_leading.py``; 162 cases: the regime
+models and the AR(1) itself, ρ = 0.99–0.9999, two series, nine gap
+patterns): |log-likelihood error| monotone in G = 64 → 512 in every case
+(2 were not); a 10-row gap at ρ = 0.999, 0.11 / 1.8e-3 → 2.0e-3 / 1.9e-5
+nats at G = 64 / 128; states of different scales at ρ = 0.9999, 0.26 /
+0.21 / 0.18 / 4e-2 → 3.1e-3 / 8.9e-6 / 1.1e-6 / 4e-11; at G = 64 no case
+worse beyond quadrature noise (one: means 4e-3 → 1.4e-2 sd for a path of
+weight 1e-3 on 5 nodes, its log-likelihood 14 times better); the AR(1)
+itself bit for bit. A filter 5.4 sds into its state's tail
+(``test_gaps_filter_weights.py``): 0.48 nats → 8.3e-6 at G = 64 and 1.3e-3
+→ 3e-11 at G = 256, the sds of the missing values 90 % → 3e-3 off, where the
+diagnostic stayed quiet; the 17-row leading gap, means 0.16 → 8.6e-3 sd.
+Cost (CPU time, the E-steps in one process): an ICE E-step on mote 48
+(days 1–7, G = 64) 1.37 times (1.70 → 2.32 s; 1.43 at the k-means start of
+ICE), ``predictive_pit`` 1.32, a full ICE start there 1.23 (31.5 → 38.7 s);
+the robust-estimation window at ICE iterate 10, 781 runs rebuilt, 1.62
+(12.9 → 21.0 s) and 1.92, peak memory 2.2 → 2.9 GB.
 
 Leading gaps
 ------------
@@ -336,7 +399,10 @@ parts):
 
 * the raw block masses before the renormalisation, weighted by the posterior
   mass through them (rows from the background panels of a local grid, which
-  carry a broad law, left out), and the exit masses of the local grids;
+  carry a broad law, left out), and the exit masses of the local grids,
+  weighted by the posterior of the exit transition (until this version by
+  their prior masses: with the filter-weighted proposals that reported
+  0.07–0.50 on regime-AR(1) passes 5e-6–4e-5 nats off);
 * inside a leading gap, the reverse masses of the prior's transitions, at
   the destinations of the core panels, weighted by the posterior and scaled
   by 0.02 (the column rescaling makes each reverse mass exact, so a relative
@@ -352,7 +418,7 @@ where Φ rounds to 1 so that the copula term is constant, has raw block
 masses 32 times the exact ones, which the renormalisation makes exact — 22
 of the 27, and 22 at G = 256 for a pass 0.056 nats off. The sum
 estimates Σ_runs |error of the run's log-likelihood factor| in nats, to
-within a factor of about 10 in either direction on the references below. A
+within a factor of about 15 on the references below (that start aside). A
 WARNING ("Missing-data quadrature not converged … increase gap_nodes") is
 logged above ``QUAD_WARN`` = 0.05, whatever the number of runs
 (:func:`quad_warn_limit`; it was 1e-3 · √R, R the number of runs). It is a
@@ -362,16 +428,14 @@ Calibration: 67 passes, a pass "off" when the sum of |per-run
 log-likelihood errors| exceeds 0.01 nats — against the exact references of
 ``test_gaps_leading.py`` (18 regime-AR(1) series at G = 64 and 128,
 9 leading gaps of the reproduction at G = 64 and 256) and the G = 512–1024
-references of the Intel Lab windows (13 passes). Off: 25, of which 5
-missed (0.013–0.021 nats off, reports 0.001–0.025). Not off: 42, of which
-2 false alarms: 17-row leading gaps at G = 64 whose log-likelihood is right
-to 2.5e-4 (reports 0.050 and 0.051). The diagnostic before this version,
-on the passes of the code before this version (57): 18 of 36 off passes
-missed (17 leading gaps, off by up to 22 nats), no false alarm. On the
-Intel windows the WARNING that fired on every ICE E-step was right: at
-G = 64 the passes are 0.8–4.2 nats off (quad_error 1.1–27; the robust
-window 12.5, quad_error 154); at G = 256 motes 48 and 47 are 2.8e-4 and
-1.4e-3 off (quad_error 0.002 and 0.001, quiet).
+references of the Intel Lab windows (10 passes of the step-1 fits at G =
+64–512, 3 of ICE iterates). Off: 11, of which 3 missed (0.010–0.015 nats
+off, reports 0.015–0.030). Not off: 56, no false alarm. The report is 0.8–3
+times the error on the regime-AR(1) passes off by more than 1e-3, 2–15
+times on the Intel ones (860 on the k-means start of ICE at G = 256, a pass
+0.027 nats off: the state 8 sds from y above). Before the filter-weighted
+proposals and this exit weighting (67 passes of that code): 25 off, 5
+missed, 2 false alarms.
 
 Returned α̂ and β̂ (K-state view of the augmented chain)
 -------------------------------------------------------
@@ -653,8 +717,9 @@ class QuadratureGrid:
     dists   : list of the C frozen component laws of g_ref.
     mix     : None for the reference grid, the :class:`_Panels` of a local
               grid.
-    exit_error : for a local grid next to an observed row after it, its exit
-              check (:func:`_neighbour_error`), kept for the diagnostic.
+    exit_rel : for a local grid next to an observed row after it, the
+              relative errors (K, K) of its exit integrals
+              (:func:`_neighbour_error`), kept for the diagnostic.
     """
 
     s: np.ndarray
@@ -668,7 +733,7 @@ class QuadratureGrid:
     weights: np.ndarray
     dists: list
     mix: _Panels | None = None
-    exit_error: float | None = None
+    exit_rel: np.ndarray | None = None
 
     @property
     def G(self) -> int:
@@ -815,6 +880,22 @@ _SINH_SCALE = 2.0
 #: strung along the line, gets several panels.
 _NEST_RATIO = 4.0
 _MERGE_SPAN = 3.0 * _CORE_WIDTH
+#: ... and when the sinh map of the merged panel (centred on the narrower,
+#: scale c = _SINH_SCALE s) spaces its nodes at every merged piece's centre at
+#: most _MERGE_RES times wider than the piece's own panel would: √(c² + D²)
+#: ≤ _MERGE_RES c_piece, D the distance between the centres. Without it
+#: (``None``, the rule before this version) a panel was centred on a light
+#: piece with a heavier one 5.5 scales away (a spacing 2.9 times too wide):
+#: 0.16 sd off in the means of a 17-row leading gap of the regime AR(1) at
+#: τ = 0.999, G = 64.
+_MERGE_RES = 1.5
+#: Where the two differ, keep of the layouts with and without _MERGE_RES the
+#: one whose grid integrates the proposal better (:func:`_better_layouts`):
+#: merging nearby pieces of comparable weight into one wide panel integrates
+#: their smooth mixture 300 times better on the Clayton τ = 0.9 brute-force
+#: case, separating a narrow piece from its neighbours 20 times better on the
+#: Gaussian τ = 0.99 one. Private switch kept for accuracy studies.
+_LAYOUT_CHOICE = True
 #: Fewest nodes of a core panel and of a background panel.
 _MIN_CORE_NODES = 8
 _MIN_BACKGROUND_NODES = 4
@@ -943,17 +1024,20 @@ def _summaries(q: np.ndarray, *, extent: bool = False):
     return loc, sc, np.where(np.isfinite(wide), np.maximum(wide / sc, 1.0), 1.0)
 
 
-def _entry_components(model: PMCModel, y: np.ndarray, *, reverse: bool):
+def _entry_components(model: PMCModel, y: np.ndarray, *, reverse: bool, w=None):
     """Components of the law of a missing y next to the observed value y.
 
     Forward (y = y_{a−1}, the position after it): one per (i, j), the exact
     conditional law of the transition i → j from y, weight a_i T_ij(y) with
-    a_i ∝ μ(i, y) the state law given y alone. ``reverse`` (y = y_{b+1}, the
-    position before it): one per (i, j) with i the state at the missing
-    position, the law of y_b given (i → j, y), weight ∝ p_ij f_ji(y).
-    Returns (lam, loc, sc) (P, K²), the state at the missing position and
-    the stay flag (i == j) of every column, and the tail extents (P, K²)
-    (:data:`_LEVELS`).
+    a_i ∝ μ(i, y) the state law given y alone, or a_i = ``w[:, i]`` the
+    forward filter α̂_{a−1}(i) (module docstring, "Filter-weighted
+    proposals"). ``reverse`` (y = y_{b+1}, the position before it): one per
+    (i, j) with i the state at the missing position, the law of y_b given
+    (i → j, y), weight ∝ p_ij f_ji(y), times ``w[:, j]`` = β̂_{b+1}(j) when
+    given. With ``w`` the weights are computed in log space (a state whose
+    margin puts y 40 sds out keeps its piece). Returns (lam, loc, sc) (P,
+    K²), the state at the missing position and the stay flag (i == j) of
+    every column, and the tail extents (P, K²) (:data:`_LEVELS`).
     """
     K = model.K
     y = np.asarray(y, dtype=float)
@@ -966,7 +1050,17 @@ def _entry_components(model: PMCModel, y: np.ndarray, *, reverse: bool):
     state = np.empty(K * K, dtype=int)
     stay = np.empty(K * K, dtype=bool)
     with np.errstate(all="ignore"):
-        if reverse:
+        if w is not None:
+            lf, _ = _margin_eval(model, y, log=True)
+            lw = np.log(np.asarray(w, dtype=float))
+            if reverse:
+                lwg = np.log(model.prior_p)[None, :, :] + lf.transpose(0, 2, 1) + lw[:, None, :]
+            else:
+                lwg = lw[:, :, None] + _x_transition(model, lf, log=True)
+            lwg = np.where(np.isnan(lwg), -np.inf, lwg)
+            mx = lwg.max(axis=(1, 2), keepdims=True)
+            wgt = np.where(np.isfinite(mx), np.exp(lwg - np.where(np.isfinite(mx), mx, 0.0)), 0.0)
+        elif reverse:
             wgt = model.prior_p[None, :, :] * f.transpose(0, 2, 1)             # p_ij f_ji(y)
         else:
             a = _initial(model, f, log=False)
@@ -1059,14 +1153,19 @@ def _push(model: PMCModel, lam, loc, sc, state, stay, *, reverse: bool):
     return lam2, loc2, sc2, st2, sy2, ks2, ex2
 
 
-def _bridges(F, B):
+def _bridges(F, B, model: PMCModel | None = None):
     """Products of the forward and backward components of a common state.
 
     F, B = (lam, loc, sc, state, extent) with per-position state arrays (P, C).
     The product of N(m_F, s_F²) and N(m_B, s_B²) — the law of a y pinned by
     its two neighbours — weighted by λ_F λ_B N(m_F − m_B; 0, s_F² + s_B²).
-    Returns (lam, loc, sc, extent) (P, C_F·C_B), lam normalised per position
-    (the larger of the two extents).
+    With ``model`` the weight is also divided by the prior density μ(k, m)
+    of the common state k at the product's location m: the forward piece
+    stands for p(x_n, y_n | past) and the backward one for p(future | x_n,
+    y_n) μ(x_n, y_n), so their product counts the prior of (x_n, y_n) twice
+    (module docstring, "Filter-weighted proposals"). Returns (lam, loc, sc,
+    extent) (P, C_F·C_B), lam normalised per position (the larger of the two
+    extents).
     """
     lF, mF, sF, stF, eF = F
     lB, mB, sB, stB, eB = B
@@ -1078,10 +1177,17 @@ def _bridges(F, B):
         lw = (np.log(lF)[:, :, None] + np.log(lB)[:, None, :]
               - 0.5 * d * d / v - 0.5 * np.log(v))
         lw = np.where(same, lw, -np.inf)
-        mx = lw.max(axis=(1, 2), keepdims=True)
-        w = np.where(np.isfinite(mx), np.exp(lw - np.where(np.isfinite(mx), mx, 0.0)), 0.0)
         loc = (mF[:, :, None] * vB + mB[:, None, :] * vF) / v
         sc = np.sqrt(vF * vB / v)
+        if model is not None:
+            r, cf, cb = np.nonzero(same & np.isfinite(lw))
+            if r.size:
+                lf, _ = _margin_eval(model, loc[r, cf, cb], log=True)
+                lmu = _initial(model, lf, log=True)[np.arange(r.size),
+                                                    np.broadcast_to(stF, lF.shape)[r, cf]]
+                lw[r, cf, cb] = np.where(np.isfinite(lmu), lw[r, cf, cb] - lmu, -np.inf)
+        mx = lw.max(axis=(1, 2), keepdims=True)
+        w = np.where(np.isfinite(mx), np.exp(lw - np.where(np.isfinite(mx), mx, 0.0)), 0.0)
     P = lF.shape[0]
     w = w.reshape(P, -1)
     tot = w.sum(axis=1, keepdims=True)
@@ -1097,13 +1203,21 @@ def _rows(x, keep):
     return x[keep] if x.ndim == 2 else x
 
 
-def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None):
+def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None, w_in=None, w_out=None,
+                   with_bridged: bool = False):
     """Local proposals of the positions of P runs of missing rows (module docstring).
 
     ``yL``, ``yR`` (P,) the observed neighbours (NaN: none), ``L`` (P,) the
     run lengths; ``fwd0`` optional forward components (lam, loc, sc, state,
     stay) at the position before each run (a continued gap, see
-    :mod:`pmcprg.pmc.outliers`) used instead of ``yL``.
+    :mod:`pmcprg.pmc.outliers`) used instead of ``yL``. ``w_in``, ``w_out``
+    (P, K): the forward filter at the row before each run and the backward
+    message at the row after it (module docstring, "Filter-weighted
+    proposals"); with either, the entry weights come from them (the state
+    law given the neighbour alone where one is None) and the bridges are
+    divided by the prior (:func:`_bridges`), and the kernels weighted by the
+    bridges through them. ``with_bridged`` adds the mask (ΣL,) of the
+    positions with bridges.
 
     Returns (lam, loc, sc, fwd, kern): the Gaussian components (ΣL, C) of
     every position in run order (λ summing to 1, or to 0 for a position with
@@ -1117,6 +1231,7 @@ def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None):
     yR = np.asarray(yR, dtype=float)
     L = np.asarray(L, dtype=int)
     P = L.size
+    filtered = w_in is not None or w_out is not None
     off = np.concatenate([[0], np.cumsum(L)])
     Mt = int(off[-1])
     CF = K * K
@@ -1138,7 +1253,8 @@ def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None):
     cur, runs = None, np.nonzero(hasF & (L >= 1))[0]
     if runs.size:
         if fwd0 is None:
-            lam, loc, sc, st, sy, es = _entry_components(model, yL[runs], reverse=False)
+            lam, loc, sc, st, sy, es = _entry_components(
+                model, yL[runs], reverse=False, w=None if w_in is None else np.asarray(w_in)[runs])
             ks = sc
         else:
             lam, loc, sc, st, sy, ks, es = _push(
@@ -1163,7 +1279,8 @@ def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None):
     # backward components, depth by depth from the right neighbour
     runs = np.nonzero(np.isfinite(yR) & (L >= 1))[0]
     if runs.size:
-        lam, loc, sc, st, sy, es = _entry_components(model, yR[runs], reverse=True)
+        lam, loc, sc, st, sy, es = _entry_components(
+            model, yR[runs], reverse=True, w=None if w_out is None else np.asarray(w_out)[runs])
         ks = sc
         d = 1
         while True:
@@ -1186,7 +1303,8 @@ def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None):
 
     Fl, hF = norm(Fl)
     Bl, hB = norm(Bl)
-    Pl, Pm, Ps, Pe = _bridges((Fl, Fm, Fs, Fst, Fe), (Bl, Bm, Bs, Bst, Be))
+    Pl, Pm, Ps, Pe = _bridges((Fl, Fm, Fs, Fst, Fe), (Bl, Bm, Bs, Bst, Be),
+                              model if filtered else None)
     hP = Pl.sum(axis=1) > 0.0
     share = np.array(_W_GROUPS, dtype=float)[None, :] * np.stack([hP, hF, hB], axis=1)
     tot = share.sum(axis=1, keepdims=True)
@@ -1199,10 +1317,19 @@ def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None):
     tot = lam.sum(axis=1, keepdims=True)
     lam = np.where(tot > 0.0, lam / np.where(tot > 0.0, tot, 1.0), 0.0)
     # kernel test pieces: the one-step laws into the position (its grid must
-    # resolve each of them, not only their mixture)
+    # resolve each of them, not only their mixture); with filter weights,
+    # weighted by the bridges through them where there are bridges (a kernel
+    # no bridge goes through carries no posterior mass: counted at its prior
+    # weight, an unresolved kernel of weight 8e-3 made the local grid lose to
+    # the reference grid at G = 512, 3.5e-4 nats off where it is 2e-10)
     kt = np.concatenate([Fl * share[:, 1:2] + 0.0, Bl * share[:, 2:]], axis=1)
+    if filtered:
+        Pw = Pl.reshape(Pl.shape[0], Fl.shape[1], Bl.shape[1])
+        kt = np.where(hP[:, None], np.concatenate([Pw.sum(axis=2), Pw.sum(axis=1)], axis=1), kt)
     kt = kt / np.where(kt.sum(axis=1, keepdims=True) > 0.0, kt.sum(axis=1, keepdims=True), 1.0)
     kern = (kt, np.concatenate([Fm, Bm], axis=1), np.concatenate([Fk, Bk], axis=1))
+    if with_bridged:
+        return lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex, hP
     return lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex
 
 
@@ -1280,7 +1407,8 @@ def _split(total: int, score: np.ndarray, floor: int) -> np.ndarray:
     return out
 
 
-def _panel_layout(lam, loc, sc, core, G, cdf_at, support=(-np.inf, np.inf), ex=None):
+def _panel_layout(lam, loc, sc, core, G, cdf_at, support=(-np.inf, np.inf), ex=None,
+                  res=None, both: bool = False):
     """Panels of one local grid (module docstring, "Local grids").
 
     Core panels: the intervals m_c ± κ e_c s_c of the ``core`` components cut
@@ -1289,11 +1417,13 @@ def _panel_layout(lam, loc, sc, core, G, cdf_at, support=(-np.inf, np.inf), ex=N
     _NEST_RATIO times narrower than that one when it peaks higher inside the
     piece or holds more of the piece's mass; adjacent pieces merge while
     their scales stay within _NEST_RATIO and the panel within _MERGE_SPAN
-    scales.
+    scales — and, with ``res``, while the panel's sinh map resolves each of
+    them (_MERGE_RES).
     Background panels (g_ref): the rest of the line. Cores are clipped to
     the ``support`` of g_ref. ``cdf_at(y)`` gives (G_ref(y), 1 − G_ref(y)).
     Returns the :class:`_Panels` fields as lists (sizes summing to G), or
-    None when there is no core.
+    None when there is no core; with ``both``, the layouts with ``res`` and
+    without it (the elementary pieces computed once).
     """
     ex = np.ones_like(sc) if ex is None else ex
     c = np.nonzero(core)[0]
@@ -1301,7 +1431,7 @@ def _panel_layout(lam, loc, sc, core, G, cdf_at, support=(-np.inf, np.inf), ex=N
     hi = np.minimum(loc[c] + _CORE_WIDTH * ex[c] * sc[c], support[1])
     c, lo, hi = c[lo < hi], lo[lo < hi], hi[lo < hi]
     if not c.size:
-        return None
+        return (None, None) if both else None
     pts = np.unique(np.concatenate([lo, hi]))
     # the elementary pieces between consecutive ends, all at once: (E, C)
     # arrays over the pieces and the core components c
@@ -1340,19 +1470,41 @@ def _panel_layout(lam, loc, sc, core, G, cdf_at, support=(-np.inf, np.inf), ex=N
         else:
             pieces.append((a, b, drv))
     pieces = [(-np.inf, pts[0], -1)] + pieces + [(pts[-1], np.inf, -1)]
-    merged = []                                 # (a, b, driver, smallest, largest scale)
+
+    out = [_merged_layout(pieces, lam, loc, sc, ex, G, cdf_at, r)
+           for r in ((res, None) if both else (res,))]
+    return tuple(out) if both else out[0]
+
+
+def _merged_layout(pieces, lam, loc, sc, ex, G, cdf_at, res):
+    """:func:`_panel_layout` from its elementary pieces (a, b, driver): merged,
+    the sinh maps resolving every merged piece within ``res`` (_MERGE_RES;
+    None: no such condition), and the nodes allocated."""
+    def resolved(drv, members):
+        # the sinh map of ``drv`` resolves every member within ``res`` of its
+        # own (_MERGE_RES)
+        if res is None:
+            return True
+        ms = np.fromiter(members, dtype=int)
+        span = np.hypot(_SINH_SCALE * sc[drv], loc[ms] - loc[drv])
+        return bool(np.all(span <= res * _SINH_SCALE * sc[ms]))
+
+    merged = []                          # (a, b, driver, smallest, largest scale, members)
     for a, b, d in pieces:
         sd = sc[d] * ex[d] if d >= 0 else np.nan
         if merged and merged[-1][2] == -1 and d == -1:
-            merged[-1] = (merged[-1][0], b, -1, np.nan, np.nan)
-        elif (merged and merged[-1][2] >= 0 and d >= 0
-              and max(merged[-1][4], sd) <= _NEST_RATIO * min(merged[-1][3], sd)
-              and b - merged[-1][0] <= _MERGE_SPAN * min(merged[-1][3], sd)):
-            a0, _, d0, lo0, hi0 = merged[-1]
-            merged[-1] = (a0, b, d0 if sc[d0] * ex[d0] <= sd else d, min(lo0, sd), max(hi0, sd))
-        else:
-            merged.append((a, b, d, sd, sd))
-    merged = [(a, b, d) for a, b, d, _, _ in merged]
+            merged[-1] = (merged[-1][0], b, -1, np.nan, np.nan, ())
+            continue
+        if merged and merged[-1][2] >= 0 and d >= 0:
+            a0, _, d0, lo0, hi0, mem = merged[-1]
+            nd = d0 if sc[d0] * ex[d0] <= sd else d
+            if (max(hi0, sd) <= _NEST_RATIO * min(lo0, sd)
+                    and b - a0 <= _MERGE_SPAN * min(lo0, sd)
+                    and resolved(nd, mem + (d,))):
+                merged[-1] = (a0, b, nd, min(lo0, sd), max(hi0, sd), mem + (d,))
+                continue
+        merged.append((a, b, d, sd, sd, (d,) if d >= 0 else ()))
+    merged = [(a, b, d) for a, b, d, _, _, _ in merged]
     rows = []
     for a, b, d in merged:
         if d >= 0:
@@ -1383,7 +1535,7 @@ def _panel_layout(lam, loc, sc, core, G, cdf_at, support=(-np.inf, np.inf), ex=N
     return rows[:, 0], rows[:, 1], rows[:, 2], rows[:, 3], rows[:, 4], rows[:, 5], sizes
 
 
-def _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex) -> dict:
+def _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex, res=None) -> dict:
     """:func:`_panel_layout` of the positions whose core intervals form one
     cluster of scales within _NEST_RATIO — one core panel between two
     background panels — computed for all of them at once (the common case).
@@ -1417,6 +1569,13 @@ def _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex) -> dict:
     ok &= smax <= _NEST_RATIO * smin
     ok &= np.where(core, hi, -np.inf).max(axis=1) - np.where(core, lo, np.inf).min(axis=1) \
         <= _MERGE_SPAN * smin
+    d = np.argmin(np.where(core, sc, np.inf), axis=1)
+    if res is not None:
+        # the panel's sinh map (the narrowest's) resolves every core (resolved()
+        # of _panel_layout)
+        r = np.arange(P)
+        span = np.hypot(_SINH_SCALE * sc[r, d][:, None], loc - loc[r, d][:, None])
+        ok &= np.all(~core | (span <= res * _SINH_SCALE * sc), axis=1)
     a = lo.min(axis=1)
     b = hi.max(axis=1)
     ia, ib = np.argmin(lo, axis=1), np.argmax(hi, axis=1)
@@ -1430,7 +1589,6 @@ def _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex) -> dict:
     idx = np.nonzero(ok)[0]
     if not idx.size:
         return out
-    d = np.argmin(np.where(core, sc, np.inf), axis=1)
     n_bg = int(round(_BACKGROUND_NODES * G))
     for p in idx:
         m, c_ = loc[p, d[p]], _SINH_SCALE * sc[p, d[p]]
@@ -1444,8 +1602,13 @@ def _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex) -> dict:
     return out
 
 
-def _panel_grids(ref: QuadratureGrid, lam, loc, sc, G: int, ex=None) -> list:
-    """The local grids (G nodes each) of P proposals (module docstring, "Local grids")."""
+def _panel_grids(ref: QuadratureGrid, lam, loc, sc, G: int, ex=None, res=None, alt=False):
+    """The local grids (G nodes each) of P proposals (module docstring, "Local grids").
+
+    ``res``: the _MERGE_RES of the layouts. With ``alt`` (and ``res``), also
+    the grids of the layouts without it, None where they are the same:
+    returns (grids, alternative grids).
+    """
     P = lam.shape[0]
     ex = np.ones_like(sc) if ex is None else ex
     cnt = (np.searchsorted(ref.nodes, loc + sc, side="right")
@@ -1462,17 +1625,36 @@ def _panel_grids(ref: QuadratureGrid, lam, loc, sc, G: int, ex=None) -> list:
     def cdf_at(y):
         return table[float(y)]
 
-    fast = _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex)
-    layouts = [fast[p] if p in fast
-               else _panel_layout(lam[p], loc[p], sc[p], core[p], G, cdf_at, sup, ex[p])
-               for p in range(P)]
-    good = [L is not None for L in layouts]
-    if not all(good):
-        sub = [p for p in range(P) if good[p]]
-        it = iter(_panel_grids(ref, lam[sub], loc[sub], sc[sub], G, ex[sub]) if sub else [])
-        return [next(it) if good[p] else None for p in range(P)]
-    npan = np.array([len(L[6]) for L in layouts])
-    cat = [np.concatenate([L[f] for L in layouts]) for f in range(7)]
+    alt = bool(alt) and res is not None
+    fast = _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex, res)
+    fast0 = _single_core_layouts(lam, loc, sc, core, G, cdf, sf, sup, ex, None) if alt else {}
+    layouts, others = [], []
+    for p in range(P):
+        L0 = None
+        if p in fast:
+            L = fast[p]                  # the same without res (a looser condition)
+        elif alt and p in fast0:
+            L, L0 = _panel_layout(lam[p], loc[p], sc[p], core[p], G, cdf_at, sup, ex[p], res), fast0[p]
+        elif alt:
+            L, L0 = _panel_layout(lam[p], loc[p], sc[p], core[p], G, cdf_at, sup, ex[p], res, both=True)
+        else:
+            L = _panel_layout(lam[p], loc[p], sc[p], core[p], G, cdf_at, sup, ex[p], res)
+        same = (L0 is None or (L is not None and len(L[6]) == len(L0[6])
+                               and all(np.array_equal(x, y, equal_nan=True) for x, y in zip(L, L0))))
+        layouts.append(L)
+        others.append(None if same else L0)
+    grids = _layout_grids(ref, layouts, G)
+    return (grids, _layout_grids(ref, others, G)) if alt else grids
+
+
+def _layout_grids(ref: QuadratureGrid, layouts: list, G: int) -> list:
+    """The grids of panel layouts (:func:`_panel_layout`; None: None)."""
+    out = [None] * len(layouts)
+    idx = [p for p, L in enumerate(layouts) if L is not None]
+    if not idx:
+        return out
+    npan = np.array([len(layouts[p][6]) for p in idx])
+    cat = [np.concatenate([layouts[p][f] for p in idx]) for f in range(7)]
     pan_all = _Panels(loc=cat[0], sc=cat[1], t_lo=cat[2], t_hi=cat[3], tc_lo=cat[4], tc_hi=cat[5],
                       sizes=cat[6].astype(int), panel=np.empty(0, dtype=int))
     sizes = pan_all.sizes
@@ -1487,23 +1669,21 @@ def _panel_grids(ref: QuadratureGrid, lam, loc, sc, G: int, ex=None) -> list:
     y, pdf, dw = _panel_points(pan_all, k, s_, ref.power, ref.weights, ref.dists)
     with np.errstate(all="ignore"):
         omega = ws * dw / pdf
-    out = []
     p0 = np.concatenate([[0], np.cumsum(npan)])
-    for p in range(P):
-        kp = slice(p0[p], p0[p + 1])
-        sel = slice(int(sizes[:p0[p]].sum()), int(sizes[:p0[p + 1]].sum()))
+    for q, p in enumerate(idx):
+        kp = slice(p0[q], p0[q + 1])
+        sel = slice(int(sizes[:p0[q]].sum()), int(sizes[:p0[q + 1]].sum()))
         yy, oo = y[sel], omega[sel]
         ok = (np.all(np.isfinite(yy)) and np.all(np.isfinite(oo)) and np.all(oo >= 0.0)
               and np.all(np.diff(yy) >= 0.0) and yy.size == G)
         if not ok:
-            out.append(None)
             continue
         pan = _Panels(loc=pan_all.loc[kp], sc=pan_all.sc[kp], t_lo=pan_all.t_lo[kp],
                       t_hi=pan_all.t_hi[kp], tc_lo=pan_all.tc_lo[kp], tc_hi=pan_all.tc_hi[kp],
-                      sizes=sizes[kp], panel=k[sel] - p0[p])
-        out.append(QuadratureGrid(s=s_[sel], ws=ws[sel], power=ref.power, t=s_[sel],
-                                  w=ws[sel] * dw[sel], nodes=yy, ref_pdf=pdf[sel], omega=oo,
-                                  weights=ref.weights, dists=ref.dists, mix=pan))
+                      sizes=sizes[kp], panel=k[sel] - p0[q])
+        out[p] = QuadratureGrid(s=s_[sel], ws=ws[sel], power=ref.power, t=s_[sel],
+                                w=ws[sel] * dw[sel], nodes=yy, ref_pdf=pdf[sel], omega=oo,
+                                weights=ref.weights, dists=ref.dists, mix=pan)
     return out
 
 
@@ -1527,6 +1707,13 @@ def _proposal_error(nodes: np.ndarray, omega: np.ndarray, lam, loc, sc,
     (module docstring, "Local grids"). Components with less than 1e-3 of
     their mass on the support are left out.
     """
+    e, on = _piece_errors(nodes, omega, loc, sc, support)
+    return (np.where((lam > 0.0) & on, lam, 0.0) * e).sum(axis=1)
+
+
+def _piece_errors(nodes: np.ndarray, omega: np.ndarray, loc, sc, support=(-np.inf, np.inf)):
+    """Relative errors (P, C) of :func:`_proposal_error`, component by
+    component, and whether each has 1e-3 of its mass on the support."""
     with np.errstate(all="ignore"):
         za, zb = (support[0] - loc) / sc, (support[1] - loc) / sc
         I0 = _sp_ndtr(zb) - _sp_ndtr(za)
@@ -1536,27 +1723,68 @@ def _proposal_error(nodes: np.ndarray, omega: np.ndarray, lam, loc, sc,
         z = (nodes[:, None, :] - loc[:, :, None]) / sc[:, :, None]            # (P, C, G)
         f = np.exp(-0.5 * z * z) / (sc[:, :, None] * _SQRT_2PI) * omega[:, None, :]
         e = (np.abs(f.sum(axis=2) - I0) + np.abs((f * z * z).sum(axis=2) - I2)) / I0
-    e = np.where(np.isfinite(e), e, 2.0)
-    return (np.where((lam > 0.0) & (I0 > 1e-3), lam, 0.0) * e).sum(axis=1)
+    return np.where(np.isfinite(e), e, 2.0), I0 > 1e-3
+
+
+def _better_layouts(ref: QuadratureGrid, new: list, old: list, lam, loc, sc, kern) -> list:
+    """Per position, the local grid of ``new`` or of ``old`` (two panel layouts
+    of the same proposals; ``old`` None where the same) that integrates the
+    proposal's components and kernels better (:func:`_piece_errors`,
+    weighted as in :func:`_proposal_error`), the pieces that neither
+    resolves (relative error ≥ 1: no node near them) left out of both sums."""
+    out = list(new)
+    diff = [p for p, b in enumerate(old) if b is not None]
+    if not diff:
+        return out
+    one = [p for p in diff if new[p] is None]
+    for p in one:
+        out[p] = old[p]
+    two = np.array([p for p in diff if new[p] is not None], dtype=int)
+    if not two.size:
+        return out
+    sup = _support(ref)
+    tot = []
+    parts = [(lam[two], loc[two], sc[two])] + ([] if kern is None else
+                                                [tuple(x[two] for x in kern)])
+    errs = {}
+    for name, gr in (("new", new), ("old", old)):
+        nodes = np.array([gr[p].nodes for p in two])
+        omega = np.array([gr[p].omega for p in two])
+        errs[name] = [_piece_errors(nodes, omega, lo, s, sup) for _, lo, s in parts]
+    for name in ("new", "old"):
+        t = np.zeros(two.size)
+        for k, (w, _, _) in enumerate(parts):
+            e, on = errs[name][k]
+            seen = (errs["new"][k][0] < 1.0) | (errs["old"][k][0] < 1.0)
+            t += (np.where((w > 0.0) & on & seen, w, 0.0) * e).sum(axis=1)
+        tot.append(t)
+    for q, p in enumerate(two):
+        if tot[1][q] < tot[0][q]:
+            out[p] = old[p]
+    return out
 
 
 def _neighbour_error(model: PMCModel, nodes: np.ndarray, omega: np.ndarray,
-                     yl: np.ndarray, yr: np.ndarray, *, split: bool = False, first=None):
+                     yl: np.ndarray, yr: np.ndarray, *, split: bool = False, first=None,
+                     w_entry=None, w_exit=None, exit_rel=None):
     """Relative error (P,) of grids on the integrals of their gap they must reproduce.
 
     Entry, where the row before the missing y is observed (``yl`` finite):
     Σ_g ω_g q(j, y_g | i, y_l) against its exact value T_ij(y_l), weighted by
-    a_i T_ij (a_i ∝ μ(i, y_l)) — the raw block masses of the Tauchen–Hussey
-    renormalisation. Exit, where the row after is observed (``yr`` finite):
-    Σ_g ω_g μ(i, y_g) q(k, y_r | i, y_g) against ∫ μ(i, y) q(k, y_r | i, y) dy
-    = p_ik f_ki(y_r) (pair margins; π_i T_ik f_k(y_r) for state margins — the
-    copula density integrates to 1 in its first argument), weighted by these
-    exact masses: the exit kernel is as narrow as the transition. Both use
-    the exact kernels, so they see what the Gaussian proposal does not
-    (support boundaries, skewed conditional laws). A non-finite value counts
-    as an error 1. ``first`` (P,) marks a missing y_1: Σ_g ω_g μ(i, y_g)
-    against P(x_1 = i), counted with the entry part. Returns the sum (P,),
-    or with ``split`` the entry and exit parts.
+    a_i T_ij (a_i ∝ μ(i, y_l); ``w_entry`` (P, K, K) instead when given) —
+    the raw block masses of the Tauchen–Hussey renormalisation. Exit, where the
+    row after is observed (``yr`` finite): Σ_g ω_g μ(i, y_g) q(k, y_r | i,
+    y_g) against ∫ μ(i, y) q(k, y_r | i, y) dy = p_ik f_ki(y_r) (pair
+    margins; π_i T_ik f_k(y_r) for state margins — the copula density
+    integrates to 1 in its first argument), weighted by these exact masses
+    (``w_exit`` (P, K, K) instead when given): the exit kernel is as narrow
+    as the transition. Both use the exact kernels, so
+    they see what the Gaussian proposal does not (support boundaries, skewed
+    conditional laws). A non-finite value counts as an error 1. ``first``
+    (P,) marks a missing y_1: Σ_g ω_g μ(i, y_g) against P(x_1 = i), counted
+    with the entry part. Returns the sum (P,), or with ``split`` the entry
+    and exit parts; ``exit_rel`` (P, K, K), when given, receives the
+    relative errors of the exit integrals (:func:`_quadrature_report`).
     """
     K = model.K
     P, G = nodes.shape
@@ -1589,8 +1817,10 @@ def _neighbour_error(model: PMCModel, nodes: np.ndarray, omega: np.ndarray,
                 ker, _ = _kernel(model, fo[rp], take(Fo, rp), fN[iN], take(FN, iN))
                 got = (ker.reshape(rows.size, G, K, K) * om).sum(axis=1)       # (n, K, K)
                 exact = _x_transition(model, fo, log=False)
-                a = _initial(model, fo, log=False)
-                wgt = a[:, :, None] * exact
+                if w_entry is None:
+                    wgt = _initial(model, fo, log=False)[:, :, None] * exact
+                else:
+                    wgt = np.asarray(w_entry)[rows]
             else:
                 ker, _ = _kernel(model, fN[iN], take(FN, iN), fo[rp], take(Fo, rp))
                 mu = _initial(model, fN[iN], log=False)                          # (nG, K)
@@ -1601,10 +1831,12 @@ def _neighbour_error(model: PMCModel, nodes: np.ndarray, omega: np.ndarray,
                 else:
                     pi = _initial(model, np.ones((1, K, K)), log=False)[0]
                     exact = pi[None, :, None] * _x_transition(model, fo, log=False) * fki
-                wgt = exact
+                wgt = exact if w_exit is None else np.asarray(w_exit)[rows]
             ok = np.isfinite(exact) & (exact > 0.0)
             rel = np.where(ok, np.abs(got / np.where(ok, exact, 1.0) - 1.0), 0.0)
             rel = np.where(np.isfinite(rel), rel, 1.0)
+            if side == "exit" and exit_rel is not None:
+                exit_rel[rows] = rel
             wgt = np.where(ok & np.isfinite(wgt), wgt, 0.0)
             tot = wgt.sum(axis=(1, 2))
             parts[side][rows] += np.where(
@@ -1615,28 +1847,38 @@ def _neighbour_error(model: PMCModel, nodes: np.ndarray, omega: np.ndarray,
 
 
 def _grid_error(model, ref, nodes, omega, lam, loc, sc, yl, yr, kern=None, exact=True,
-                first=None):
+                first=None, w_entry=None, w_exit=None, split_proxy=False, exit_rel=None):
     """(proxy, (entry, exit)) errors (P,) of grids: :func:`_proposal_error` on
     the Gaussian proxies of the law of y and on the transition kernels into
-    the position (``kern``: weights, locations, one-step scales),
-    :func:`_neighbour_error` on the exact entry / exit integrals (0 where the
-    gap has no observed neighbour, or without ``exact``)."""
+    the position (``kern``: weights, locations, one-step scales; with
+    ``split_proxy`` the two parts apart), :func:`_neighbour_error` on the
+    exact entry / exit integrals (0 where the gap has no observed neighbour,
+    or without ``exact``; ``w_entry``, ``w_exit`` its weights per position,
+    ``exit_rel`` (P, K, K) filled with the relative errors of the exits)."""
     first = np.zeros(nodes.shape[0], bool) if first is None else np.asarray(first, dtype=bool)
     near = np.isfinite(yl) | np.isfinite(yr) | first
     ex = (np.zeros(nodes.shape[0]), np.zeros(nodes.shape[0]))
     if exact and near.any():
+        rel = None if exit_rel is None else np.full((int(near.sum()),) + exit_rel.shape[1:], np.nan)
         e_in, e_out = _neighbour_error(model, nodes[near], omega[near], yl[near], yr[near],
-                                       split=True, first=first[near])
+                                       split=True, first=first[near],
+                                       w_entry=None if w_entry is None else w_entry[near],
+                                       w_exit=None if w_exit is None else w_exit[near],
+                                       exit_rel=rel)
         ex[0][near], ex[1][near] = e_in, e_out
+        if exit_rel is not None:
+            exit_rel[near] = rel
     sup = _support(ref)
     px = _proposal_error(nodes, omega, lam, loc, sc, sup)
-    if kern is not None:
-        px = px + _proposal_error(nodes, omega, *kern, sup)
-    return px, ex
+    pk = np.zeros_like(px) if kern is None else _proposal_error(nodes, omega, *kern, sup)
+    if split_proxy:
+        return (px, pk), ex
+    return px + pk, ex
 
 
 def _local_grid_list(model: PMCModel, ref: QuadratureGrid, lam, loc, sc, yl=None, yr=None,
-                     kern=None, first=None, ex=None, run=None) -> list:
+                     kern=None, first=None, ex=None, run=None, w_entry=None, w_exit=None,
+                     err_out=None, res=None) -> list:
     """Grids of the proposals: the reference grid unless a local grid does better.
 
     Candidates are the positions with a component of weight ≥
@@ -1651,7 +1893,14 @@ def _local_grid_list(model: PMCModel, ref: QuadratureGrid, lam, loc, sc, yl=None
     _SWITCH_GAIN times smaller than the reference grid's (module docstring,
     "Local grids"). The reference grid is kept wherever it resolves the
     laws of the gap — weak and moderate dependence — with results bit for bit
-    unchanged.
+    unchanged. ``w_entry``, ``w_exit`` (Mt, K, K): the weights of the
+    exact integrals (:func:`_neighbour_error`) of each position. ``err_out``
+    (Mt, 2), when given, receives the proxy errors of the chosen grid of
+    every position on the components and on the kernels (0 where no
+    component is a candidate), for :func:`_refine_grids`. ``res``: the
+    _MERGE_RES of the panel layouts (None: the layouts before this version,
+    those of the proposals given the neighbours alone); with it, the better
+    of the two layouts (:func:`_better_layouts`).
     """
     Mt = lam.shape[0]
     yl = np.full(Mt, np.nan) if yl is None else np.asarray(yl, dtype=float)
@@ -1674,23 +1923,39 @@ def _local_grid_list(model: PMCModel, ref: QuadratureGrid, lam, loc, sc, yl=None
     def ksel(rows):
         return None if kern is None else tuple(x[rows] for x in kern)
 
-    p_ref, _ = _grid_error(model, ref, np.broadcast_to(ref.nodes, (idx.size, ref.G)),
-                           np.broadcast_to(ref.omega, (idx.size, ref.G)),
-                           lam[idx], loc[idx], sc[idx], yl[idx], yr[idx], ksel(idx), exact=False)
+    def wsel(w, rows):
+        return None if w is None else w[rows]
+
+    (pp_ref, pk_ref), _ = _grid_error(model, ref, np.broadcast_to(ref.nodes, (idx.size, ref.G)),
+                                      np.broadcast_to(ref.omega, (idx.size, ref.G)), lam[idx],
+                                      loc[idx], sc[idx], yl[idx], yr[idx], ksel(idx), exact=False,
+                                      split_proxy=True)
+    p_ref = pp_ref + pk_ref
+    if err_out is not None:
+        err_out[idx] = np.stack([pp_ref, pk_ref], axis=1)
     keep = p_ref > _SWITCH_TOL
     idx, p_ref = idx[keep], p_ref[keep]
     if not idx.size:
         return out
-    loc_g = _panel_grids(ref, lam[idx], loc[idx], sc[idx], ref.G,
-                         None if ex is None else ex[idx])
+    exi = None if ex is None else ex[idx]
+    if res is not None and _LAYOUT_CHOICE:
+        # the panels merged as before this version where they integrate the
+        # proposal better (_MERGE_RES, _better_layouts)
+        loc_g, alt = _panel_grids(ref, lam[idx], loc[idx], sc[idx], ref.G, exi, res, alt=True)
+        loc_g = _better_layouts(ref, loc_g, alt, lam[idx], loc[idx], sc[idx], ksel(idx))
+    else:
+        loc_g = _panel_grids(ref, lam[idx], loc[idx], sc[idx], ref.G, exi, res)
     ok = np.array([g is not None for g in loc_g], dtype=bool)
     if not ok.any():
         return out
     sel = idx[ok]
     gl = [g for g in loc_g if g is not None]
     gn, go = np.array([g.nodes for g in gl]), np.array([g.omega for g in gl])
-    p_loc, (xi_loc, xo_loc) = _grid_error(model, ref, gn, go, lam[sel], loc[sel], sc[sel],
-                                          yl[sel], yr[sel], ksel(sel))
+    xrel = np.full((sel.size, model.K, model.K), np.nan)
+    (pp_loc, pk_loc), (xi_loc, xo_loc) = _grid_error(
+        model, ref, gn, go, lam[sel], loc[sel], sc[sel], yl[sel], yr[sel], ksel(sel),
+        w_entry=wsel(w_entry, sel), w_exit=wsel(w_exit, sel), split_proxy=True, exit_rel=xrel)
+    p_loc = pp_loc + pk_loc
     x_loc = xi_loc + xo_loc
     pr = p_ref[ok]
     total_loc = _SWITCH_GAIN * (p_loc + x_loc)
@@ -1712,7 +1977,8 @@ def _local_grid_list(model: PMCModel, ref: QuadratureGrid, lam, loc, sc, yl=None
         r = sel[need]
         e_in, e_out = _neighbour_error(model, np.broadcast_to(ref.nodes, (r.size, ref.G)),
                                        np.broadcast_to(ref.omega, (r.size, ref.G)), yl[r], yr[r],
-                                       split=True)
+                                       split=True, w_entry=wsel(w_entry, r),
+                                       w_exit=wsel(w_exit, r))
         x_ref[need] = e_in + e_out
     switch = keep_ok & (total_loc < pr + x_ref)
     if _PROXY_PREFILTER:
@@ -1738,7 +2004,9 @@ def _local_grid_list(model: PMCModel, ref: QuadratureGrid, lam, loc, sc, yl=None
                     switch[q] = local[k] = changed = True
     for q, (k, g) in enumerate(zip(sel, gl)):
         if switch[q]:
-            out[k] = replace(g, exit_error=float(xo_loc[q])) if np.isfinite(yr[k]) else g
+            out[k] = replace(g, exit_rel=xrel[q]) if np.isfinite(yr[k]) else g
+            if err_out is not None:
+                err_out[k] = (pp_loc[q], pk_loc[q])
     return out
 
 
@@ -1775,85 +2043,308 @@ def _runs(miss: np.ndarray):
 
 
 def _run_grids(model: PMCModel, ref: QuadratureGrid, yL: float, yR: float, L: int,
-               fwd0=None, start: int = -1) -> tuple[list, list]:
+               fwd0=None, start: int = -1, w_in=None) -> tuple[list, list]:
     """Grids of one run of L missing rows, and the forward components of each.
 
     The step-by-step filter of :mod:`pmcprg.pmc.outliers` builds the grids of
     a run as it enters it: ``yL`` / ``yR`` its observed neighbours (NaN:
     none), ``fwd0`` the forward components of the position before it when
     the run continues a gap (a gated row), ``start`` the row of its first
-    position. On the same run it gives the grids of :func:`_gap_grids`.
+    position, ``w_in`` (K,) the filter at the row before it (the proposal
+    is then filter-weighted on its left side; module docstring,
+    "Filter-weighted proposals"). Without ``w_in``, on the same run it gives
+    the grids of :func:`_build_gap_grids` without weights.
     """
     if not (_LOCAL_GRIDS and model.variant.uses_copula):
         return [ref] * L, [None] * L
     f0 = None if fwd0 is None else (fwd0[0][None], fwd0[1][None], fwd0[2][None], fwd0[3], fwd0[4])
-    lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex = _gap_proposals(
-        model, np.array([yL]), np.array([yR]), np.array([L]), fwd0=f0)
+    wi = None if (w_in is None or fwd0 is not None or not np.isfinite(yL)) else \
+        np.asarray(w_in, dtype=float)[None, :]
+    lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex, bridged = _gap_proposals(
+        model, np.array([yL]), np.array([yR]), np.array([L]), fwd0=f0, w_in=wi, with_bridged=True)
     yl, yr = np.full(L, np.nan), np.full(L, np.nan)
     yl[0] = yL if fwd0 is None else np.nan
     yr[-1] = yR
     first = np.zeros(L, bool)
     first[0] = start == 0
-    grids = _local_grid_list(model, ref, lam, loc, sc, yl, yr, kern, first, ex, np.zeros(L, int))
+    we_in = None
+    if wi is not None:
+        we_in, _ = _boundary_weights(model, kern, bridged, yl, Fl, Fst, np.repeat(wi, L, axis=0), None)
+    grids = _local_grid_list(model, ref, lam, loc, sc, yl, yr, kern, first, ex, np.zeros(L, int),
+                             w_entry=we_in, res=None if wi is None else _MERGE_RES)
     return grids, [(Fl[k], Fm[k], Fs[k], Fst[k], Fsy[k]) for k in range(L)]
 
 
-#: Grids of the last _GRID_CACHE_SIZE (model, Y, G) of :func:`_gap_grids`. The
-#: grids depend on the model's parameters, the observed neighbours of every
-#: run and G only; the same series is often passed again with the same model
-#: (``classify`` and the quadrature check after a fit, ``gap_posterior`` then
-#: ``predictive_pit``), and building them is half the cost of a pass.
+#: Grids of the last _GRID_CACHE_SIZE (model, Y, G, missingness factors) of
+#: :func:`_gap_grids`. The grids depend on the model's parameters, the
+#: observed values, the factors (through the filter that weights the
+#: proposals) and G only; the same series is often passed again with the
+#: same model (``classify`` and the quadrature check after a fit,
+#: ``gap_posterior`` then ``predictive_pit``), and building them is half the
+#: cost of a pass.
 _GRID_CACHE: "OrderedDict" = OrderedDict()
 _GRID_CACHE_SIZE = 4
 
 
-def _grid_key(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid):
+def _grid_key(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid, ev=None):
     raw = json.dumps(model.raw, sort_keys=True, default=repr).encode()
     h = hashlib.sha1(raw)
     h.update(np.ascontiguousarray(np.where(miss, np.nan, np.asarray(Y, dtype=float))).tobytes())
     h.update(np.ascontiguousarray(ref.nodes).tobytes())
-    return (h.hexdigest(), ref.G, bool(_LOCAL_GRIDS))
+    h.update(b"-" if ev is None else np.ascontiguousarray(np.asarray(ev, dtype=float)).tobytes())
+    return (h.hexdigest(), ref.G, bool(_LOCAL_GRIDS), int(_FILTER_PASSES))
 
 
 def _gap_grids(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid,
-               *, with_fwd: bool = False) -> dict:
+               *, with_fwd: bool = False, ev=_inf._FROM_MODEL) -> dict:
     """{n: grid} for every missing n (the reference grid where it suffices).
 
     With ``with_fwd`` also {n: forward components} (those of :func:`_run_grids`):
     the filter of :mod:`pmcprg.pmc.outliers` takes the grids of every run of
-    missing rows from one call instead of building them run by run. Results
-    are cached (_GRID_CACHE) by model parameters, series and G.
+    missing rows from one call instead of building them run by run. The
+    proposals are weighted by the filter of a first pass (module docstring,
+    "Filter-weighted proposals"), with the missingness factors ``ev`` (by
+    default those of the model). Results are cached (_GRID_CACHE) by model
+    parameters, series, factors and G.
     """
-    key = _grid_key(model, Y, miss, ref)
-    hit = _GRID_CACHE.get(key)
-    if hit is None:
-        hit = _build_gap_grids(model, Y, miss, ref)
-        _GRID_CACHE[key] = hit
-        while len(_GRID_CACHE) > _GRID_CACHE_SIZE:
-            _GRID_CACHE.popitem(last=False)
-    else:
-        _GRID_CACHE.move_to_end(key)
+    hit, _ = _gap_grids_pass(model, Y, miss, ref, ev)
     return (dict(hit[0]), dict(hit[1])) if with_fwd else dict(hit[0])
 
 
-def _build_gap_grids(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid):
-    """The ({n: grid}, {n: forward components}) of :func:`_gap_grids`."""
-    idx = np.nonzero(miss)[0]
-    if not (_LOCAL_GRIDS and model.variant.uses_copula) or not idx.size:
-        return {int(n): ref for n in idx}, {int(n): None for n in idx}
+#: Passes run to weight the local proposals by the filter (module docstring,
+#: "Filter-weighted proposals"); 0 keeps the state laws given the neighbours
+#: alone (the proposals before this version). A second pass (from the filter
+#: of the refined grids, runs not rebuilt yet) left the log-likelihood of
+#: Intel motes 22, 47, 48 at G = 64 and 128 unchanged to the last digit and
+#: rebuilt 5 of 8 275 rows of the robust-estimation window. Private switch
+#: kept for accuracy studies.
+_FILTER_PASSES = 1
+#: A run is rebuilt from its filter-weighted proposal when its grid
+#: integrates that proposal's components or kernels worse than this
+#: (:func:`_refine_grids`), whatever it did on its own.
+_REBUILD_TOL = 1e-3
+
+
+def _run_weights(alphas, betas, miss: np.ndarray, K: int):
+    """(w_in, w_out) (R, K): α̂ at the row before each run of missing rows and β̂
+    at the row after it (ones where there is none), from a pass's messages."""
+    a, b = _runs(miss)
+    N = miss.size
+    w_in = np.ones((a.size, K))
+    w_out = np.ones((a.size, K))
+    for r, (s, e) in enumerate(zip(a, b)):
+        if s > 0:
+            w_in[r] = alphas[s - 1]
+        if e < N - 1 and betas is not None:
+            w_out[r] = betas[e + 1]
+    return w_in, w_out
+
+
+def _refine_grids(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid,
+                  grids: dict, fwd: dict, err: dict, w_in, w_out, tried: set):
+    """Rebuild the runs whose grids misintegrate their filter-weighted proposals.
+
+    The proposals of every run not yet rebuilt (``tried``) are recomputed
+    with the weights ``w_in``, ``w_out`` (:func:`_run_weights`). A run is
+    rebuilt from them (:func:`_build_gap_grids`) when, at one of its
+    positions, the current grid integrates their components or their
+    kernels (:func:`_proposal_error`) worse than _REBUILD_TOL, or worse than
+    _SWITCH_TOL and _SWITCH_GAIN times it integrated those of the proposal
+    it was built for (``err``; a reference grid: worse than _SWITCH_TOL, the
+    local grid is judged afresh); its new grids are kept when their total
+    error on the new proposals is smaller. Every other grid is kept, and with
+    it the transitions of the previous pass. Returns new (grids, fwd, err)
+    and the sorted positions whose grid changed.
+    """
     Y = np.asarray(Y, dtype=float)
     N = len(Y)
     a, b = _runs(miss)
+    open_ = np.array([r for r in range(a.size) if r not in tried], dtype=int)
+    if not open_.size:
+        return grids, fwd, err, []
+    a, b = a[open_], b[open_]
+    w_in, w_out = np.asarray(w_in)[open_], np.asarray(w_out)[open_]
     yL = np.where(a > 0, Y[np.maximum(a - 1, 0)], np.nan)
     yR = np.where(b < N - 1, Y[np.minimum(b + 1, N - 1)], np.nan)
-    lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex = _gap_proposals(model, yL, yR, b - a + 1)
+    props = _gap_proposals(model, yL, yR, b - a + 1, w_in=w_in, w_out=w_out, with_bridged=True)
+    lam, loc, sc, _, kern, _, _ = props
+    pos = np.concatenate([np.arange(s, e + 1) for s, e in zip(a, b)])
+    run = np.repeat(np.arange(a.size), b - a + 1)
+    heavy = lam >= _RESOLVE_MIN_WEIGHT
+    cnt = (np.searchsorted(ref.nodes, loc + sc, side="right")
+           - np.searchsorted(ref.nodes, loc - sc, side="left"))
+    kl, km, kss = kern
+    kc = (np.searchsorted(ref.nodes, km + kss, side="right")
+          - np.searchsorted(ref.nodes, km - kss, side="left"))
+    cand = (np.any(heavy & (cnt < _CANDIDATE_NODES), axis=1)
+            | np.any((kl >= _RESOLVE_MIN_WEIGHT) & (kc < _CANDIDATE_NODES), axis=1))
+    local = np.array([grids[int(n)].local for n in pos], dtype=bool)
+    rows = np.nonzero(cand | local)[0]
+    if not rows.size:
+        return grids, fwd, err, []
+    sup = _support(ref)
+    nodes = np.array([grids[int(pos[r])].nodes for r in rows])
+    omega = np.array([grids[int(pos[r])].omega for r in rows])
+    e_new = np.stack([_proposal_error(nodes, omega, lam[rows], loc[rows], sc[rows], sup),
+                      _proposal_error(nodes, omega, kl[rows], km[rows], kss[rows], sup)], axis=1)
+    e_old = np.array([err.get(int(pos[r]), (0.0, 0.0)) for r in rows])
+    # a candidate on the reference grid is judged afresh: the local grid of the
+    # new proposal may win where that of the old one lost
+    e_old = np.where(local[rows][:, None], e_old, 0.0)
+    bad = np.any((e_new > _REBUILD_TOL)
+                 | (e_new > np.maximum(_SWITCH_TOL, _SWITCH_GAIN * e_old)), axis=1)
+    todo = np.unique(run[rows[bad]])
+    if not todo.size:
+        return grids, fwd, err, []
+    tried.update(open_[todo].tolist())
+    sel = np.isin(run, todo)
+    sub = tuple(tuple(x[sel] for x in p) if isinstance(p, tuple) else p[sel] for p in props)
+    g1, f1, e1, _ = _build_gap_grids(model, Y, miss, ref, w_in[todo], w_out[todo],
+                                     runs=open_[todo], err=True, props=sub)
+    # per run: the old grids' error on the new proposals against the new grids'
+    old_tot = np.zeros(a.size)
+    np.add.at(old_tot, run[rows], e_new.sum(axis=1))
+    new_tot = np.zeros(a.size)
+    for n, e in e1.items():
+        new_tot[run[np.searchsorted(pos, n)]] += e[0] + e[1]
+    keep = {int(r) for r in todo if new_tot[r] <= old_tot[r]}
+    grids, fwd, err = dict(grids), dict(fwd), dict(err)
+    changed = []
+    for n in g1:
+        if int(run[np.searchsorted(pos, n)]) in keep:
+            if g1[n] is not grids[n]:
+                changed.append(n)
+            grids[n], fwd[n], err[n] = g1[n], f1[n], e1[n]
+    return grids, fwd, err, sorted(changed)
+
+
+def _gap_grids_pass(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid,
+                    ev=_inf._FROM_MODEL):
+    """((grids, fwd), last): the cached result of :func:`_gap_grids` and, when
+    this call built it, the last pass run to weight its proposals — (chain,
+    forward, backward, changed), ``changed`` the positions whose grid changed
+    after that pass (empty: the pass ran on the final grids) — or None.
+
+    The grids of the proposals given the neighbours alone come first; while a
+    one-step kernel into a gap is narrower than the reference grid resolves,
+    up to _FILTER_PASSES passes on the current grids give the filter
+    weights and :func:`_refine_grids` rebuilds the runs that need it.
+    """
+    if ev is _inf._FROM_MODEL:
+        ev = _inf._evidence(model, miss)
+    key = _grid_key(model, Y, miss, ref, ev)
+    hit = _GRID_CACHE.get(key)
+    if hit is not None:
+        _GRID_CACHE.move_to_end(key)
+        return hit, None
+    grids, fwd, err, narrow = _build_gap_grids(model, Y, miss, ref, err=True)
+    last = None
+    if narrow and bool(np.any(~np.asarray(miss, dtype=bool))):
+        K = model.K
+        tried = set()
+        for _ in range(_FILTER_PASSES):
+            chain, fw, bw = _pass(model, Y, miss, ref, grids, ev, backward=True,
+                                  reuse=None if last is None else last[0])
+            w_in, w_out = _run_weights(fw[0], bw, miss, K)
+            grids, fwd, err, changed = _refine_grids(model, Y, miss, ref, grids, fwd, err,
+                                                     w_in, w_out, tried)
+            last = (chain, fw, bw, changed)
+            if not changed:
+                break
+    hit = (grids, fwd)
+    _GRID_CACHE[key] = hit
+    while len(_GRID_CACHE) > _GRID_CACHE_SIZE:
+        _GRID_CACHE.popitem(last=False)
+    return hit, last
+
+
+def _boundary_weights(model: PMCModel, kern, bridged, yl, Fl, Fst, w_in, w_out):
+    """Weights (P, K, K) of the entry and exit integrals of :func:`_neighbour_error`
+    for filter-weighted proposals, or None for the side without weights.
+
+    Where the position has bridges, the posterior of each transition as the
+    bridges through its kernel give it (``kern``: at the first position of a
+    run its forward kernels i → j, at the last its backward kernels i → k,
+    in the order of :func:`_entry_components`). Elsewhere: at an entry,
+    α̂_{a−1}(i) T_ij(y_l) (``w_in`` (P, K)); at an exit, the forward state law
+    at the position over the prior of i (its forward components ``Fl``,
+    states ``Fst``; 1 without) times β̂_{b+1}(k) (``w_out`` (P, K)).
+    """
+    K = model.K
+    K2 = K * K
+    kt = kern[0]
+    P = kt.shape[0]
+    bridged = np.asarray(bridged, dtype=bool)
+    w_entry = w_exit = None
+    if w_in is not None:
+        ok = np.isfinite(yl)
+        f, _ = _margin_eval(model, np.where(ok, yl, 0.0), log=False)
+        w_entry = np.asarray(w_in, dtype=float)[:, :, None] * _x_transition(model, f, log=False)
+        w_entry = np.where(bridged[:, None, None], kt[:, :K2].reshape(P, K, K), w_entry)
+    if w_out is not None:
+        pi = _initial(model, np.ones((1, K, K)), log=False)[0]
+        pf = np.zeros((P, K))
+        for i in range(K):
+            pf[:, i] = np.where(np.broadcast_to(Fst, Fl.shape) == i, Fl, 0.0).sum(axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r = np.where((pf.sum(axis=1) > 0.0)[:, None], pf / np.where(pi > 0.0, pi, 1.0)[None, :], 1.0)
+        w_exit = r[:, :, None] * np.asarray(w_out, dtype=float)[:, None, :]
+        w_exit = np.where(bridged[:, None, None], kt[:, K2:2 * K2].reshape(P, K, K), w_exit)
+    return w_entry, w_exit
+
+
+def _build_gap_grids(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid,
+                     w_in=None, w_out=None, runs=None, *, err: bool = False, props=None):
+    """The ({n: grid}, {n: forward components}) of :func:`_gap_grids`.
+
+    ``w_in``, ``w_out`` (R, K): the forward filter before each of the R runs
+    of missing rows and the backward message after it (module docstring,
+    "Filter-weighted proposals"); without them, the state laws given the
+    neighbours alone. ``runs``: indices of the runs to build (default all;
+    ``w_in``, ``w_out`` then of those runs), ``props``: their proposals
+    (:func:`_gap_proposals` with ``with_bridged``) when already computed.
+    With ``err`` also {n: proxy error of its grid} (:func:`_local_grid_list`)
+    and whether any one-step kernel into a position (whatever its weight)
+    is narrower than the reference grid resolves — without one, no weighting
+    of the proposals can call for a local grid.
+    """
+    idx = np.nonzero(miss)[0]
+    if not (_LOCAL_GRIDS and model.variant.uses_copula) or not idx.size:
+        g, f = {int(n): ref for n in idx}, {int(n): None for n in idx}
+        return (g, f, {int(n): (0.0, 0.0) for n in idx}, False) if err else (g, f)
+    Y = np.asarray(Y, dtype=float)
+    N = len(Y)
+    a, b = _runs(miss)
+    if runs is not None:
+        a, b = a[runs], b[runs]
+    yL = np.where(a > 0, Y[np.maximum(a - 1, 0)], np.nan)
+    yR = np.where(b < N - 1, Y[np.minimum(b + 1, N - 1)], np.nan)
+    if props is None:
+        props = _gap_proposals(model, yL, yR, b - a + 1, w_in=w_in, w_out=w_out, with_bridged=True)
+    lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex, bridged = props
     pos = np.concatenate([np.arange(s, e + 1) for s, e in zip(a, b)])
     yl = np.where(np.isin(pos, a) & (pos > 0), Y[np.maximum(pos - 1, 0)], np.nan)
     yr = np.where(np.isin(pos, b) & (pos < N - 1), Y[np.minimum(pos + 1, N - 1)], np.nan)
     run = np.repeat(np.arange(a.size), b - a + 1)
-    grids = _local_grid_list(model, ref, lam, loc, sc, yl, yr, kern, pos == 0, ex, run)
+    filtered = w_in is not None or w_out is not None
+    we_in = we_out = None
+    if filtered:
+        we_in, we_out = _boundary_weights(
+            model, kern, bridged, yl, Fl, Fst, None if w_in is None else np.asarray(w_in, float)[run],
+            None if w_out is None else np.asarray(w_out, float)[run])
+    perr = np.zeros((pos.size, 2)) if err else None
+    grids = _local_grid_list(model, ref, lam, loc, sc, yl, yr, kern, pos == 0, ex, run,
+                             w_entry=we_in, w_exit=we_out, err_out=perr,
+                             res=_MERGE_RES if filtered else None)
     g = {int(n): gr for n, gr in zip(pos, grids)}
-    return g, {int(n): (Fl[k], Fm[k], Fs[k], Fst[k], Fsy[k]) for k, n in enumerate(pos)}
+    f = {int(n): (Fl[k], Fm[k], Fs[k], Fst[k], Fsy[k]) for k, n in enumerate(pos)}
+    if not err:
+        return g, f
+    kl, km, kss = kern
+    kc = (np.searchsorted(ref.nodes, km + kss, side="right")
+          - np.searchsorted(ref.nodes, km - kss, side="left"))
+    narrow = bool(np.any((kl > 0.0) & (kc < _CANDIDATE_NODES))) or any(gr.local for gr in grids)
+    return g, f, dict(zip(pos.tolist(), map(tuple, perr.tolist()))), narrow
 
 
 # ---------------------------------------------------------------------------
@@ -2353,10 +2844,17 @@ class _Chain:
     transitions are :func:`_lead_transition`'s, with their reverse masses in
     ``lead_dev`` {n: (log raw, log exact)} and column factors in ``lead_c``
     {n: log c}.
+
+    ``reuse``: a chain of the same series, factors and scale on other grids
+    (a pass that weighted them, :func:`_gap_grids_pass`); every transition
+    between positions whose grids are the same objects in both is taken
+    from it (``raw``: the transitions before the factors) instead of being
+    recomputed.
     """
 
     def __init__(self, model: PMCModel, Y: np.ndarray, miss: np.ndarray,
-                 grid: QuadratureGrid, *, log: bool, ev=_inf._FROM_MODEL, grids=None):
+                 grid: QuadratureGrid, *, log: bool, ev=_inf._FROM_MODEL, grids=None,
+                 reuse=None):
         self.model = model
         self.K = K = model.K
         self.G = G = grid.G
@@ -2370,12 +2868,13 @@ class _Chain:
         if ev is _inf._FROM_MODEL:
             ev = _inf._evidence(model, miss)
         # Grid of every missing position: the reference grid, or a local one.
-        self.grids = _gap_grids(model, Y, miss, grid) if grids is None else grids
+        self.grids = _gap_grids(model, Y, miss, grid, ev=ev) if grids is None else grids
         #: Raw quadrature masses of the blocks against their exact values
         #: (entry, inner and initial blocks; see :func:`_quadrature_report`).
         self.block_dev = {}
         self.lead_dev = {}
         self.lead_c = {}
+        self.Q_dev = None
         obs = np.nonzero(~miss)[0]
         self.lead = int(obs[0]) if obs.size else N
         # the transitions of the prior once a local grid enters the leading
@@ -2394,6 +2893,34 @@ class _Chain:
 
         fN, FN = _margin_eval(model, grid.nodes, log=log)
 
+        m0, m1 = miss[:-1], miss[1:]
+        # transitions taken from ``reuse`` (before the factors), by n
+        R = {}
+        usable = (reuse is not None and reuse.log == log and reuse.N == N and reuse.grid is grid
+                  and (reuse.ev is ev or (reuse.ev is not None and ev is not None
+                                          and np.array_equal(reuse.ev, ev))))
+        if usable:
+            for n in np.nonzero(m0 | m1)[0].tolist():
+                if not all(not miss[k] or reuse.grids[k] is self.grids[k] for k in (n, n + 1)):
+                    continue
+                if m0[n] and m1[n] and n + 1 < self.lead and reuse.lead_exact != self.lead_exact:
+                    continue
+                R[n] = reuse.raw[n]
+                if n + 1 in reuse.block_dev:
+                    self.block_dev[n + 1] = reuse.block_dev[n + 1]
+                if n + 1 in reuse.lead_dev:
+                    self.lead_dev[n + 1] = reuse.lead_dev[n + 1]
+                if n in reuse.lead_c:
+                    self.lead_c[n] = reuse.lead_c[n]
+        init_kept = usable and (not miss[0] or reuse.grids[0] is self.grids[0])
+        # the positions whose grids the transitions still to compute touch
+        need = set()
+        for n in np.nonzero(m0 | m1)[0].tolist():
+            if n not in R:
+                need.update(k for k in (n, n + 1) if miss[k])
+        if miss[0] and not init_kept:
+            need.add(0)
+
         def kernel(fl, Fl, fr, Fr):
             if log:
                 return _log_kernel(model, fl, Fl, fr, Fr)
@@ -2411,7 +2938,8 @@ class _Chain:
             # the margins at the nodes of every local grid, in one call (one
             # call per grid made a quarter of an E-step on a window with
             # 8 000 missing rows)
-            gl = list({id(g): g for g in self.grids.values() if g is not grid}.values())
+            gl = list({id(g): g for n, g in self.grids.items()
+                       if g is not grid and n in need}.values())
             if not gl:
                 return
             f_all, F_all = _margin_eval(model, np.concatenate([g.nodes for g in gl]), log=as_log)
@@ -2462,12 +2990,14 @@ class _Chain:
             Qb, _, raw = _normalise_blocks(Qb, T, log=log, with_mass=True, rescue=rescue)
             return Qb.reshape(K * G, K * G), (raw, T)
 
-        m0, m1 = miss[:-1], miss[1:]
-        inner = np.nonzero(m0 & m1)[0]
-        entries = np.nonzero(~m0 & m1)[0]
-        exits = np.nonzero(m0 & ~m1)[0]
+        def todo(idx):
+            return np.array([n for n in idx.tolist() if n not in R], dtype=int)
 
-        Q = None
+        inner = todo(np.nonzero(m0 & m1)[0])
+        entries = todo(np.nonzero(~m0 & m1)[0])
+        exits = todo(np.nonzero(m0 & ~m1)[0])
+
+        Q = reuse.Q if usable else None
         Qn = {}
         if self.lead_exact:
             # inside a leading gap: the transitions of the prior (module docstring)
@@ -2485,7 +3015,11 @@ class _Chain:
                 Qn[int(n)], self.lead_dev[int(n) + 1], self.lead_c[int(n)] = T_, dev, lc
         ref_inner = np.array([is_ref(n) and is_ref(n + 1) for n in inner], dtype=bool)
         if ref_inner.any():
-            Q, dev = between(grid, grid)
+            if Q is None or reuse.Q_dev is None:
+                Q, dev = between(grid, grid)
+            else:
+                dev = reuse.Q_dev
+            self.Q_dev = dev
             for n in inner[ref_inner]:
                 self.block_dev[int(n) + 1] = dev
         for n in inner[~ref_inner]:
@@ -2542,7 +3076,10 @@ class _Chain:
             for x, n in enumerate(sel):
                 X[int(n)] = ker[x]
 
-        if miss[0]:
+        if miss[0] and init_kept:
+            self.init = reuse.init_raw
+            self.block_dev[0] = reuse.block_dev[0]
+        elif miss[0]:
             g0 = self.grids[0]
             f0, _ = node_eval(g0)
             mu = _initial(model, f0, log=log).T                  # (K, G)
@@ -2566,7 +3103,9 @@ class _Chain:
 
         trans = []
         for n in range(N - 1):
-            if not m0[n] and not m1[n]:
+            if n in R:
+                trans.append(R[n])
+            elif not m0[n] and not m1[n]:
                 trans.append(Wobs[n])
             elif not m0[n]:
                 trans.append(E[n])
@@ -2575,9 +3114,10 @@ class _Chain:
             else:
                 trans.append(X[n])
         self.trans = trans
-
-        if ev is _inf._FROM_MODEL:
-            ev = _inf._evidence(model, miss)
+        # before the factors: what a later chain on other grids reuses
+        self.raw = list(trans)
+        self.init_raw = self.init
+        self.Q = Q
         self.ev = ev
         if ev is not None:
             # Missingness evidence: a likelihood factor of the destination
@@ -2697,29 +3237,49 @@ def _backward_chain(chain: _Chain):
     return betas
 
 
+def _pass(model, Y, miss, grid, grids, ev, *, backward: bool, reuse=None):
+    """Build the chain on ``grids`` and run forward (and backward), linear
+    first, log on failure; ``reuse`` a previous pass's chain whose
+    transitions between unchanged grids are taken as they are (a pass that
+    needed log space goes straight to log space)."""
+    chain = fw = bw = None
+    if reuse is None or not reuse.log:
+        chain = _Chain(model, Y, miss, grid, log=False, ev=ev, grids=grids, reuse=reuse)
+        if not chain.overflow:
+            fw = _forward_chain(chain)
+            if fw is not None and backward:
+                bw = _backward_chain(chain)
+        if chain.overflow or fw is None or (backward and bw is None):
+            logger.warning(
+                "Missing-data pass: %s in linear space; recomputing in log space.",
+                "a kernel value overflows" if chain.overflow else "a step underflows",
+            )
+            chain = None
+    if chain is None:
+        chain = _Chain(model, Y, miss, grid, log=True, ev=ev, grids=grids,
+                       reuse=reuse if (reuse is not None and reuse.log) else None)
+        fw = _forward_chain(chain)
+        bw = _backward_chain(chain) if backward else None
+    return chain, fw, bw
+
+
 def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
     """Build the chain and run forward (and backward), linear first, log on failure.
 
     ``ev``: missingness evidence factors (:class:`_Chain`), by default those
-    of ``model.missingness`` on ``miss``.
+    of ``model.missingness`` on ``miss``. When the grids are built by this
+    call (:func:`_gap_grids_pass`), the pass that weighted them is reused:
+    as it is if it ran on the final grids, else for the transitions between
+    grids that did not change.
     """
     if ev is _inf._FROM_MODEL:
         ev = _inf._evidence(model, miss)
-    grids = _gap_grids(model, Y, miss, grid)
-    chain = _Chain(model, Y, miss, grid, log=False, ev=ev, grids=grids)
-    fw = bw = None
-    if not chain.overflow:
-        fw = _forward_chain(chain)
-        if fw is not None and backward:
-            bw = _backward_chain(chain)
-    if chain.overflow or fw is None or (backward and bw is None):
-        logger.warning(
-            "Missing-data pass: %s in linear space; recomputing in log space.",
-            "a kernel value overflows" if chain.overflow else "a step underflows",
-        )
-        chain = _Chain(model, Y, miss, grid, log=True, ev=ev, grids=grids)
-        fw = _forward_chain(chain)
-        bw = _backward_chain(chain) if backward else None
+    (grids, _), last = _gap_grids_pass(model, Y, miss, grid, ev)
+    if last is not None and not last[3]:
+        chain, fw, bw = last[:3]
+    else:
+        chain, fw, bw = _pass(model, Y, miss, grid, grids, ev, backward=backward,
+                              reuse=None if last is None else last[0])
     chain.quad_error = _quadrature_report(chain, fw[0], bw)
     limit = quad_warn_limit(miss)
     if chain.quad_error > limit:
@@ -2734,7 +3294,7 @@ def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
 
 #: WARNING threshold of the quadrature diagnostic (:func:`_quadrature_report`),
 #: an estimate of Σ_runs |error of the run's log-likelihood factor| (module
-#: docstring, "Convergence diagnostic"). Calibrated on 54 passes against exact
+#: docstring, "Convergence diagnostic"). Calibrated on 67 passes against exact
 #: or G = 512–1024 references, a pass "off" when that sum exceeds 0.01 nats.
 QUAD_WARN = 0.05
 
@@ -2793,12 +3353,14 @@ def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = Fal
       nats went unreported);
     * at the last missing row before an observed y_{n+1}, on a local grid,
       the exit integrals Σ_g ω_g μ(i, y_g) q(k, y_{n+1} | i, y_g) against
-      their closed form (:func:`_neighbour_error`): the exit kernel is as
-      narrow as the transition, and the renormalisation does not see it.
+      their closed form (:func:`_neighbour_error`, cached per (i, k) as the
+      grid's ``exit_rel``), weighted by the posterior of (x_n, x_{n+1})
+      through the exit transition: the exit kernel is as narrow as the
+      transition, and the renormalisation does not see it.
 
     Returns the sum (0 with no missing row); with ``per_run`` also a dict
     {first row of the run: its part}. The sum estimates Σ_runs |error of the
-    run's log-likelihood factor| in nats, within a factor of about 10 on the
+    run's log-likelihood factor| in nats, within a factor of about 15 on the
     references of the module docstring ("Convergence diagnostic").
     """
     K, G = chain.K, chain.G
@@ -2871,17 +3433,26 @@ def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = Fal
             if np.isfinite(tot) and tot > 0.0:
                 parts[int(run_of[n])] += _LEAD_SCALE * float((w * rel).sum() / tot)
         exits = [int(n) for n in np.nonzero(miss[:-1] & ~miss[1:])[0] if chain.grids[int(n)].local]
-        cached = [chain.grids[n].exit_error for n in exits]
+        cached = [chain.grids[n].exit_rel for n in exits]
         todo = np.array([n for n, c in zip(exits, cached) if c is None], dtype=int)
         if todo.size:
             nodes = np.array([chain.grids[int(n)].nodes for n in todo])
             omega = np.array([chain.grids[int(n)].omega for n in todo])
-            e = _neighbour_error(chain.model, nodes, omega, np.full(todo.size, np.nan),
-                                 chain.Y[todo + 1])
-            done = dict(zip(todo.tolist(), e.tolist()))
+            rel = np.full((todo.size, K, K), np.nan)
+            _neighbour_error(chain.model, nodes, omega, np.full(todo.size, np.nan),
+                             chain.Y[todo + 1], exit_rel=rel)
+            done = dict(zip(todo.tolist(), rel))
             cached = [done[n] if c is None else c for n, c in zip(exits, cached)]
-        for n, c in zip(exits, cached):
-            parts[int(run_of[n])] += min(float(c), _REL_CAP)
+        for n, rel in zip(exits, cached):
+            rel = np.minimum(np.where(np.isfinite(rel), rel, 0.0), _REL_CAP)
+            if betas is None:
+                w = alphas[n].reshape(K, G).sum(axis=1)[:, None] * np.ones((1, K))
+            else:
+                # the posterior of (x_n, x_{n+1}) through the exit transition
+                w = joint(n + 1).reshape(K, G, K).sum(axis=1)
+            tot = w.sum()
+            if np.isfinite(tot) and tot > 0.0:
+                parts[int(run_of[n])] += float((w * rel).sum() / tot)
     total = float(sum(parts.values()))
     return (total, parts) if per_run else total
 
