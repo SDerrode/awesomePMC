@@ -62,8 +62,11 @@ that underflows keeps its ratio).
   is the augmented message α̃_{n−1}(i, g) = P(x_{n−1} = i, y_{n−1} ∈ node g
   | past) of :mod:`pmcprg.pmc.gaps` (block-renormalised quadrature, G =
   ``gap_nodes``, on the grid of that row: the reference grid or a local
-  one, built as the filter enters each run of missing or gated rows — the
-  grids of ``gap_posterior`` on the same rows), and
+  one — for the runs of missing rows the grids of ``gap_posterior``, built
+  in one call; for a run of gated rows, as the filter enters it — and,
+  before the first row that enters the filter, the leading-gap
+  transitions that carry the prior exactly, ``gaps._lead_transition``),
+  and
 
       P(Y_n ≤ y | past) = Σ_{i,g} α̃_{n−1}(i, g) Σ_j T_ij(y_g) K_ij(y | y_g),
 
@@ -258,21 +261,30 @@ References
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 from scipy import stats as _ss
-from scipy.special import ndtri
+from scipy.special import ndtr, ndtri
 
+from pmcprg.copulas.archimedean.clayton import CopulaClayton, _clayton_h
+from pmcprg.copulas.archimedean.frank import CopulaFrank, _frank_h
+from pmcprg.copulas.archimedean.gumbel import CopulaGH, _gh_h
+from pmcprg.copulas.elliptical.gaussian import CopulaGaussian, _norm_quantile
 from pmcprg.exceptions import IncompatibleObservationError
-from pmcprg.numerics import MIN_POSITIVE
+from pmcprg.numerics import EPS, MIN_POSITIVE, ONE_MINUS_EPS
 from pmcprg.pmc import inference as _inf
 from pmcprg.pmc.gaps import (
     _frozen,
+    _gap_grids,
     _initial,
+    _kernel_outer,
+    _lead_transition,
     _log_kernel,
     _margin_eval,
     _normalise_blocks,
+    _prior_known,
     _run_grids,
     _x_transition,
     missing_mask,
@@ -509,11 +521,47 @@ def _log_x_transition(model: PMCModel, lf: np.ndarray) -> np.ndarray:
     return T
 
 
+def _h_gauss(cop, v, u):
+    x_u = _norm_quantile(np.clip(u, EPS, ONE_MINUS_EPS))
+    x_v = _norm_quantile(np.clip(v, EPS, ONE_MINUS_EPS))
+    return ndtr((x_v - cop.theta * x_u) / math.sqrt(cop._one_minus_rho2))
+
+
+def _h_clayton(cop, v, u):
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        return _clayton_h(np.log(np.clip(v, EPS, ONE_MINUS_EPS)),
+                          np.log(np.clip(u, EPS, ONE_MINUS_EPS)), cop.theta)[0]
+
+
+def _h_gh(cop, v, u):
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        return _gh_h(np.log(np.clip(v, EPS, ONE_MINUS_EPS)),
+                     np.log(np.clip(u, EPS, ONE_MINUS_EPS)), cop.theta)[0]
+
+
+def _h_frank(cop, v, u):
+    return np.minimum(_frank_h(cop.theta, np.clip(v, EPS, ONE_MINUS_EPS),
+                               np.clip(u, EPS, ONE_MINUS_EPS)), 1.0)
+
+
+#: Vectorised h-functions of the common families: the formulas of their
+#: ``conditional_cdf`` on arrays (same clipping, same helpers), 25–60× faster
+#: than the scalar loop — the conditional CDFs at the nodes of every row after
+#: a gap made 14 of the 46 s of a ``predictive_pit`` pass on an Intel Lab
+#: window (report/erroneous_data/intel_lab). Other families keep the loop.
+_H_ARRAY = {CopulaGaussian: _h_gauss, CopulaClayton: _h_clayton, CopulaGH: _h_gh,
+            CopulaFrank: _h_frank}
+
+
 def _h(cop, v: np.ndarray, u: np.ndarray) -> np.ndarray:
     """h(v | u) = ``cop.conditional_cdf(v, u)`` elementwise (broadcast)."""
     v, u = np.broadcast_arrays(np.asarray(v, dtype=float), np.asarray(u, dtype=float))
-    out = np.fromiter((cop.conditional_cdf(float(a), float(b))
-                       for a, b in zip(v.ravel(), u.ravel())), dtype=float, count=v.size)
+    fast = _H_ARRAY.get(type(cop))
+    if fast is not None:
+        out = np.asarray(fast(cop, v.ravel(), u.ravel()), dtype=float)
+    else:
+        out = np.fromiter((cop.conditional_cdf(float(a), float(b))
+                           for a, b in zip(v.ravel(), u.ravel())), dtype=float, count=v.size)
     return np.clip(out, 0.0, 1.0).reshape(v.shape)
 
 
@@ -546,28 +594,33 @@ class _Grid:
         self.lf, self.F = _margin_eval(model, grid.nodes, log=True)          # (G, K, K)
         self.logT = _log_x_transition(model, self.lf)                        # (G, K, K)
         self._Q = None
+        self._Qlead = None
         self.model = model
 
     def Q(self) -> np.ndarray:
         """log Q[(i, g), (j, g')] — missing → missing, as ``gaps._Chain``."""
         if self._Q is None:
             model, G, K = self.model, self.G, self.model.K
-            rep, til = np.repeat(np.arange(G), G), np.tile(np.arange(G), G)
-            ker = _log_kernel(model, self.lf[rep], _take(self.F, rep),
-                              self.lf[til], _take(self.F, til)).reshape(G, G, K, K)
+            ker = _kernel_outer(model, self.lf, self.F, self.lf, self.F, log=True)
             Q = ker.transpose(2, 0, 3, 1) + self.lw[None, None, None, :]      # (K, G, K, G)
             Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True)
             self._Q = Q.reshape(K * G, K * G)
         return self._Q
+
+    def lead_to(self, other: "_Grid") -> np.ndarray:
+        """log Q inside a leading gap of known prior (``gaps._lead_transition``)."""
+        if other is self and not self.grid.local:
+            if self._Qlead is None:
+                self._Qlead = _lead_transition(self.model, self.grid, self.grid, log=True)[0]
+            return self._Qlead
+        return _lead_transition(self.model, self.grid, other.grid, log=True)[0]
 
     def Q_to(self, other: "_Grid") -> np.ndarray:
         """log Q from the nodes of this grid to those of ``other``, as ``gaps._Chain``."""
         if other is self and not self.grid.local:
             return self.Q()
         model, G, K = self.model, self.G, self.model.K
-        rep, til = np.repeat(np.arange(G), G), np.tile(np.arange(G), G)
-        ker = _log_kernel(model, self.lf[rep], _take(self.F, rep),
-                          other.lf[til], _take(other.F, til)).reshape(G, G, K, K)
+        ker = _kernel_outer(model, self.lf, self.F, other.lf, other.F, log=True)
         Q = ker.transpose(2, 0, 3, 1) + other.lw[None, None, None, :]         # (K, G, K, G)
         Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True)
         return Q.reshape(K * G, K * G)
@@ -605,7 +658,13 @@ class _Filter:
         with np.errstate(divide="ignore"):
             self.lev = None if ev is None else np.log(ev)
         self._grid = None
+        self._pre = None                 # grids of the runs of missing rows (_grid_at)
         self._reset_grids()
+        # inside a leading gap (no row has entered the filter yet) the
+        # transitions carry the prior exactly when it is known (gaps._lead_transition)
+        self.lead_exact = _prior_known(model, ev)
+        self._lead = True
+        self._lead_mode = False
         self.cops = ([[model.copula(i, j) for j in range(K)] for i in range(K)]
                      if self.uses_cop else None)
         if N > 1:
@@ -659,9 +718,22 @@ class _Filter:
             yR = float(self.Y[r]) if r < self.N else np.nan
             fwd0 = self._fwd if aug else None
             yL = float(self.Y[n - 1]) if (n >= 1 and not aug) else np.nan
-            grids, fwd = _run_grids(self.model, ref.grid, yL, yR, r - n, fwd0, n)
+            if not aug and self.miss[n]:
+                # a run of missing rows entered from a row that entered the
+                # filter: its grids are those of gap_posterior, built for every
+                # such run in one call (not run by run: 27 of the 46 s of a
+                # pass on an Intel Lab window)
+                if self._pre is None:
+                    self._pre = _gap_grids(self.model, self.Y, self.miss, ref.grid, with_fwd=True)
+                grids = [self._pre[0][k] for k in range(n, r)]
+                fwd = [self._pre[1][k] for k in range(n, r)]
+            else:
+                grids, fwd = _run_grids(self.model, ref.grid, yL, yR, r - n, fwd0, n)
             self._run = [(n + k, self.grid() if g is ref.grid else _Grid(self.model, None, g), f)
                          for k, (g, f) in enumerate(zip(grids, fwd))]
+            if self._lead:
+                # the prior's transitions once a local grid enters the leading gap
+                self._lead_mode |= self.lead_exact and any(g.local for g in grids)
         _, g, self._fwd = self._run.pop(0)
         return g
 
@@ -752,7 +824,8 @@ class _Filter:
         self._cur = g
         G = g.G
         if aug:
-            return prev.Q_to(g) + self._ev(n, True), True
+            T = prev.lead_to(g) if (self._lead and self._lead_mode) else prev.Q_to(g)
+            return T + self._ev(n, True), True
         rep = np.zeros(G, dtype=int) + (n - 1)
         ker = _log_kernel(self.model, self.lf[rep], _take(self.Fc, rep), g.lf, g.F)  # (G, K, K)
         ker = ker.transpose(1, 2, 0)[None] + g.lw                             # (1, K, K, G)
@@ -778,6 +851,7 @@ class _Filter:
             return threshold is not None and _pvalue(c, s) < threshold
 
         self._reset_grids()
+        self._lead, self._lead_mode = True, False
 
         lden = 0.0
         if self.miss[0]:
@@ -790,6 +864,7 @@ class _Filter:
                 la, aug = self._init_missing()
             else:
                 la, aug = self._init_observed(), False
+                self._lead = False
         lc = float(_inf._lse(la))
         if not np.isfinite(lc):
             raise IncompatibleObservationError(
@@ -815,6 +890,7 @@ class _Filter:
                 else:
                     L, aug_n = self._L_observed(n, aug), False
                     observed = True
+                    self._lead = False
             r = _inf._lse(la[:, None] + L, axis=0)
             lc = float(_inf._lse(r))
             if not np.isfinite(lc):

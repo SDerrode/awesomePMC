@@ -36,6 +36,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **pmmforecast issues found**, listed for its author: identifiability of
   the Y-only fit, default starts, NaN handling, `TheoreticalMSE`, and the
   18–29 min Y-only MLE on 21 599 rows.
+### Fixed — leading gaps, the quadrature diagnostic, and the cost of the gap quadrature (P5–P7)
+
+- **What was wrong (P5).** A series that starts with missing rows was
+  misintegrated under strong serial dependence, and nothing said so. Before
+  the first reading the forward message is the prior, a broad law; the rows
+  of an interior gap moved it onto the narrow local grids of the gap by
+  relocating each source node's mass to the nearest destination nodes, and
+  the law of y was lost. On the 17-row leading gap of
+  `report/erroneous_data/intel_lab/repro_leading_gap.py` the batch pass and
+  the PIT filter were off by 4.3 and 22 nats (τ = 0.997, 0.999, G = 64),
+  still 1.7 at G = 256, with `quad_error` 3e-5: the diagnostic skipped the
+  rows of a leading gap. In linear space, blocks whose weights all
+  underflowed kept 0 and lost their mass: the batch pass's state filter
+  drifted from the PIT filter's by up to 0.29 in a leading gap and 0.26
+  after interior runs of 2–3 rows, and the two log-likelihoods, documented
+  as equal, differed by up to 2.4 nats.
+- **What changed (P5).** Inside a leading gap that contains a local grid,
+  when the prior is known in closed form (state margins; pair margins with a
+  symmetric p and state-independent missingness factors), the transitions
+  are rescaled by column so that the discrete prior of one position is
+  carried exactly onto the next (`gaps` docstring, "Leading gaps"): the
+  forward message is the prior at every position, log C = 0 inside the gap,
+  and the posterior there is the reverse-time forecast from the first
+  reading. The batch pass (linear and log), the PIT filter and the Nyström
+  densities use the same transitions. Blocks whose linear weights underflow
+  (mass < 1e-250) are rebuilt and rescaled in log space. The Gaussian-sum
+  propagation of the proposals keeps pieces of one state at different
+  places apart (a switch and a switch back used to merge into one broad
+  piece: scale 0.086 for a true 0.002).
+- **Measured (P5)**, against exact references (`test_gaps_leading.py`, 30
+  tests, 23 of which fail on the code before): the reproduction's leading
+  gaps (L = 2, 5, 17) within 2.5e-4 nats of the gap-free pass at G = 64 and
+  4.8e-8 at G = 256, the state filter equal to π to 4e-15. An AR(1) written
+  as a PMC (HMC-DN, state and pair margins), leading gaps of 1, 5 and 20
+  rows at ρ = 0.999, 0.9999: log-likelihood to 2.7e-7, means to 1.7e-10
+  and sds to 1.8e-4 of the exact conditional sd. A regime-switching AR(1)
+  (state margins N(m_i, s_i²), Gaussian copulas; exact likelihood, state
+  posteriors and missing-value laws from a K-state recursion over the
+  observed rows), leading gaps of 5 and 17 rows at τ = 0.99, 0.999:
+  log-likelihood within 2.3e-3 / 3.3e-5 nats at G = 64 / 128, state
+  posteriors 2.7e-4 / 8.8e-7, means and sds 2.0e-2 / 2.8e-3 exact sds
+  (before: 0.65 nats and γ off by 0.11 at ρ = 0.9999). Batch pass and
+  filter agree to 2.3e-13 nats and 1.7e-15 in α̂ on leading, interior and
+  trailing gaps; the linear and log passes to 1.2e-14 in α̂ on Intel mote 48.
+- **Old against new, regime AR(1) series** (`repro` and `sd` models,
+  N = 200; leading gaps of 1–17 rows, interior runs of 1–10 rows, a
+  trailing run; worst case over the models and lengths, exact reference):
+
+  | gaps | G | ρ | log-lik error, nats | mean of the missing y, exact sds |
+  |---|---|---|---|---|
+  | leading | 64 | 0.999 / 0.9999 | 4.5e-2 → 2.6e-3 / 6.8e-2 → 5.3e-4 | 6.1e-2 → 1.6e-1 / 0.30 → 7.1e-5 |
+  | leading | 256 | 0.9999 | 6.8e-3 → 2.8e-7 | 1.4e-2 → 3.7e-8 |
+  | interior | 64 | 0.999 / 0.9999 | 4.4e-3 → 1.1e-1 / 1.2e-2 → 6.6e-3 | 3.3e-2 → 1.5e-1 / 7.4e-2 → 6.3e-2 |
+  | interior | 256 | 0.9999 | 4.0e-3 → 1.1e-6 | 2.5e-2 → 1.8e-5 |
+  | trailing | 64 | 0.9999 | exact both (log C = 0) | 5.5e-3 → 6.9e-9 |
+
+  At ρ = 0.99 both are within 3e-5 nats at G = 64 and 1e-13 at G = 256.
+  The two cells that grow are a 17-row leading gap whose log-likelihood is
+  right (2.6e-3) but whose means inside the gap are 0.16 sds off at G = 64
+  (`quad_error` 0.015, not flagged; 1e-13 at G = 256), and a 10-row
+  interior gap at ρ = 0.999 whose error goes from −4.4e-3 to +0.11 nats
+  (flagged, 0.41): the pieces the propagation now keeps apart need more
+  nodes than G = 64 offers.
+- **What was wrong (P6).** On the Intel Lab windows the quadrature WARNING
+  fired on every ICE E-step (`quad_error` 2–17, 600 at the k-means start,
+  for a limit near 0.05). Measured against G = 512–1024 references, run by
+  run (the forward pass is a K-state recursion over the observed rows with
+  one transfer matrix per run of missing rows), the alarm was right: at
+  G = 64 the step-1 fits of motes 48, 47 and 22 (days 1–7) were off by
+  0.74, 4.4 and 7.2 nats (sum over the runs of |error|; single runs by up
+  to 0.12, 0.42 and 4.3), the ICE k-means start by 6.7. But the magnitude
+  was inflated (a block's relative error was unbounded) and the limit
+  1e-3 · √R depended on the number of runs R, not on the error. The real
+  failures had four causes: (1) a local grid had to be 3× better on the
+  proxy and no worse on each closed-form kernel, so a reference grid that
+  integrated both kernels of a gap to 6e-5 but their product, the bridge,
+  with an 11 % error was kept; (2) inside a run, positions where the local
+  grid was only 2.4–2.9× better kept the reference grid between two local
+  grids and relayed a narrow law through nodes 0.3–1 °C apart (two 25-row
+  gaps of the robust-estimation window 13.4 and 12.5 nats off); (3) a core
+  piece of a local grid went to the component that dominated at the
+  piece's middle, so a narrow dominant component whose centre other cores'
+  ends put off the middle got no panel (an ICE leading gap's exit 95 %
+  off, runs of mote 47 0.2–0.4 nats off); (4) the proposal weights are the
+  state law of the neighbour given y alone, not the filter (not fixed, see
+  below).
+- **What changed (P6).** A local grid replaces the reference grid when its
+  total error (the proxy on the laws of y plus the closed-form entry / exit
+  integrals) is 3× smaller than the reference grid's; inside a run, a
+  position next to a local grid of the run takes its own as soon as it is
+  better at all. A component 4× narrower than a piece's midpoint driver
+  drives the piece when it peaks higher inside it or holds more of its
+  mass. The diagnostic covers leading gaps (the reverse masses of their
+  transitions, weighted by the posterior, scaled by 0.02: measured, the
+  posterior errors inside the gap are at most 0.02 times that sum), caps
+  each block's relative error at 1, and warns above `QUAD_WARN = 0.05`
+  whatever the number of runs (`quad_warn_limit` returns it). `quad_error`
+  estimates Σ_runs |error of the run's log-likelihood factor| in nats,
+  within about 10× either way; `gaps._quadrature_report(..., per_run=True)`
+  gives the parts.
+- **Measured (P6)**, Σ_runs |per-run log-likelihood error| against
+  G = 512–1024 references (a sample of the worst runs checked at G = 1024
+  and 2048: converged to 1.3e-4 or better), old (770741f) → new at G = 64:
+  mote 48 0.74 → 0.80, mote 47 4.36 → 0.87, mote 22 7.20 → 1.14, the ICE
+  k-means start of mote 48 6.69 → 4.21; the robust-estimation window (ICE
+  iterate 10, 14 401 rows, 1 251 runs) 18.7 → 12.5 (worst run 3.5 → 1.1).
+  New at G = 128: 0.068, 0.015, 0.16; at G = 256: 2.8e-4, 1.4e-3 and, for
+  mote 22, 7.1; the ICE start 0.056. Mote 22 at G = 512: 0.019.
+- **Calibration (P6).** 67 passes, "off" when the sum of |per-run errors|
+  exceeds 0.01 nats (exact references: 18 regime-AR(1) series at G = 64
+  and 128, 9 leading gaps of the reproduction at G = 64 and 256; Intel: 13
+  passes against G = 512–1024). New diagnostic, new code: 5 of 25 off
+  passes missed (20 %; 0.013–0.021 nats off, reports 0.001–0.025), 2 false
+  alarms of 42 (5 %; 17-row leading gaps at G = 64 whose log-likelihood is
+  right to 2.5e-4, reports 0.050 and 0.051). Old diagnostic, old code (57
+  passes): 18 of 36 missed (50 %; the leading gaps, off by up to 22 nats),
+  no false alarm. On the ICE k-means start the report is 27 for 4.2 nats
+  off at G = 64 and 22 for 0.056 at G = 256: a state 8 sds from y, where
+  Φ rounds to 1 and the copula term is constant, has raw block masses 32×
+  the exact ones, which the renormalisation makes exact.
+- **Not fixed (P6).** Class (4): where the filter sits in a state whose
+  margin puts y far in its tail (mote 22: state 2 at 5.4 sds, a Gaussian
+  copula at τ = 0.975), the path that stays in it weighs ~1e-7 in the
+  proposals and no piece represents it. At G = 64 and 128 the local grids of
+  the other pieces cover it; at G = 256 the reference grid resolves every
+  piece, is kept, and 1 800 single-row gaps are off by up to 0.13 nats
+  (7.1 in all; `quad_error` 0.67, flagged); G = 512 is right (0.019). A
+  floor of 0.1 on that state law fixes mote 22 (7.1 → 0.049 at G = 256,
+  1.1 → 0.50 at G = 64) and mote 47 (0.87 → 0.35), but moves the ICE start
+  at G = 256 from 0.056 to 0.58, the regime AR(1) series at G = 128 from
+  0.71 to 0.82, and one brute-force pair-margin case of
+  `test_gaps_local_grids.py` from 4.6e-4 to 4.4e-3 at G = 64 (tolerance
+  3e-3): not adopted. Weighting the pieces by the filter needs the grids
+  after the forward pass.
+- **What was slow (P7).** A robust ICE fit on an Intel window took 347 s
+  after 39f249f against 10 s before, a sequential flag pass 59 s. Profiled:
+  the PIT filter built the grids run by run (27 of 46 s on mote 48, days
+  1–7) and evaluated 1.4 M scalar h-functions (14 s); the E-step evaluated
+  every missing → missing block on its G² expanded node pairs, Φ⁻¹ and the
+  Frank / Clayton / Gumbel terms included, called the margins once per grid
+  and `_cond_ppf` once per proposal piece; the layout of the local grids
+  judged each elementary piece in a Python loop (2.1 of 6.2 s of an E-step
+  after the P6 rules).
+- **What changed (P7).** The filter takes the grids of all runs of missing
+  rows from one call; the h-functions of the Gaussian, Clayton, Gumbel and
+  Frank copulas are evaluated on arrays. Missing → missing kernels are built
+  on the outer product of the nodes with per-node copula terms (bitwise
+  equal to the expanded pairs), the margins of all grids in one call, the
+  log-space rescue on the needed (i, j) pairs only, the pushes of the
+  proposals batched per transition, the layout drivers of all elementary
+  pieces in one array pass (bitwise equal grids at 21 000 positions). The
+  grids of the last 4 (model, series, G) are cached (`classify` after a fit
+  reuses the fit's grids).
+- **Timings**, wall clock, same computation, before (770741f) / after
+  (e9dfe6c), best of two interleaved rounds on the same machine under the
+  same load (another project kept its 10 cores busy, load 8–15): an ICE
+  E-step on mote 48, days 1–7 (20 160 rows, 2 503 missing), 4.70 / 1.84 s;
+  `predictive_pit` there 35.7 / 3.5 s; on the robust-estimation window
+  (14 401 rows, 8 275 missing), an E-step 17.4 / 14.1 s and
+  `predictive_pit` 91.4 / 16.1 s. On a quiet machine the before figures
+  were 2.33, 27.7, 16.0 and 72.6 s. A full ICE start on mote 48 (k-means):
+  106 / 68 CPU s (15 / 13 E-steps). Local grids remain costlier than one
+  stationary grid: the robust window has 4 962 blocks between local grids
+  of G² node pairs, and its full ICE fit (316 s before, quiet) was not
+  re-timed without load.
+- **Changed results.** Where no local grid enters a leading gap and no
+  block underflows (weak and moderate dependence, every fixture of the
+  test-suite), results are bit-identical; the ICE / SEM goldens and
+  `test_missing_data_results_are_bit_identical_to_pre_p6` pass unchanged,
+  and no golden was regenerated (fast suite: 7 992 passed, 34 skipped).
+  Elsewhere results move toward the exact references above, except the
+  cells named in the table (G = 64, ρ ≥ 0.999, 10-row interior and 17-row
+  leading gaps) and mote 48's step-1 fit at G = 64 (0.74 → 0.80 nats in
+  all, its worst run 0.12 → 0.21); all flagged but the leading gap's means.
 
 ### Fixed — missing values under strong serial dependence, and forecast / impute quantiles
 
