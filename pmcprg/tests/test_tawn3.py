@@ -38,6 +38,7 @@ import sys
 import zlib
 
 import numpy as np
+import scipy
 import pytest
 from scipy.stats import kendalltau
 
@@ -472,7 +473,13 @@ _PRE_GENERALISATION_FITS = [
 #: parameters' log-likelihood matches the fit's to ≤ 8·10⁻¹¹ for 13 of the 15
 #: cases, 4.9·10⁻⁹ and 1.6·10⁻⁴ for Student at seeds 22 and 23 (the latter in
 #: the Linux fit's favour: the macOS optimiser stopped short on the plateau).
-_BIT_EXACT = sys.platform == "darwin" and platform.machine() == "arm64"
+#: The hex values were produced on macOS arm64 with scipy ≥ 1.17. Older scipy
+#: moves the optimiser's last bits (L-BFGS-B, the t quantile): 13 of 15 differ
+#: under 1.10 and 1.14, 10 under 1.15, 6 under 1.16, none under 1.17 (measured
+#: on macOS arm64, Python 3.11) — so the older versions take the same
+#: likelihood check as the other platforms.
+_SCIPY = tuple(int(x) for x in scipy.__version__.split(".")[:2])
+_BIT_EXACT = sys.platform == "darwin" and platform.machine() == "arm64" and _SCIPY >= (1, 17)
 
 
 @pytest.mark.slow
