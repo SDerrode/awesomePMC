@@ -28,6 +28,12 @@ labels, and the MPM classification of the normal-operation rows against the
 The quadrature WARNINGs of pmcprg are counted per task, and ``quad_error`` of
 the returned fit on its masked window is recorded.
 
+Each task is saved to results/cache/robust_tasks/ as it finishes;
+``--resume`` reuses the saved tasks run with the same ``--max-rounds``, so
+an interrupted run loses only its running tasks. ``--max-rounds`` (default
+MAX_ROUNDS = 10) bounds the refits of every flag-and-mask fit;
+``--methods`` restricts the tasks run (the tables need them all).
+
 Usage (from the repository root, after fit_clean.py)
 ----------------------------------------------------
     .venv/bin/python report/erroneous_data/intel_lab/robust.py --jobs 4
@@ -35,6 +41,7 @@ Usage (from the repository root, after fit_clean.py)
 from __future__ import annotations
 
 import argparse
+import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -49,6 +56,7 @@ WIN_AFTER_D = 1.0
 METHODS = ("raw", "oracle", "oracle_ext", "fm", "fm_hampel", "fm_thr60", "raw_cs", "fm_cs")
 FLAG_CFG = {"alpha": C.MAIN_ALPHA, "sequential": True}
 MAX_ROUNDS = 10
+TASKS = C.CACHE / "robust_tasks"
 
 
 def window(d: dict) -> tuple[int, int]:
@@ -56,9 +64,32 @@ def window(d: dict) -> tuple[int, int]:
     return int(fs - round(WIN_BEFORE_D * C.EPD)), int(fs + round(WIN_AFTER_D * C.EPD))
 
 
+def task_path(spec: dict):
+    return TASKS / f"{spec['mote']}_{spec['kind']}_{spec['method']}_r{spec['max_rounds']}.pkl"
+
+
 def task(spec: dict) -> dict:
+    """One fit (or flag-and-mask loop), saved to TASKS when it finishes."""
+    path = task_path(spec)
+    if spec.get("resume") and path.exists():
+        return pickle.loads(path.read_bytes())
+    print(f"{time.strftime('%H:%M:%S')} start {spec['mote']} {spec['kind']} {spec['method']}",
+          flush=True)
+    out = _task(spec)
+    TASKS.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(pickle.dumps(out))
+    tmp.replace(path)
+    print(f"{time.strftime('%H:%M:%S')} done  {spec['mote']} {spec['kind']} {spec['method']}: "
+          f"{out['seconds']:.0f} s, {out['n_fits']} fit(s), iterations {out['iters_per_fit']}, "
+          f"masks {out.get('masks_per_fit', '')}", flush=True)
+    return out
+
+
+def _task(spec: dict) -> dict:
     wlog = C.capture_warnings()
     m, kind, K, meth = spec["mote"], spec["kind"], spec["K"], spec["method"]
+    max_rounds = spec["max_rounds"]
     d = C.load_mote(m, spec["data"])
     lo, hi = window(d)
     lab = C.truth_labels(d, lo, hi)
@@ -70,6 +101,7 @@ def task(spec: dict) -> dict:
     t0 = time.perf_counter()
     out = {"mote": m, "kind": kind, "K": K, "method": meth, "lo": lo, "hi": hi}
     n_fits, converged, mask = 1, np.nan, np.zeros(Y.size, bool)
+    iters = []
     if meth in ("raw", "oracle", "oracle_ext", "raw_cs"):
         if meth == "oracle":
             mask = lab["suspect"].copy()
@@ -78,9 +110,10 @@ def task(spec: dict) -> dict:
         Ym = Y.copy()
         Ym[mask] = np.nan
         if meth == "raw_cs":
-            model, _ = ice(clean_model, Ym, ice_cfg=cfg_model)
+            model, trace = ice(clean_model, Ym, ice_cfg=cfg_model)
         else:
-            model, _ = ice(template, Ym, ice_cfg=cfg_km)
+            model, trace = ice(template, Ym, ice_cfg=cfg_km)
+        iters = [len(trace.log_liks)]
     else:
         init_mask = None
         if meth == "fm_hampel":
@@ -90,11 +123,12 @@ def task(spec: dict) -> dict:
             init_mask = np.isfinite(raw) & (raw > C.T_HI)
         if meth == "fm_cs":
             R = robust_estimate(clean_model, Y, cfg_model, flag_cfg=FLAG_CFG,
-                                max_rounds=MAX_ROUNDS)
+                                max_rounds=max_rounds)
         else:
             R = robust_estimate(template, Y, cfg_km, flag_cfg=FLAG_CFG,
-                                max_rounds=MAX_ROUNDS, initial_mask=init_mask)
+                                max_rounds=max_rounds, initial_mask=init_mask)
         model, mask = R.model, R.mask
+        iters = [len(t.log_liks) for t in R.traces]
         n_fits, converged = R.n_fits, R.converged
         out["initial_mask"] = int(R.masks[0].sum())
         out["masks_per_fit"] = "|".join(str(int(x.sum())) for x in R.masks)
@@ -107,7 +141,8 @@ def task(spec: dict) -> dict:
     out.update({"quad_error": q["quad_error"], "quad_limit": q["quad_limit"]})
     out["seconds"] = time.perf_counter() - t0
     out.update({"n_fits": n_fits, "converged": converged, "loglik": ll,
-                "n_masked": int(mask.sum())})
+                "n_masked": int(mask.sum()), "max_rounds": max_rounds,
+                "iters_per_fit": "|".join(str(i) for i in iters)})
     ob = lab["observed"]
     s, cl = lab["suspect"], lab["climb"]
     out.update({"n_obs": int(ob.sum()), "n_suspect": int(s.sum()), "n_climb": int(cl.sum()),
@@ -137,13 +172,18 @@ def task(spec: dict) -> dict:
 
 def run(args):
     sel = C.selected_models()
-    specs = [{"mote": m, "kind": k, "K": sel[(m, k)][0], "method": meth, "data": args.data}
-             for m in C.MOTES for k in C.KINDS for meth in METHODS]
+    methods = args.methods or METHODS
+    specs = [{"mote": m, "kind": k, "K": sel[(m, k)][0], "method": meth, "data": args.data,
+              "max_rounds": args.max_rounds, "resume": args.resume}
+             for m in C.MOTES for k in C.KINDS for meth in methods]
     specs.sort(key=lambda s: (s["kind"] != "pmc_state", not s["method"].startswith("fm")))
     t0 = time.perf_counter()
     with ProcessPoolExecutor(args.jobs) as ex:
         res = list(ex.map(task, specs))
     wall = time.perf_counter() - t0
+    if set(methods) != set(METHODS):
+        print(f"--methods {' '.join(methods)}: tasks saved to {TASKS}, no tables.")
+        return
     # Classification of the normal-operation rows against oracle_ext and the clean model.
     for m in C.MOTES:
         d = C.load_mote(m, args.data)
@@ -178,6 +218,7 @@ def run(args):
                         **{f"{r['mote']}|{r['kind']}|{r['method']}|mask": r["mask"] for r in res})
     C.save_json(C.RESULTS / "robust_info.json", {
         "pmcprg": C.check_import(), "pmcprg_commit": C.git_commit(), "wall_seconds": wall, "jobs": args.jobs,
+        "max_rounds": args.max_rounds, "resumed": bool(args.resume),
         "fit_seconds_sum": float(sum(r["seconds"] for r in res)),
         "windows": {str(m): list(window(C.load_mote(m, args.data))) for m in C.MOTES}})
     figures(res, args)
@@ -228,6 +269,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--data", default=C.DEFAULT_DATA)
     ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--max-rounds", type=int, default=MAX_ROUNDS,
+                    help=f"refits of every flag-and-mask fit (default {MAX_ROUNDS})")
+    ap.add_argument("--methods", nargs="+", choices=METHODS,
+                    help="run only these tasks (saved for --resume; no tables)")
+    ap.add_argument("--resume", action="store_true",
+                    help="reuse the tasks saved in results/cache/robust_tasks/")
     args = ap.parse_args()
     print("pmcprg:", C.check_import())
     run(args)

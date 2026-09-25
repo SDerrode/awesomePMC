@@ -1,8 +1,11 @@
 {
-  "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-a4050c8c28087d6c4/pmcprg/__init__.py",
-  "wall_seconds": 1327.126744000001,
-  "jobs": 3,
-  "fit_seconds_sum": 3773.799872085001,
+  "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-ad8f31accb1810d2e/pmcprg/__init__.py",
+  "pmcprg_commit": "d637a06",
+  "wall_seconds": 11000.700640834002,
+  "jobs": 4,
+  "max_rounds": 10,
+  "resumed": true,
+  "fit_seconds_sum": 47432.62678679202,
   "windows": {
     "48": [
       63420,

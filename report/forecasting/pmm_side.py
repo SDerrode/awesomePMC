@@ -41,6 +41,11 @@ jobs --dir D [--workers W] [--force]
     * write ``<job>.pmm.csv`` (fit, origin, h, mean, sd on the data scale) and
       ``<job>.pmm.json`` (fits, likelihoods, invariants, theoretical MSE).
 
+refilter --dir D --fits results/pmm_fits.csv [--force]
+    As ``jobs``, but the two fits of each job are read from ``pmm_fits.csv``
+    (full-precision ``default_abcde`` / ``ar1_start_abcde``) instead of refitted
+    (``rerun_pending.py``: the mote-20 forecasts without the 18–29 min MLE).
+
 crosscheck --out D
     Part 2 (Gaussian cross-check): PMM tuples, simulated paths, Y-only
     likelihoods, forecasts and theoretical MSEs, and the identifiability
@@ -222,7 +227,26 @@ def fit_pmm(y_train: np.ndarray, z_train: np.ndarray, n_restarts: int, seed: int
     return out
 
 
-def run_job(spec_path: str, force: bool = False) -> dict:
+def saved_fits(fits_csv: str, name: str, z_train: np.ndarray) -> dict:
+    """The two fits of job ``name`` as recorded in ``pmm_fits.csv`` (``refilter``).
+
+    The ``default_abcde`` / ``ar1_start_abcde`` columns hold the tuples at full
+    precision; the likelihoods are recomputed on ``z_train``.
+    """
+    row = pd.read_csv(fits_csv).set_index("name").loc[name]
+    out = {}
+    for lab in ("default", "ar1_start"):
+        x = np.array(json.loads(row[f"{lab}_abcde"]), float)
+        out[lab] = {"params": ParamPMM(*x), "success": bool(row[f"{lab}_success"]),
+                    "nfev": int(row[f"{lab}_nfev"]), "nll": float(neg_log_likelihood_y_only(x, z_train)),
+                    "seconds": 0.0}
+    out["ar1_start"]["x0"] = [float(v) for v in json.loads(row["ar1_start_x0"])]
+    out["ar1_start"]["x0_nll"] = float(row["ar1_start_x0_nll_std"])
+    return out
+
+
+def run_job(spec_path: str, force: bool = False, fits_csv: str | None = None) -> dict:
+    """One forecast job; with ``fits_csv`` the fits are read from it instead of refitted."""
     logging.disable(logging.WARNING)
     spec_path = Path(spec_path)
     spec = json.loads(spec_path.read_text())
@@ -239,7 +263,10 @@ def run_job(spec_path: str, force: bool = False) -> dict:
     m, s = float(y_train.mean()), float(y_train.std())
     z_train = (y_train - m) / s
     assert np.allclose(standardise(y_train), z_train)
-    fits = fit_pmm(y_train, z_train, int(spec.get("n_restarts", 4)), int(spec.get("seed", 0)))
+    if fits_csv:
+        fits = saved_fits(fits_csv, spec["name"], z_train)
+    else:
+        fits = fit_pmm(y_train, z_train, int(spec.get("n_restarts", 4)), int(spec.get("seed", 0)))
     t_fit = time.perf_counter() - t0
     best = min(fits, key=lambda k: fits[k]["nll"])
     params = fits[best]["params"]
@@ -447,6 +474,10 @@ def main(argv=None) -> int:
     j.add_argument("--dir", required=True)
     j.add_argument("--workers", type=int, default=1)
     j.add_argument("--force", action="store_true")
+    r = sub.add_parser("refilter")
+    r.add_argument("--dir", required=True)
+    r.add_argument("--fits", required=True)
+    r.add_argument("--force", action="store_true")
     c = sub.add_parser("crosscheck")
     c.add_argument("--out", required=True)
     args = ap.parse_args(argv)
@@ -456,6 +487,10 @@ def main(argv=None) -> int:
               "Install pmmforecast in a separate venv and pass its interpreter to "
               "run_forecasting.py / cross_check.py with --pmm-python.", file=sys.stderr)
         return NO_PMM_STATUS
+    if args.cmd == "refilter":
+        for sp in sorted(p for p in Path(args.dir).glob("*.json") if not p.name.endswith(".pmm.json")):
+            print("  ", run_job(str(sp), args.force, fits_csv=args.fits), flush=True)
+        return 0
     return cmd_jobs(args) if args.cmd == "jobs" else cmd_crosscheck(args)
 
 

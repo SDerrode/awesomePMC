@@ -747,8 +747,14 @@ def last_observed(prefix: np.ndarray) -> int:
 
 
 def pmc_rows(method: str, model: PMCModel, Yc: np.ndarray, case: dict, extra_fn=None,
-             gap_nodes: int = 64) -> list[dict]:
-    """pmcprg ``forecast`` at every origin, conditioned on Yc[:o] (NaN allowed)."""
+             gap_nodes: int = 64, check_origin: int | None | str = "middle") -> list[dict]:
+    """pmcprg ``forecast`` at every origin, conditioned on Yc[:o] (NaN allowed).
+
+    ``check_origin``: the origin at which a grid model also gets the 200-level
+    quantile CRPS (``crps_q``): the middle origin of ``case["origins"]`` by
+    default, or a given origin, or None (none; ``rerun_pending.py`` forecasts
+    the origins in chunks and passes the middle origin of the whole list).
+    """
     from pmcprg.pmc.gaps import needs_grid, reference_grid
     rows = []
     H, truth = case["H"], case["truth"]
@@ -759,7 +765,7 @@ def pmc_rows(method: str, model: PMCModel, Yc: np.ndarray, case: dict, extra_fn=
     grid = needs_grid(model)
     omega = reference_grid(model, gap_nodes).omega if grid else None
     origins = list(case["origins"])
-    o_check = origins[len(origins) // 2]
+    o_check = origins[len(origins) // 2] if check_origin == "middle" else check_origin
     for o in origins:
         fut = truth[o:o + H]
         extra = dict(extra_fn(o)) if extra_fn else {}

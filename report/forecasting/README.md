@@ -1,19 +1,35 @@
 # Forecasting: pmcprg against pmmforecast, and outlier gating (forecasting)
 
-> **Status (2026-09-23).** Parts 1, 3 and 4 were rerun in full on pmcprg
+> **Status (2026-09-25).** Parts 1, 3 and 4 were rerun in full on pmcprg
 > commit **39f249f** (P1: local gap-quadrature grids; P2: empty state; P3:
 > forecast/impute quantiles), with pmmforecast 58ac3b6. The run took 92.6 min
 > of wall time with 0 task errors. `repro_pmcprg_problems.py` confirms that
-> P1–P3 are gone. Part 2 is unchanged. Two caveats remain:
+> P1–P3 are gone. Part 2 is unchanged.
 >
-> - **Pending the leading-gap fix** (pmcprg's open problem, see
->   `report/erroneous_data/intel_lab/repro_leading_gap.py`): only the four
->   copula rows of `results/mote20_select.csv`. Mote 20 starts with one
->   missing row and those fits have τ up to 0.997. No forecast of this study
->   is conditioned on a series that starts with a gap (`run_info.json`,
->   `leading_gaps`).
-> - **Quadrature converged to 3 %, not 1 %:** five fits of contaminated
->   Aotizhongxin by the copula PMC (marked † below).
+> The cells that waited on the gap quadrature were then rerun by
+> `rerun_pending.py` on pmcprg's later fixes (CHANGELOG `[Unreleased]`:
+> P5–P7, leading gaps, a calibrated `quad_error` and speed; cause 4, local
+> grids placed from the filter). The two contaminated Aotizhongxin copula
+> tasks and three of the four mote-20 selection fits ran on **d14e91d**, the
+> last fit (`pmc_pair` K = 3) on **5f23fc9**, which only bounds the memory of
+> the gap quadrature (bit for bit the same results). 0 task errors
+> (`run_info.json`, `rerun_pending`). The conclusions of parts 1, 3 and 4
+> stand.
+>
+> - **Mote 20: still no copula PMC.** The four copula candidates, refitted
+>   on the leading-gap fix, are all ineligible. The two pair-margin fits are
+>   degenerate. The two state-margin fits, including the best BIC, are not
+>   converged in the quadrature even at 512 nodes. HMC-IN K = 3 stays the
+>   model, as before.
+> - **The five † fits of contaminated Aotizhongxin stay †.** Between 128 and
+>   256 nodes their means and sds still change by 1.4–3.8 % of the predictive
+>   sd, not less than 1 %. Their CRPS moved by at most 5e-4 from 39f249f.
+> - **Operations.** The first attempts were stopped for memory: one process
+>   reached 17 GB (the script's memoised posteriors), then 19 GB (the gap
+>   quadrature of the `pmc_pair` K = 3 fit, killed by a memory guard).
+>   `rerun_pending.py` now keeps two numbers per posterior, and 5f23fc9
+>   bounds the quadrature. Wall time: 64 min for the two Aotizhongxin tasks
+>   (two processes), 53 min for the `pmc_pair` K = 3 fit alone.
 
 This study compares pmcprg's forecasts with **pmmforecast**. pmmforecast is the
 author's companion package for stationary 1-D Gaussian pairwise Markov models:
@@ -52,9 +68,10 @@ with 95 % bootstrap CIs.
   0.979): it carries momentum that a PMC with an AR(1)-like regime lacks. The
   AR(1) is 5.6 % behind the PMM too.
 - **Mote 20 (30 s, near-deterministic).**
-  - pmcprg cannot forecast it with a copula PMC: none converges in the
-    quadrature at 256 nodes (see "Checks"). HMC-IN, which ignores the
-    y_n → y_{n+1} dependence, has 7.7× the PMM's CRPS.
+  - pmcprg cannot forecast it with a copula PMC. The two pair-margin fits
+    are degenerate, and the state-margin fits do not converge in the
+    quadrature even at 512 nodes (see "Part 1" and "Checks"). HMC-IN, which
+    ignores the y_n → y_{n+1} dependence, has 7.7× the PMM's CRPS.
   - Persistence beats the PMM by 16.8 % [4, 26]. The PMM's predictive variance
     is 4–6× its empirical MSE at h ≤ 6.
 - **HMC-IN is always last among the model-based forecasts on real series:**
@@ -151,19 +168,21 @@ P3 — forecast quantiles against the forecast's own node law (ICE fit of Aotizh
   column is the median of the reference nodes weighted by `density`, a coarse
   discretisation that moves by 0.05 around 4.00.
 
-### Leading gap under strong dependence (open; found by report/erroneous_data)
+### Leading gap under strong dependence (fixed in ca6ac57, P5; found by report/erroneous_data)
 
-A series that starts with missing rows is misintegrated when τ ≥ 0.997, and
-no WARNING is logged. In this study:
+On 39f249f a series that starts with missing rows was misintegrated when
+τ ≥ 0.997, and no WARNING was logged. In this study:
 
 - **The only series that starts with a gap is mote 20** (epoch 1 absent,
   1 row).
-- **No fit or forecast conditioned on it is used.** Every copula PMC of the
-  mote fails the quadrature check (below). HMC-IN has no grid.
+- **No fit or forecast conditioned on it is used.** No copula PMC of the
+  mote is eligible (below). HMC-IN has no grid.
 - **Affected: the four copula rows of `mote20_select.csv`** (τ max 0.994–0.997,
-  leading gap 1), pending the fix. Their log-likelihoods come from `classify`
-  on the training part, and their ICE fits had the same leading gap.
-- **Measured on the fitted PMC state K = 2**, first 40 and 400 rows, the
+  leading gap 1). Their log-likelihoods come from `classify` on the
+  training part, and their ICE fits had the same leading gap. They were
+  refitted and checked again on the fix (d14e91d / 5f23fc9,
+  `rerun_pending.py`); see "Part 1", mote 20.
+- **Measured on the 39f249f PMC state K = 2 fit**, first 40 and 400 rows, the
   series against the same series without its first row:
   - log-likelihood: 0.025 nats off at G = 64 and 0.0000 at G = 256, the same
     through `gap_posterior` and `predictive_pit`;
@@ -174,7 +193,7 @@ no WARNING is logged. In this study:
 
 ### Observations for the library author (not defects)
 
-- **The `quad_error` WARNING is conservative on forecast chains.**
+- **The `quad_error` WARNING of 39f249f was conservative on forecast chains.**
   - The §4 Aotizhongxin PMC (pair K = 3, τ ≤ 0.86) logs it on all 91
     forecasts at G = 64: quad_error median 0.029, max 0.75, against a limit
     of 0.004.
@@ -182,26 +201,42 @@ no WARNING is logged. In this study:
     6.4e-3 predictive sd in mean and 5.7e-3 in sd.
   - In the campaign it fired 3 710 times over 131 task steps. It is useful
     only as a screen, and the study's own check decides G.
+  - pmcprg has since recalibrated it (P6: an estimate of the log-likelihood
+    error in nats, limit 0.05). On the rerun fits it agrees with the
+    study's check. The five † fits are 1.5–5.9× over its limit at their G,
+    the converged 1 % Hampel fit 0.32×, and every mote-20 candidate is over
+    it at every G up to 512. One case is still conservative: `pmc_pair`
+    K = 2 of mote 20 is 13× over the limit at G = 256, where it agrees with
+    G = 512 to 5e-6 sd.
 - **Models with a spike regime converge slowly in G.** These are the ICE fits
   of contaminated Aotizhongxin: 1–5 % of mass at ln PM2.5 ≈ 10, the rest
   near 4.
-  - Their means and sds change by 1.7–2.8 % of the predictive sd between
-    128 and 256 nodes.
-  - The returned 97.5 % quantile departs from its own node law by up to
-    0.04 sd from one value and 0.064 sd from a 50-row window at G = 512,
-    with the quantile-fallback WARNING. The pre-fix code gave −0.033 sd on
-    the same window.
+  - Their means and sds change by 1.4–3.8 % of the predictive sd between
+    128 and 256 nodes on d14e91d (1.7–2.8 % on 39f249f): the later fixes
+    did not make them converge.
+  - On 39f249f, the returned 97.5 % quantile departs from its own node law
+    by up to 0.04 sd from one value and 0.064 sd from a 50-row window at
+    G = 512, with the quantile-fallback WARNING. The pre-fix code gave
+    −0.033 sd on the same window. On the rerun (21 570 grid rows), the
+    returned 2.5 / 97.5 % quantiles are within 0.095 sd of the node law's,
+    and 3 rows exceed 0.05.
   - The study scores the node law, so it does not depend on the returned
     quantiles.
-- **Mote 20 (τ up to 0.997, 4 373 missing rows) still does not converge at
-  G = 256.**
-  - Between 128 and 256 nodes the forecast means and sds change by 6.7–17 %
-    of the predictive sd; quad_error is 5–34× its limit, so pmcprg warns.
-  - One forecast of the full series costs 18 s at G = 256 (one quantile
-    level), so the mote campaign at G = 512 would take hours.
-  - For the PMC state K = 2 fit, the log-likelihood of the training part
-    (21 600 rows, 3 409 missing) is 41 043.29 at G = 64, 41 032.48 at 128,
-    41 032.51 at 256 and 41 032.97 at 512.
+- **The state-margin fits of mote 20 (τ up to 0.997, 4 373 missing rows)
+  do not converge in G, even at 512 nodes** (d14e91d / 5f23fc9; the ladder
+  of `rerun_pending.py`, table in "Part 1").
+  - Between 256 and 512 nodes the forecast means and sds of the two
+    state-margin fits still change by 4.3 % (K = 3) and 2.6 % (K = 2) of the
+    predictive sd, and their node-law tails by 27 % and 38 %. For K = 2
+    the check does not decrease (2.0 % from 128 to 256). pmcprg agrees:
+    quad_error is 7.2× and 5.5× its limit at G = 512.
+  - The log-likelihood of the training part (21 600 rows, 3 409 missing),
+    hence the BIC, is converged: 41 012.66 at G = 64, 41 012.59 at 128 and
+    41 012.58 at 256 and 512 for the PMC state K = 2 fit. On 39f249f its fit
+    had 41 043.29, 41 032.48, 41 032.51 and 41 032.97. The forecast law is
+    what does not converge.
+  - One forecast of the full series costs 144–470 s at G = 512 (30–63 s at
+    256; `seconds_by_G`), 5–16 h for the 120 origins of one method.
 
 ## pmmforecast issues (for its author; its repository was not modified)
 
@@ -329,9 +364,38 @@ models it had (RMSE at h = 1 / 6 / 24):
 | coverage 50 / 80 / 95 % | 0.51 / 0.74 / 0.89 | 0.52 / 0.84 / 0.99 | 0.67 / 0.88 / 0.97 | 0.61 / 0.81 / 0.91 | 0.60 / 0.81 / 0.91 | 0.54 / 0.83 / 0.99 |
 | 95 % width | 1.10 | 2.17 | 1.54 | 1.21 | 1.26 | 1.83 |
 
-**Intel Lab mote 20 (°C, 30 s).** pmcprg has no copula PMC here: none of the
-four passed the quadrature check at 256 nodes (`results/mote20_select.csv`).
-HMC-IN K = 3 is the BIC choice among the converged fits.
+**Intel Lab mote 20 (°C, 30 s).** No copula PMC is forecast on mote 20:
+none of the four candidates is eligible. The rule picks by BIC one HMC-IN
+model and one copula PMC among the fits that are neither degenerate nor
+unconverged in the quadrature. It gives HMC-IN K = 3, as on 39f249f, and no
+copula PMC. The copula candidates were refitted on d14e91d / 5f23fc9, and
+their check was extended to 512 nodes (`rerun_pending.py`,
+`results/mote20_select.csv`). Checks are in
+predictive sd, first, middle and last origins; the rule needs ≤ 0.01 and
+tails ≤ 0.05 at G ≤ 256.
+
+| candidate | BIC | degenerate | mean/sd check 64→128 / 128→256 / 256→512 | tails 128→256 / 256→512 | quad_error / limit at 256 / 512 |
+|---|---|---|---|---|---|
+| PMC state K=3 | **−86 799** | no | 0.20 / 0.089 / 0.043 | 0.22 / 0.27 | 38 / 7.2 |
+| PMC pair K=3 | −86 786 | yes | 0.39 / 0.64 / 0.84 | 6.5 / 6.5 | 149 / 127 |
+| PMC state K=2 | −81 927 | no | 0.061 / 0.020 / 0.026 | 0.49 / 0.38 | 9.6 / 5.5 |
+| PMC pair K=2 | −79 077 | yes | 0.035 / 0.010 / 5.0e-6 | 0.046 / 4.2e-3 | 13 / 3.1 |
+| HMC-IN K=3 (chosen) | 55 492 | no | exact (no grid) | – | – |
+
+- **The state-margin fits are not converged even at 512 nodes.** The best
+  BIC, state K = 3, still moves by 4.3 % in mean/sd and 27 % in the tails
+  from 256 to 512 nodes; state K = 2 by 2.6 % and 38 %.
+- **Their BIC is not in doubt.** The log-likelihood of the training part
+  moves by at most 0.68 nats (K = 3) and 0.08 nats (K = 2) over
+  G = 64…512.
+- **The pair-margin fits are degenerate:** a pair margin has sd 1e-4 °C,
+  the fitting floor, below 1 % of the data sd (0.032). Pair K = 2 converges
+  between 256 and 512 nodes, but its check at 128 → 256 is 0.0101. Pair
+  K = 3 converges at no G, and its log-likelihood swings by 15 nats between
+  64 and 512 nodes.
+- **On 39f249f** no candidate was degenerate, and all four failed the check
+  at 256 nodes (0.067–0.17). The refits on the new quadrature are different
+  models: their log-likelihoods at G = 64 are 31–1 215 nats lower.
 
 | h | HMC-IN K=3 | PMM (pmmforecast) | PMM, default starts | AR(1) | persistence |
 |---|---|---|---|---|---|
@@ -360,6 +424,7 @@ bootstrap CI, 2 000 resamples; `results/part1_paired.csv`):
 | mote 20 | AR(1) | −0.0067 (−7 %) | [−0.015, +0.004] | 84 % |
 | mote 20 | HMC-IN K=3 | +0.66 (+680 %) | [+0.56, +0.76] | 1 % |
 
+Mote 20 has no copula PMC row, since no candidate is eligible (above).
 By horizon band, PMC against PMM on Aotizhongxin: −3.6 % at h = 1, −1.2 % at
 h = 2–6, −1.1 % at h = 7–24; no CI excludes 0. On tsNH4: +1.0 %, +4.2 % and
 +7.3 %.
@@ -515,15 +580,17 @@ Flags (`fits.csv`, means over replicates):
 
 **Beijing Aotizhongxin with injected spikes, seed 0.** Every method ran on
 the same series. The copula PMC ran on seed 0 only. The 3-seed table of the
-other methods is in `results/tables.md`; its means are within 0.01 of these.
+other methods is in `results/tables.md`. Its means are within 0.01 of these,
+except persistence (0.650 and 0.898 against 0.631 and 0.817 at 1 % and 5 %).
+Its h = 1 columns differ by up to 0.03 (AR(1) at 5 %) and 0.12 (persistence).
 
 | method | clean | h=1 clean | 1 % | h=1 1 % | 5 % | h=1 5 % |
 |---|---|---|---|---|---|---|
 | PMC pair K=3 | 0.557 | 0.199 | **0.556**† | **0.197**† | **0.561**† | **0.207**† |
 | PMC pair K=3, raw + gate | 0.557 | 0.199 | 0.556† | 0.197† | 0.561† | 0.207† |
 | PMC pair K=3, robust | 0.564 | 0.200 | 0.558† | 0.198† | 0.565† | 0.205† |
-| PMC pair K=3, robust + gate | 0.564 | 0.200 | 0.558† | 0.198† | 0.566† | 0.205† |
-| PMC pair K=3, Hampel robust + gate | – | – | 0.564 | 0.198 | 0.566† | 0.205† |
+| PMC pair K=3, robust + gate | 0.564 | 0.200 | 0.558† | 0.198† | 0.565† | 0.205† |
+| PMC pair K=3, Hampel robust + gate | – | – | 0.564 | 0.198 | 0.565† | 0.206† |
 | HMC-IN K=3 | 0.600 | 0.334 | 0.626 | 0.419 | 0.642 | 0.436 |
 | HMC-IN K=3, raw + gate | 0.600 | 0.334 | 0.626 | 0.419 | 0.642 | 0.436 |
 | HMC-IN K=3, robust + gate | 0.601 | 0.334 | 0.626 | 0.420 | 0.641 | 0.436 |
@@ -534,20 +601,33 @@ other methods is in `results/tables.md`; its means are within 0.01 of these.
 | AR(1) robust + gate | 0.636 | 0.313 | 0.636 | 0.313 | 0.650 | 0.329 |
 | persistence | 0.632 | 0.210 | 0.631 | 0.210 | 0.817 | 0.415 |
 
-† These fits converge in the quadrature to 1.7–2.8 % of the predictive sd in
-mean and sd, between G = 128 and 256, instead of 1 %. Their node-law tails
-change by 2–9 %. Such a change is small beside the differences quoted: a
-2.8 % sd shift of the mean changes a Gaussian CRPS by less than 0.1 %.
+† These fits are not converged in the quadrature under the study's rule,
+and the rerun on d14e91d keeps them so. Between G = 128 and 256 their means
+and sds change by 1.4–3.8 % of the predictive sd instead of 1 % (1.7–2.8 %
+on 39f249f). The node-law tails of the 1 % raw and robust fits change by
+9.3 and 9.8 %, instead of 5 %; those of the 5 % fits by 2.2–2.5 %. The 1 %
+Hampel fit converges (G = 128: 0.57 %, tails 1.7 %) and has no †. Such a
+change is small beside the differences quoted: a 3.8 % sd shift of the mean
+changes a Gaussian CRPS by less than 0.1 %. Measured between 39f249f and
+d14e91d, whose grids differ, these cells moved by at most 1e-4 in CRPS
+(2.5e-4 at any h). The 5 % Hampel cell moved by 5e-4 (1e-3 at any h),
+because its robust loop ended on another mask.
 
 - **The raw pair PMC gives its spike state** (see "Conclusions") a
   probability of 0.011 and 0.049, a self-transition of 0 and pair margins
   at ln PM2.5 ≈ 10.
 - **Its gate flags almost nothing:** 2–3 test rows, detecting 3–12 % of the
   test spikes.
-- **`robust_estimate`, even from the Hampel mask (97 % of the spikes), returns
-  to that fit at 5 %** (mask of 21 rows, 0.9 % of the spikes). At 1 % the
-  Hampel start keeps 87 masked rows (detection 1.00): a clean model, flagged
-  degenerate by the real_series rule.
+- **`robust_estimate`, even from the Hampel mask (97 % of the spikes), ends
+  near that fit at 5 %.**
+  - From the k-means start it converges on a mask of 21 rows.
+  - From the Hampel mask it stops after 10 refits with the flagged rows
+    still changing (17 masked, 20 flagged; pmcprg WARNING). On 39f249f it
+    had converged on the same 21 rows.
+  - Both masks hold 0.9 % of the spikes, and both fits keep the spike state
+    (π = 0.049, self-transition 0).
+- **At 1 % the Hampel start keeps 87 masked rows** (detection 1.00): a clean
+  model, flagged degenerate by the real_series rule.
 
 **Intel Lab mote 20 as recorded** (three −38.4 °C readings, the sensor's zero
 count, in the training part; the test part is the same):
@@ -629,8 +709,9 @@ the central 50 / 80 / 95 % intervals.
   crc32 seeds, as in that study. Fits start at the true model.
 - *Aotizhongxin*: the same spikes injected into the observed rows, at 1 and
   5 %, 3 seeds. The copula PMC (pair K = 3) runs on seed 0 only
-  (`REAL_PMC_SEEDS`). Its contaminated fits need 256 nodes, where one
-  forecast of the full series costs 9 s: 77 and 79 min per task.
+  (`REAL_PMC_SEEDS`). Its contaminated fits need 256 nodes (all but the 1 %
+  Hampel fit), where one forecast of the full series cost 9 s on 39f249f:
+  77 and 79 min per task, then 63 and 64 min on d14e91d (`tasks.csv`).
 - *Mote 20*: as recorded.
 - *Scoring*: always against the clean values.
 
@@ -662,7 +743,10 @@ The gated filter is causal, so one `flag_outliers` call serves every origin.
 
 ## Checks (kept from P1–P3), all run on this campaign
 
-**Quadrature convergence per model** (`choose_nodes`, `fits.csv`).
+The rerun cells (`rerun_pending.py`) ran the same checks on d14e91d / 5f23fc9.
+
+**Quadrature convergence per model** (`choose_nodes`, `fits.csv`,
+`mote20_select.csv`).
 
 - The chosen G is the first of 64, 128 and 256 whose predictive means and
   sds change by less than 1 %, and whose node-law 2.5 / 97.5 % quantiles by
@@ -675,28 +759,39 @@ The gated filter is causal, so one `flag_outliers` call serves every origin.
 
 | study | model | fits | G = 64 / 128 / 256 | unconverged | mean/sd check at 64 | at chosen G | tails at G | quad_error / limit at G |
 |---|---|---|---|---|---|---|---|---|
-| Aotizhongxin | PMC pair K=3 | 8 | 1 / 2 / 5 | 5† | 4.7e-2 | 2.8e-2 | 9.0e-2 | up to 230 |
+| Aotizhongxin | PMC pair K=3 | 8 | 1 / 2 / 5 | 5† | 7.4e-2 | 3.8e-2 | 9.8e-2 | 0.32–7.0 |
 | tsNH4 | PMC state K=2 | 2 | 0 / 2 / 0 | 0 | 2.2e-2 | 1.4e-4 | 4.5e-2 | 2.3 |
 | PMC fixture | PMC state K=2 | 150 | 150 / 0 / 0 | 0 | 4.4e-4 | 4.4e-4 | 4.5e-2 | 5.6 |
-| mote 20 (selection) | 4 copula PMCs | 4 | 0 / 0 / 4 | 4 (not used) | 0.10–0.24 | 0.067–0.17 | 0.13–0.70 | 5–34 |
+| mote 20 (selection) | 4 copula PMCs | 4 | 0 / 0 / 4 | 4 (not used; 2 degenerate) | 0.035–0.39 | 0.010–0.64 | 0.046–6.5 | 9.6–149 |
 
 Aotizhongxin fits:
 
 - *Converged:* the clean raw fit (§4, G = 64, 3e-4), the clean robust fit
-  (G = 128, 4.2e-3) and the 1 % Hampel fit (G = 128, 5.2e-3).
-- *† (1.7–2.8 %):* the 1 % raw and robust fits and all three 5 % fits.
+  (G = 128, 4.2e-3) and the 1 % Hampel fit (G = 128, 5.7e-3).
+- *† (1.4–3.8 %):* the 1 % raw and robust fits and all three 5 % fits. The
+  rule needs ≤ 1 % in mean/sd and ≤ 5 % in the tails. The 1 % raw and
+  robust fits fail both (3.8 and 3.7 %; tails 9.3 and 9.8 %); the three 5 %
+  fits fail on the mean/sd (1.4, 2.7 and 2.6 %; tails 2.2–2.5 %).
+- *quad_error / limit:* the six contaminated fits and the mote-20 row were
+  rerun on d14e91d / 5f23fc9, whose diagnostic is recalibrated (P6; 0.32–5.9
+  for these six fits). The two clean fits (4.3 and 7.0), tsNH4 and the
+  fixture are on 39f249f's diagnostic.
 
 **pmcprg WARNINGs** (`results/pmcprg_warnings.csv`; the tasks used to
-silence them):
+silence them). The records of the rerun tasks replace theirs, so the file
+mixes 39f249f and d14e91d / 5f23fc9, whose quad_error is recalibrated
+(`run_info.json` keeps the campaign's totals: 3 710, 489 and 289).
 
-- *quad_error:* 3 710 records in 131 task steps. They come from ICE fits,
-  `classify`, the forecasts and the checks. The largest values are on the
-  mote-20 copula fits (up to 160), which are not used. On the forecasts used,
-  it is a conservative screen (see "Observations for the library author").
-- *Quantile fallback:* 489 records, mostly Aotizhongxin forecasts.
-- *Other:* 289 records: ICE log-likelihood regressions, the degenerate-model
-  WARNING (tsNH4's state of π = 0.0013, as in real_series), and log-space
-  recomputations.
+- *quad_error:* 3 299 records in 154 task steps. They come from ICE fits,
+  `classify`, the forecasts and the checks (the ladder of the mote-20
+  selection included). The largest values are on the mote-20 copula fits
+  (up to 32), which are not used. On the forecasts used, see "Observations
+  for the library author".
+- *Quantile fallback:* 481 records, mostly Aotizhongxin forecasts.
+- *Other:* 251 records: ICE log-likelihood regressions, the degenerate-model
+  WARNING (tsNH4's state of π = 0.0013, as in real_series; the mote-20
+  pair-margin fits), two `robust_estimate` loops that did not settle, and
+  log-space recomputations.
 
 **Quantiles** (`q_check`, `q_check_tail` per row; `run_info.json`).
 
@@ -710,19 +805,28 @@ silence them):
   - Before the P3 fix, 1 332 rows were flagged, up to 9 796 per case.
 - *Tails:* `q_check_tail` has p99 0.017; 463 rows (0.17 %) exceed 0.05,
   max 0.35.
+- *Rerun rows* (contaminated Aotizhongxin copula PMC, 21 570 grid rows;
+  `rerun_pending`, `quantile_check_stats`): median check max 0.14, none
+  above 0.25; tails max 0.095, 3 rows above 0.05. The two bullets above are
+  those of the campaign, before these rows were replaced.
 
-**Leading gaps** (`run_info.json`, `leading_gaps`): no fitted, conditioning
-or gated series of a grid model starts with a missing row. Only the four
-mote-20 selection fits do (see "Leading gap").
+**Leading gaps** (`run_info.json`, `leading_gaps` and `rerun_pending`): no
+fitted, conditioning or gated series of a grid model starts with a missing
+row. Only the four mote-20 selection fits do, rerun on the leading-gap fix
+(see "Leading gap").
 
 ## Reproduce
 
-pmmforecast lives in a separate venv. Export pmmforecast HEAD with `git
-archive`, then `pip install` it into a new venv. awesomePMC's `.venv` stays
-the pmcprg interpreter. The two exchange CSV/JSON files. Without
-`--pmm-python`, the PMM part is skipped with a message.
+pmmforecast lives in a separate venv. This study uses pmmforecast
+**58ac3b6** (v0.22.1): export that commit with `git archive` (its repository
+is only read), then `pip install` the export into a new venv. awesomePMC's
+`.venv` stays the pmcprg interpreter. The two exchange CSV/JSON files.
+Without `--pmm-python`, the PMM part is skipped with a message.
 
 ```bash
+# pmmforecast venv, from an export of 58ac3b6
+mkdir <export> && git -C <pmmforecast repository> archive 58ac3b6 | tar -x -C <export>
+python3 -m venv <venv> && <venv>/bin/pip install <export>
 # part 2 (≈ 6 min; its pmmforecast side ≈ 45 s)
 PYTHONPATH=. OMP_NUM_THREADS=1 .venv/bin/python report/forecasting/cross_check.py --pmm-python <venv>/bin/python
 # pmcprg problems P1–P3 (fixed at 39f249f)
@@ -730,6 +834,13 @@ PYTHONPATH=. .venv/bin/python report/forecasting/repro_pmcprg_problems.py
 # parts 1 and 3 (smoke run ≈ 35 min, then the full campaign ≈ 1.5 h)
 PYTHONPATH=. OMP_NUM_THREADS=1 .venv/bin/python report/forecasting/run_forecasting.py --quick --pmm-python <venv>/bin/python
 PYTHONPATH=. OMP_NUM_THREADS=1 .venv/bin/python report/forecasting/run_forecasting.py --jobs 6 --pmm-workers 4 --pmm-python <venv>/bin/python
+# then the cells that waited on the gap quadrature (pmcprg d14e91d / 5f23fc9): the mote-20
+# copula selection with the ladder to G = 512 (one process, 22–53 min per fit) and the two
+# contaminated Aotizhongxin copula tasks (two processes, ≈ 64 min)
+PYTHONPATH=. OMP_NUM_THREADS=1 .venv/bin/python report/forecasting/rerun_pending.py --phases select --jobs 1
+PYTHONPATH=. OMP_NUM_THREADS=1 .venv/bin/python report/forecasting/rerun_pending.py --phases aoti --jobs 2
+# forecasts of the chosen mote-20 copula model (none is eligible), then the rerun rows patched into results/
+PYTHONPATH=. OMP_NUM_THREADS=1 .venv/bin/python report/forecasting/rerun_pending.py --phases mote,patch --jobs 4 --pmm-python <venv>/bin/python
 # tables (results/tables.md, tables.tex) and figures (figures/), from the CSVs only
 .venv/bin/python report/forecasting/summarise.py
 ```
@@ -745,8 +856,20 @@ shared with another session's jobs:
   - fixtures 117 min;
 - pmmforecast 126.5 min.
 
-Tasks are cached in `report/out/forecasting/full/tasks/`. Seeds are fixed in
-the task specs.
+Cost of the rerun (`rerun_pending.py`, same laptop): 256 min of task time.
+
+- Mote-20 selection fits, with the ladder to G = 512: 22, 25, 29 and 53 min
+  (`pmc_state` K = 3, K = 2, `pmc_pair` K = 2, K = 3). The last one ran
+  alone on 5f23fc9: 53 min of wall time.
+- The two contaminated Aotizhongxin copula tasks: 63 and 64 min, 64 min of
+  wall time on two processes.
+- The patch of `results/` and `summarise.py`: 3 s.
+
+`run_info.json` (`rerun_pending`, `code`) records the commit of the patch
+phase, cb3c5e9: 5f23fc9 merged into this study's branch.
+
+Tasks are cached in `report/out/forecasting/full/tasks/` and, for the rerun,
+`report/out/forecasting/pending/tasks/`. Seeds are fixed in the task specs.
 
 ```
 report/forecasting/
@@ -755,6 +878,8 @@ report/forecasting/
 ├── fc_common.py              data, models, scores, checks, tasks (pmcprg side)
 ├── pmm_side.py               every use of pmmforecast (its own venv)
 ├── repro_pmcprg_problems.py  P1–P3
+├── rerun_pending.py          the cells that waited on the gap quadrature (mote-20 selection, † fits)
+├── rerun_patch.py            its patch phase: the rerun rows into results/
 ├── run_forecasting.py        parts 1 and 3 driver
 ├── summarise.py              tables and figures from results/
 ├── figures/                  part 1 CRPS by horizon, PMM theoretical MSE, part 3

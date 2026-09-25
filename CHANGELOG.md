@@ -102,11 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Kalman filter would apply it, pays only with a refit loop. It costs 13 % on
   clean Beijing and fails on 30-s sensor data. It is not worth making it a
   default there.
-- **Not yet final.**
-  - Mote 20's copula models still do not converge at 256 nodes.
-  - Its selection rows wait for the leading-gap fix.
-  - Five contaminated fits are converged to 2–3 % only; they are marked in
-    the README.
+- **Pending cells rerun** on this release's gap-quadrature fixes (d14e91d,
+  5f23fc9): mote 20 has no eligible copula model (degenerate or unconverged
+  at 512 nodes); five fits stay marked (1.4–3.8 %). Conclusions unchanged.
 - **pmmforecast issues found**, listed for its author: identifiability of
   the Y-only fit, default starts, NaN handling, `TheoreticalMSE`, and the
   18–29 min Y-only MLE on 21 599 rows.
@@ -388,12 +386,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   122 °C.
   - **Detection works.** A model fitted on the clean window, held fixed and
     gated, flags every reading above 60 °C, often hours before that
-    threshold. With the PMC and BH at α = 1e-3 the lead is 9.7, 0.9 and
-    13.8 h, for 0–21 false flags in two weeks. The Hampel filter and a
-    rolling robust z-score miss the failure.
+    threshold. With the PMC and BH at α = 1e-3 the lead is 6.1, 1.5 and
+    16.2 h, for 0–2 false flags in two weeks (rerun on d14e91d; on mote 47
+    3.2 h at 256 nodes). The Hampel filter and a rolling robust z-score
+    miss the failure.
   - **Estimation breaks down.** Flag-and-mask fails because the failure
-    forms its own persistent, broad state. This argues for a Markov
-    contamination indicator with a fixed broad law.
+    forms its own persistent, broad state (no fixed point in 9 of 12
+    copula-model loops). This argues for a Markov contamination indicator
+    with a fixed broad law. The rerun also found `quad_error` saturating at
+    about 1 per missing row on long runs (open, the study's README).
 - **`report/forecasting/`.** Compares pmcprg with pmmforecast, the Gaussian
   pairwise Markov model with a continuous hidden state, used read-only from
   commit 58ac3b6.

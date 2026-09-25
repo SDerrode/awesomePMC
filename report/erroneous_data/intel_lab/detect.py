@@ -90,7 +90,8 @@ def task_flag(spec: dict) -> list[dict]:
                           correction=spec["corr"], gap_nodes=G)
         out = [{**keys, "alpha": spec["alpha"], "corr": spec["corr"],
                 "flagged": np.packbits(F.flagged), "pvalue": F.pvalue.astype(np.float32),
-                "threshold": F.threshold, "n_tests": F.n_tests, "method": F.method}]
+                "threshold": F.threshold, "n_tests": F.n_tests, "method": F.method,
+                "log_lik": F.log_lik}]
         q = {"quad_error": np.nan, "quad_limit": np.nan}
     else:
         P = predictive_pit(model, Y, gap_nodes=G)
@@ -102,7 +103,7 @@ def task_flag(spec: dict) -> list[dict]:
                 flagged = obs & (P.pvalue < thr)
             out.append({**keys, "alpha": alpha, "corr": corr, "flagged": np.packbits(flagged),
                         "pvalue": P.pvalue.astype(np.float32), "threshold": float(thr),
-                        "n_tests": int(obs.sum()), "method": P.method})
+                        "n_tests": int(obs.sum()), "method": P.method, "log_lik": P.log_lik})
         # The quadrature diagnostic of the pass over the window's own gaps.
         warned_before = len(wlog.messages)
         q = C.quad_check(model, Y, G)
@@ -167,7 +168,7 @@ def run(args):
                          "K": r["K"], "sequential": r["seq"], "alpha": r["alpha"],
                          "correction": r["corr"] or "none", "threshold": r["threshold"],
                          "seconds": r["seconds"],
-                         **{k: r[k] for k in ("gap_nodes", "quad_error", "quad_limit",
+                         **{k: r[k] for k in ("gap_nodes", "log_lik", "quad_error", "quad_limit",
                                               "quad_warnings", "quad_error_max_warned",
                                               "other_warnings", "other_warning_kinds")},
                          **C.score_flags(flag, lab, fs)})
@@ -233,8 +234,10 @@ def run_check(args):
                      "n_differ_from_default": int((flag != base).sum()),
                      "same_as_main_run": (bool(np.array_equal(flag, cut)) if G == C.GAP_NODES
                                           and "BH" not in name else np.nan),
-                     "seconds": r["seconds"], "quad_error": r["quad_error"],
-                     "quad_limit": r["quad_limit"],
+                     "seconds": r["seconds"], "log_lik": r["log_lik"],
+                     "quad_error": r["quad_error"], "quad_limit": r["quad_limit"],
+                     "quad_warnings": r["quad_warnings"],
+                     "quad_error_max_warned": r["quad_error_max_warned"],
                      **C.score_flags(flag, lab, d["first_suspect"])})
     df = pd.DataFrame(rows).sort_values(["mote", "method", "gap_nodes"])
     df.to_csv(C.RESULTS / "detect_check.csv", index=False)

@@ -1,0 +1,11 @@
+{
+  "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-ad8f31accb1810d2e/pmcprg/__init__.py",
+  "pmcprg_commit": "320232b",
+  "wall_seconds": 3341.539595833001,
+  "jobs": 4,
+  "gap_nodes": [
+    64,
+    256
+  ],
+  "after_first_suspect_h": 6.0
+}
