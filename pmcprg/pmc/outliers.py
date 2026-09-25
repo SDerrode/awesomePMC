@@ -1008,6 +1008,11 @@ def flag_outliers(
     correction : ``None`` (default), ``"bonferroni"`` or ``"bh"`` — module
                  docstring, "Flagging and multiplicity".
     gap_nodes  : quadrature nodes G of the grid variants (default 64).
+                 Memory: the grids of the missing rows come from a pass of
+                 :func:`pmcprg.pmc.gaps.gap_posterior`'s chain — about 0.3 kB
+                 per missing row and per node (K = 3), plus at most 2 GiB of
+                 transitions between local grids, 8·(K·G)² bytes per step
+                 (``gaps`` module docstring, "Memory").
 
     Returns
     -------

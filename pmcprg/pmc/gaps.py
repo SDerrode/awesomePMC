@@ -437,6 +437,37 @@ times on the Intel ones (860 on the k-means start of ICE at G = 256, a pass
 proposals and this exit weighting (67 passes of that code): 25 off, 5
 missed, 2 false alarms.
 
+Memory
+------
+A missing → missing transition that touches a local grid is a dense
+(K·G)² block — 295 kB at K = 3, G = 64, 4.7 MB at G = 256 — one per step of
+a gap. Until this version a chain kept every one, and the pass that weighted
+the proposals (:func:`_gap_grids_pass`) kept its own while the final one was
+built: on the Intel Lab mote-48 detection window (46 860 rows, 16 271
+missing, K = 3) ``gap_posterior`` peaked at 2.3 GB at G = 64 and above 8 GB
+at G = 128 (a G = 256 detection check: 21–23 GB per process). A chain now
+builds these transitions when a pass first needs them and keeps at most
+_TRANSITION_BUDGET bytes of them (2 GiB); the backward pass rebuilds the
+others, and computes on the way the parts of ξ and of the quadrature report
+that need them; FFBS rebuilds them again. The weighting pass is released
+when the final one takes over; the temporaries of the grid construction and
+of the Nyström densities are computed by blocks (_CHUNK), and the grid
+cache stops at _GRID_CACHE_BYTES. Besides the kept transitions a pass holds
+about 0.3 kB per missing row and per node (K = 3: the messages α̃ and β̃,
+the grids, the node posteriors, and the node margins while transitions are
+rebuilt). A rebuilt transition is the same operations on the same inputs:
+every result is the same bit for bit whatever the budget
+(``test_gaps_memory.py``); beyond it only the time grows.
+Measured (peak footprint / maximum resident size, one process; the version
+before → this one): the mote-48 window, ``gap_posterior`` at G = 64, 2.3 /
+5.2 → 2.1 / 3.8 GB in the same 61 s; at G = 128, stopped above 8 GB → 2.3 /
+4.5 GB in 245 s (it builds 11 252 such transitions, 13 GB, and keeps 1 792);
+at G = 256, 3.5 / 5.1 GB in 818 s; its third quarter at G = 256, 6.7 / 6.6
+→ 2.3 / 3.0 GB, 23 → 36 s. Mote-20 forecasts at G = 256: 3.9 / 6.3 → 2.3 /
+4.1 GB, 26 → 38 s (state margins, K = 3), 1.9 / 3.3 → 1.6 / 2.8 GB in 17 s
+(pair margins, K = 2). The 16 other probes (G ≤ 128) kept all their
+transitions: 0.68–1.03 times the peak footprint, 0.85–1.06 times the time.
+
 Returned α̂ and β̂ (K-state view of the augmented chain)
 -------------------------------------------------------
 ``alpha_hat[n, i] = P(x_n = i | y_obs ∩ 1:n)`` at every n (missing or not).
@@ -1711,18 +1742,40 @@ def _proposal_error(nodes: np.ndarray, omega: np.ndarray, lam, loc, sc,
     return (np.where((lam > 0.0) & on, lam, 0.0) * e).sum(axis=1)
 
 
+#: Elements of a whole-sequence temporary of the grid construction — (P, C,
+#: G) Gaussian pieces at the nodes, (P·G, K, K) kernels — beyond which it is
+#: computed by blocks of rows (32 MB of float64). Row by row the operations
+#: are the same (elementwise, and sums along the rows), so are the results.
+#: On the Intel mote-48 window at G = 32 they took 232 MB (_piece_errors) and
+#: 99 MB (_neighbour_error) at once (tracemalloc); they grow with G.
+_CHUNK = 1 << 22
+
+
+def _row_blocks(P: int, per_row: int):
+    """Slices of at most _CHUNK elements (per_row each), covering range(P)."""
+    step = max(1, _CHUNK // max(1, per_row))
+    return [slice(a, min(P, a + step)) for a in range(0, P, step)]
+
+
 def _piece_errors(nodes: np.ndarray, omega: np.ndarray, loc, sc, support=(-np.inf, np.inf)):
     """Relative errors (P, C) of :func:`_proposal_error`, component by
-    component, and whether each has 1e-3 of its mass on the support."""
+    component, and whether each has 1e-3 of its mass on the support
+    (by blocks of rows, :data:`_CHUNK`)."""
     with np.errstate(all="ignore"):
         za, zb = (support[0] - loc) / sc, (support[1] - loc) / sc
         I0 = _sp_ndtr(zb) - _sp_ndtr(za)
         pa = np.where(np.isfinite(za), za * np.exp(-0.5 * za * za), 0.0) / _SQRT_2PI
         pb = np.where(np.isfinite(zb), zb * np.exp(-0.5 * zb * zb), 0.0) / _SQRT_2PI
         I2 = I0 - pb + pa
-        z = (nodes[:, None, :] - loc[:, :, None]) / sc[:, :, None]            # (P, C, G)
-        f = np.exp(-0.5 * z * z) / (sc[:, :, None] * _SQRT_2PI) * omega[:, None, :]
-        e = (np.abs(f.sum(axis=2) - I0) + np.abs((f * z * z).sum(axis=2) - I2)) / I0
+        P, C = loc.shape
+        s0 = np.empty((P, C))
+        s2 = np.empty((P, C))
+        for r in _row_blocks(P, C * nodes.shape[1]):
+            z = (nodes[r, None, :] - loc[r, :, None]) / sc[r, :, None]          # (P, C, G)
+            f = np.exp(-0.5 * z * z) / (sc[r, :, None] * _SQRT_2PI) * omega[r, None, :]
+            s0[r] = f.sum(axis=2)
+            s2[r] = (f * z * z).sum(axis=2)
+        e = (np.abs(s0 - I0) + np.abs(s2 - I2)) / I0
     return np.where(np.isfinite(e), e, 2.0), I0 > 1e-3
 
 
@@ -1788,6 +1841,21 @@ def _neighbour_error(model: PMCModel, nodes: np.ndarray, omega: np.ndarray,
     """
     K = model.K
     P, G = nodes.shape
+    blocks = _row_blocks(P, G * K * K)
+    if len(blocks) > 1:
+        # by blocks of rows (:data:`_CHUNK`): every row is computed alone
+        def cut(x, r):
+            return None if x is None else x[r]
+
+        e_in, e_out = np.zeros(P), np.zeros(P)
+        for r in blocks:
+            rel = None if exit_rel is None else exit_rel[r].copy()
+            e_in[r], e_out[r] = _neighbour_error(
+                model, nodes[r], omega[r], yl[r], yr[r], split=True, first=cut(first, r),
+                w_entry=cut(w_entry, r), w_exit=cut(w_exit, r), exit_rel=rel)
+            if exit_rel is not None:
+                exit_rel[r] = rel
+        return (e_in, e_out) if split else e_in + e_out
     parts = {"entry": np.zeros(P), "exit": np.zeros(P)}
     fN, FN = _margin_eval(model, nodes.ravel(), log=False)
 
@@ -2081,9 +2149,20 @@ def _run_grids(model: PMCModel, ref: QuadratureGrid, yL: float, yR: float, L: in
 #: proposals) and G only; the same series is often passed again with the
 #: same model (``classify`` and the quadrature check after a fit,
 #: ``gap_posterior`` then ``predictive_pit``), and building them is half the
-#: cost of a pass.
+#: cost of a pass. At most _GRID_CACHE_BYTES of grid arrays are kept, the
+#: newest entry always (an entry of the Intel mote-48 window holds 38 MB at
+#: G = 64, and grows with G); a miss only costs time, the grids are the same.
 _GRID_CACHE: "OrderedDict" = OrderedDict()
 _GRID_CACHE_SIZE = 4
+_GRID_CACHE_BYTES = 1 << 28
+_GRID_CACHE_NB: dict = {}                    # key → bytes of its grids
+
+
+def _grids_nbytes(grids: dict) -> int:
+    """Bytes of the node arrays of the distinct grids of {n: grid}."""
+    seen = {id(g): g for g in grids.values()}
+    return sum(getattr(g, f).nbytes for g in seen.values()
+               for f in ("s", "ws", "t", "w", "nodes", "ref_pdf", "omega"))
 
 
 def _grid_key(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: QuadratureGrid, ev=None):
@@ -2253,8 +2332,13 @@ def _gap_grids_pass(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: Quadr
                 break
     hit = (grids, fwd)
     _GRID_CACHE[key] = hit
-    while len(_GRID_CACHE) > _GRID_CACHE_SIZE:
-        _GRID_CACHE.popitem(last=False)
+    for k in [k for k in _GRID_CACHE_NB if k not in _GRID_CACHE]:
+        del _GRID_CACHE_NB[k]
+    _GRID_CACHE_NB[key] = _grids_nbytes(grids)
+    while len(_GRID_CACHE) > 1 and (len(_GRID_CACHE) > _GRID_CACHE_SIZE
+                                    or sum(_GRID_CACHE_NB.get(k, 0) for k in _GRID_CACHE)
+                                    > _GRID_CACHE_BYTES):
+        _GRID_CACHE_NB.pop(_GRID_CACHE.popitem(last=False)[0], None)
     return hit, last
 
 
@@ -2682,11 +2766,14 @@ def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
     if _RENORMALISE is None:
         out = (B.reshape(shape), np.ones(B.shape[:-1]))
         return out + (raw,) if with_mass else out
+    # the block masses of B as it is (``raw``, when computed), until the rescue changes B
+    sums = raw
     if not log and rescue is not None and _RENORMALISE == "block" and target is not None:
         with np.errstate(invalid="ignore"):
             sb = B.sum(axis=-1) if raw is None else raw
             lost = ~(np.isfinite(sb) & (sb >= _UNDERFLOW)) & (target > 0.0)
         if lost.any():
+            sums = None
             index = np.nonzero(lost)
             LB = np.asarray(rescue(index), dtype=float)
             with np.errstate(divide="ignore", invalid="ignore", under="ignore", over="ignore"):
@@ -2700,7 +2787,7 @@ def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
         if log:
             fac = np.zeros(B.shape[:-1])
             if _RENORMALISE == "block" and target is not None:
-                sb = _inf._lse(B, axis=-1)
+                sb = _inf._lse(B, axis=-1) if sums is None else sums
                 ok = np.isfinite(sb) & np.isfinite(target)
                 fac = np.where(ok, np.where(ok, target, 0.0) - np.where(ok, sb, 0.0), -np.inf)
                 B = np.where(ok[..., None], B + np.where(ok, fac, 0.0)[..., None], -np.inf)
@@ -2713,7 +2800,7 @@ def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
             return out + (raw,) if with_mass else out
         fac = np.ones(B.shape[:-1])
         if _RENORMALISE == "block" and target is not None:
-            sb = B.sum(axis=-1)
+            sb = B.sum(axis=-1) if sums is None else sums
             ok = np.isfinite(sb) & (sb > 0.0)
             fac = np.where(ok, target / np.where(ok, sb, 1.0), 0.0)
             B = B * fac[..., None]
@@ -2821,6 +2908,119 @@ def _lead_transition(model: PMCModel, A: QuadratureGrid, B: QuadratureGrid, *, l
 # The augmented chain
 # ---------------------------------------------------------------------------
 
+#: Bytes of built missing → missing transitions that a chain keeps (module
+#: docstring, "Memory"): the (K·G)² blocks between local grids and a leading
+#: gap's transitions onto local grids, built when a pass first needs them.
+#: Beyond this budget a transition is not kept, and the passes that need it
+#: again (backward, ξ, FFBS, the next chain of :func:`_gap_grids_pass`)
+#: rebuild it — the same operations on the same inputs, so every result is
+#: the same bit for bit whatever the budget; only the time changes. 2 GiB:
+#: the G = 64 passes of the Intel Lab windows keep every transition (no
+#: rebuild, the time of the version before), a G = 256 pass stays within a
+#: few GB. Private switch (0: keep none).
+_TRANSITION_BUDGET = 2 << 30
+
+#: Value of ``_Chain.block_dev[n]`` / ``lead_dev[n]`` for a transition into n
+#: that the chain did not keep: its part of the quadrature report is computed
+#: by the backward pass that rebuilds it (:func:`_backward_chain`).
+_DEFERRED = object()
+
+
+class _Margins:
+    """The margins (f, F) at the nodes of the grids of a chain (linear or log).
+
+    The local grids ``gl`` are evaluated in one call (one call per grid made
+    a quarter of an E-step on a window with 8 000 missing rows), others one
+    by one; ``logs`` gives the log margins a linear chain needs to rescue a
+    block whose weights all underflow (:func:`_normalise_blocks`), evaluated
+    on first use in one call over ``gl`` too. :meth:`subset` keeps the
+    values of a few grids for the transitions another chain takes over.
+    With state margins f[:, i, j] and F[:, i, j] repeat the value of state i
+    over j (as in ``precompute_weights``): the cache keeps (G, K) and expands
+    it when asked — the same values, the same layout, K times less memory
+    while a chain rebuilds its transitions.
+    """
+
+    def __init__(self, model: PMCModel, grid: QuadratureGrid, ref, log: bool, gl: list):
+        self.model, self.grid, self.ref, self.log, self.gl = model, grid, ref, log, gl
+        self.packed = model.margin_structure != "pair"
+        self.lin = {}
+        self.lg = {}
+        self._fill(self.lin, log)
+
+    def _pack(self, v):
+        if not self.packed:
+            return v
+        return tuple(None if a is None else np.ascontiguousarray(a[:, :, 0]) for a in v)
+
+    def _unpack(self, v):
+        if not self.packed:
+            return v
+        K = self.model.K
+        return tuple(None if a is None else np.repeat(a[:, :, None], K, axis=2) for a in v)
+
+    def _fill(self, cache, as_log):
+        if not self.gl:
+            return
+        G = self.grid.G
+        f_all, F_all = _margin_eval(self.model, np.concatenate([g.nodes for g in self.gl]),
+                                    log=as_log)
+        for k, g in enumerate(self.gl):
+            sl = slice(k * G, (k + 1) * G)
+            cache[id(g)] = (g, self._pack((f_all[sl], None if F_all is None else F_all[sl])))
+
+    def nodes(self, g):
+        """(f, F) at the nodes of g, in the scale of the chain."""
+        if g is self.grid:
+            return self.ref
+        if id(g) not in self.lin:
+            self.lin[id(g)] = (g, self._pack(_margin_eval(self.model, g.nodes, log=self.log)))
+        return self._unpack(self.lin[id(g)][1])
+
+    def logs(self, g):
+        """(log f, F) at the nodes of g."""
+        if self.log:
+            return self.nodes(g)
+        if not self.lg:
+            self._fill(self.lg, True)
+        if id(g) not in self.lg:
+            self.lg[id(g)] = (g, self._pack(_margin_eval(self.model, g.nodes, log=True)))
+        return self._unpack(self.lg[id(g)][1])
+
+    def subset(self, grids) -> "_Margins":
+        """The values of ``grids`` alone (copies of views of a batch, so that
+        the batch arrays can go; packed values are arrays of their own)."""
+        out = _Margins.__new__(_Margins)
+        out.model, out.grid, out.ref, out.log, out.gl = self.model, self.grid, self.ref, self.log, []
+        out.packed = self.packed
+
+        def own(a):
+            return None if a is None else (a if a.base is None else a.copy())
+
+        def keep(cache):
+            return {id(g): (g, tuple(own(a) for a in cache[id(g)][1]))
+                    for g in grids if id(g) in cache}
+
+        out.lin, out.lg = keep(self.lin), keep(self.lg)
+        return out
+
+
+class _Transitions:
+    """``_Chain.trans``: ``trans[n]`` for n = 0 … N − 2, each transition kept
+    or built when asked for (:meth:`_Chain._step`). A view made on access:
+    the chain holds no reference to it (no reference cycle), so a chain that
+    is dropped is freed at once, not at the next garbage collection."""
+
+    def __init__(self, chain: "_Chain"):
+        self._chain = chain
+
+    def __len__(self) -> int:
+        return len(self._chain._fixed)
+
+    def __getitem__(self, n):
+        return self._chain._step(int(n))[0]
+
+
 class _Chain:
     """Transitions of the chain on the augmented state (module docstring).
 
@@ -2845,11 +3045,21 @@ class _Chain:
     ``lead_dev`` {n: (log raw, log exact)} and column factors in ``lead_c``
     {n: log c}.
 
+    Memory (module docstring, "Memory"): a missing → missing transition that
+    touches a local grid is a dense (K·G)² block, one per step, and a long
+    gappy series has thousands of them. They are built when a pass first
+    needs them (``trans[n]``) and kept up to _TRANSITION_BUDGET bytes; the
+    others are rebuilt when needed again — ``block_dev`` / ``lead_dev`` then
+    hold _DEFERRED, and the backward pass computes their part of the
+    quadrature report and of ξ while it rebuilds them (``_fused``).
+
     ``reuse``: a chain of the same series, factors and scale on other grids
     (a pass that weighted them, :func:`_gap_grids_pass`); every transition
     between positions whose grids are the same objects in both is taken
-    from it (``raw``: the transitions before the factors) instead of being
-    recomputed.
+    from it (``raw``: the transitions before the factors; a built
+    transition between local grids as it is, factors included, or its
+    recipe) instead of being recomputed. The reused chain is released: it
+    serves one chain only.
     """
 
     def __init__(self, model: PMCModel, Y: np.ndarray, miss: np.ndarray,
@@ -2883,6 +3093,14 @@ class _Chain:
         self.lead_exact = (_prior_known(model, ev)
                            and any(self.grids[n].local for n in range(min(self.lead, N))))
         self.quad_error = None
+        # transitions built when first needed: n → (kind, A, B, margins),
+        # kind "q" (between local grids) or "lead" (a leading gap);
+        # margins None: those of this chain (``_mg``)
+        self._lazy = {}
+        self._store = {}                 # n → (T, dev) kept (_TRANSITION_BUDGET)
+        self._stored = 0
+        self._built = set()
+        self._fused = None               # (alphas, betas, {n: (ξ part, report part)})
         Yf = np.where(miss, grid.nodes[G // 2], Y)
         # Raw weights: the evidence factors are applied below, uniformly.
         if log:
@@ -2894,8 +3112,11 @@ class _Chain:
         fN, FN = _margin_eval(model, grid.nodes, log=log)
 
         m0, m1 = miss[:-1], miss[1:]
-        # transitions taken from ``reuse`` (before the factors), by n
+        # transitions taken from ``reuse`` (before the factors), by n; the
+        # built transitions between local grids (factors included) or their
+        # recipes, by n
         R = {}
+        adopted = {}
         usable = (reuse is not None and reuse.log == log and reuse.N == N and reuse.grid is grid
                   and (reuse.ev is ev or (reuse.ev is not None and ev is not None
                                           and np.array_equal(reuse.ev, ev))))
@@ -2905,7 +3126,10 @@ class _Chain:
                     continue
                 if m0[n] and m1[n] and n + 1 < self.lead and reuse.lead_exact != self.lead_exact:
                     continue
-                R[n] = reuse.raw[n]
+                if n in reuse._lazy:
+                    adopted[n] = reuse._lazy[n] + (reuse._store.get(n),)
+                else:
+                    R[n] = reuse.raw[n]
                 if n + 1 in reuse.block_dev:
                     self.block_dev[n + 1] = reuse.block_dev[n + 1]
                 if n + 1 in reuse.lead_dev:
@@ -2916,7 +3140,7 @@ class _Chain:
         # the positions whose grids the transitions still to compute touch
         need = set()
         for n in np.nonzero(m0 | m1)[0].tolist():
-            if n not in R:
+            if n not in R and n not in adopted:
                 need.update(k for k in (n, n + 1) if miss[k])
         if miss[0] and not init_kept:
             need.add(0)
@@ -2931,39 +3155,11 @@ class _Chain:
         def take(F, idx):
             return None if F is None else F[idx]
 
-        node_cache = {}
-        log_cache = {}
-
-        def fill(cache, as_log):
-            # the margins at the nodes of every local grid, in one call (one
-            # call per grid made a quarter of an E-step on a window with
-            # 8 000 missing rows)
-            gl = list({id(g): g for n, g in self.grids.items()
-                       if g is not grid and n in need}.values())
-            if not gl:
-                return
-            f_all, F_all = _margin_eval(model, np.concatenate([g.nodes for g in gl]), log=as_log)
-            for k, g in enumerate(gl):
-                sl = slice(k * G, (k + 1) * G)
-                cache[id(g)] = (g, (f_all[sl], None if F_all is None else F_all[sl]))
-
-        fill(node_cache, log)
-
-        def log_margins(g):                              # (log f, F) at the nodes of g
-            if log:
-                return node_eval(g)
-            if not log_cache:
-                fill(log_cache, True)
-            if id(g) not in log_cache:
-                log_cache[id(g)] = (g, _margin_eval(model, g.nodes, log=True))
-            return log_cache[id(g)][1]
-
-        def node_eval(g):
-            if g is grid:
-                return fN, FN
-            if id(g) not in node_cache:
-                node_cache[id(g)] = (g, _margin_eval(model, g.nodes, log=log))
-            return node_cache[id(g)][1]
+        # the margins at the nodes of every local grid, in one call
+        mg = _Margins(model, grid, (fN, FN), log,
+                      list({id(g): g for n, g in self.grids.items()
+                            if g is not grid and n in need}.values()))
+        self._mg = mg
 
         def weigh(ker, om):                              # × ω of the destination nodes
             return (ker + np.log(om)) if log else ker * om
@@ -2971,27 +3167,8 @@ class _Chain:
         def is_ref(n):
             return self.grids[int(n)] is grid
 
-        def between(A, B):
-            """Q[(i, g), (j, g')] from the nodes of A to those of B, block-normalised."""
-            fA, FA = node_eval(A)
-            fB, FB = node_eval(B)
-            if log:
-                ker = _kernel_outer(model, fA, FA, fB, FB, log=True)
-            else:
-                ker, over = _kernel_outer(model, fA, FA, fB, FB, log=False)
-                self.overflow |= over
-            Qb = weigh(ker.transpose(2, 0, 3, 1), B.omega[None, None, None, :])  # (K, G, K, G)
-            T = _x_transition(model, fA, log=log).transpose(1, 0, 2)               # (K, G, K)
-
-            def rescue(idx):                             # blocks (i, g → j, ·)
-                return _log_rows(model, log_margins(A), idx[1], idx[0], idx[2], log_margins(B),
-                                 B.omega)
-
-            Qb, _, raw = _normalise_blocks(Qb, T, log=log, with_mass=True, rescue=rescue)
-            return Qb.reshape(K * G, K * G), (raw, T)
-
         def todo(idx):
-            return np.array([n for n in idx.tolist() if n not in R], dtype=int)
+            return np.array([n for n in idx.tolist() if n not in R and n not in adopted], dtype=int)
 
         inner = todo(np.nonzero(m0 & m1)[0])
         entries = todo(np.nonzero(~m0 & m1)[0])
@@ -3010,20 +3187,22 @@ class _Chain:
                     if shared is None:
                         shared = _lead_transition(model, grid, grid, log=log)
                     T_, dev, lc = shared
+                    Qn[int(n)], self.lead_dev[int(n) + 1], self.lead_c[int(n)] = T_, dev, lc
                 else:
-                    T_, dev, lc = _lead_transition(model, a, b, log=log)
-                Qn[int(n)], self.lead_dev[int(n) + 1], self.lead_c[int(n)] = T_, dev, lc
+                    self._lazy[int(n)] = ("lead", a, b, None)
+                    self.lead_dev[int(n) + 1] = _DEFERRED
         ref_inner = np.array([is_ref(n) and is_ref(n + 1) for n in inner], dtype=bool)
         if ref_inner.any():
             if Q is None or reuse.Q_dev is None:
-                Q, dev = between(grid, grid)
+                Q, dev = self._between(grid, grid, mg)
             else:
                 dev = reuse.Q_dev
             self.Q_dev = dev
             for n in inner[ref_inner]:
                 self.block_dev[int(n) + 1] = dev
         for n in inner[~ref_inner]:
-            Qn[int(n)], self.block_dev[int(n) + 1] = between(self.grids[int(n)], self.grids[int(n) + 1])
+            self._lazy[int(n)] = ("q", self.grids[int(n)], self.grids[int(n) + 1], None)
+            self.block_dev[int(n) + 1] = _DEFERRED
 
         E = {}
         ref_e = np.array([is_ref(n + 1) for n in entries], dtype=bool)
@@ -3049,7 +3228,7 @@ class _Chain:
                 for e in np.unique(idx[0]):
                     r = idx[0] == e
                     out[r] = _log_rows(model, src, np.full(int(r.sum()), e), idx[1][r], idx[2][r],
-                                       log_margins(gs[e]), gs[e].omega)
+                                       mg.logs(gs[e]), gs[e].omega)
                 return out
 
             ker, _, raw = _normalise_blocks(ker, T, log=log, with_mass=True, rescue=rescue)
@@ -3081,7 +3260,7 @@ class _Chain:
             self.block_dev[0] = reuse.block_dev[0]
         elif miss[0]:
             g0 = self.grids[0]
-            f0, _ = node_eval(g0)
+            f0, _ = mg.nodes(g0)
             mu = _initial(model, f0, log=log).T                  # (K, G)
             if not log and not np.all(np.isfinite(mu)):
                 self.overflow = True
@@ -3101,10 +3280,25 @@ class _Chain:
             f0, _ = _margin_eval(model, Y[:1], log=log)
             self.init = _initial(model, f0, log=log)[0]
 
+        # the transitions taken over from ``reuse``: kept as they are, or
+        # rebuilt from the margins that built them there
+        for n, (kind, A, B, src, ent) in adopted.items():
+            if ent is None:
+                src = src if src is not None else reuse._mg.subset([g for g in (A, B)
+                                                                    if g is not grid])
+                self._lazy[n] = (kind, A, B, src)
+            else:
+                self._lazy[n] = (kind, A, B, None)
+                self._built.add(n)
+                self._store[n] = ent
+                self._stored += sum(a.nbytes for a in (ent[0],) + tuple(ent[1]))
+
         trans = []
         for n in range(N - 1):
             if n in R:
                 trans.append(R[n])
+            elif n in self._lazy:
+                trans.append(None)
             elif not m0[n] and not m1[n]:
                 trans.append(Wobs[n])
             elif not m0[n]:
@@ -3113,35 +3307,150 @@ class _Chain:
                 trans.append(Qn.get(n, Q))
             else:
                 trans.append(X[n])
-        self.trans = trans
         # before the factors: what a later chain on other grids reuses
         self.raw = list(trans)
         self.init_raw = self.init
         self.Q = Q
         self.ev = ev
+        self._fac = None
         if ev is not None:
             # Missingness evidence: a likelihood factor of the destination
             # state, after the block renormalisation (module docstring).
             with np.errstate(divide="ignore"):
-                fac = np.log(ev) if log else np.asarray(ev, dtype=float)
-
-            def at(n):                       # (S_n,) factor, augmented layout
-                return np.repeat(fac[n], G) if miss[n] else fac[n]
-
-            def scale(T, v):
-                return (T + v) if log else (T * v)
-
-            self.init = scale(self.init, at(0))
+                self._fac = np.log(ev) if log else np.asarray(ev, dtype=float)
+            self.init = self._scale(self.init, self._at(0))
             q_scaled = {}                    # Q is shared: one copy per factor
             for n in range(N - 1):
-                v = at(n + 1)
+                if trans[n] is None:         # built later, factors included
+                    continue
+                v = self._at(n + 1)
                 if Q is not None and trans[n] is Q:
                     key = v.tobytes()
                     if key not in q_scaled:
-                        q_scaled[key] = scale(Q, v[None, :])
+                        q_scaled[key] = self._scale(Q, v[None, :])
                     trans[n] = q_scaled[key]
                 else:
-                    trans[n] = scale(trans[n], v[None, :])
+                    trans[n] = self._scale(trans[n], v[None, :])
+        self._fixed = trans
+        if usable:
+            reuse._release()
+
+    @property
+    def trans(self) -> _Transitions:
+        """trans[n], n = 0 … N − 2 (kept, or built when asked for)."""
+        return _Transitions(self)
+
+    # ---- missingness factors ---------------------------------------------
+
+    def _at(self, n):                        # (S_n,) factor, augmented layout
+        fac = self._fac
+        return np.repeat(fac[n], self.G) if self.miss[n] else fac[n]
+
+    def _scale(self, T, v):
+        return (T + v) if self.log else (T * v)
+
+    # ---- transitions built when needed -------------------------------------
+
+    def _between(self, A: QuadratureGrid, B: QuadratureGrid, mg: _Margins):
+        """Q[(i, g), (j, g')] from the nodes of A to those of B, block-normalised,
+        and its (raw block masses, exact masses)."""
+        model, K, G, log = self.model, self.K, self.G, self.log
+        fA, FA = mg.nodes(A)
+        fB, FB = mg.nodes(B)
+        if log:
+            ker = _kernel_outer(model, fA, FA, fB, FB, log=True)
+        else:
+            ker, over = _kernel_outer(model, fA, FA, fB, FB, log=False)
+            self.overflow |= over
+        om = B.omega[None, None, None, :]
+        Qb = ker.transpose(2, 0, 3, 1)
+        Qb = (Qb + np.log(om)) if log else Qb * om                                # (K, G, K, G)
+        T = _x_transition(model, fA, log=log).transpose(1, 0, 2)               # (K, G, K)
+
+        def rescue(idx):                                 # blocks (i, g → j, ·)
+            return _log_rows(model, mg.logs(A), idx[1], idx[0], idx[2], mg.logs(B), B.omega)
+
+        Qb, _, raw = _normalise_blocks(Qb, T, log=log, with_mass=True, rescue=rescue)
+        return Qb.reshape(K * G, K * G), (raw, T)
+
+    def _build(self, n: int):
+        """(trans[n], dev) of a transition built when needed, factors included."""
+        kind, A, B, mg = self._lazy[n]
+        if kind == "q":
+            T, dev = self._between(A, B, self._mg if mg is None else mg)
+        else:
+            T, dev, lc = _lead_transition(self.model, A, B, log=self.log)
+            self.lead_c[n] = lc
+        self._built.add(n)
+        if self._fac is not None:
+            T = self._scale(T, self._at(n + 1)[None, :])
+        return T, dev
+
+    def _step(self, n: int):
+        """(trans[n], dev or None, kept): built if needed, and kept within
+        _TRANSITION_BUDGET (``dev`` then goes to ``block_dev`` / ``lead_dev``)."""
+        T = self._fixed[n]
+        if T is not None:
+            return T, None, True
+        ent = self._store.get(n)
+        if ent is not None:
+            return ent[0], ent[1], True
+        T, dev = self._build(n)
+        size = sum(a.nbytes for a in (T,) + tuple(dev))
+        if self._stored + size <= _TRANSITION_BUDGET:
+            self._store[n] = (T, dev)
+            self._stored += size
+            (self.block_dev if self._lazy[n][0] == "q" else self.lead_dev)[n + 1] = dev
+            return T, dev, True
+        return T, dev, False
+
+    def _built_all(self) -> None:
+        """After a full forward pass: the margins are no longer needed when
+        every transition built here was kept."""
+        if all(n in self._store or self._lazy[n][3] is not None for n in self._lazy):
+            self._mg = None
+
+    def _scan_overflow(self) -> None:
+        """Set ``overflow`` from the transitions not built yet (a linear pass
+        that stopped early names its cause as when every transition was built
+        first)."""
+        for n, (kind, A, B, mg) in self._lazy.items():
+            if self.overflow:
+                return
+            if kind != "q" or n in self._built:
+                continue
+            mg = self._mg if mg is None else mg
+            fA, FA = mg.nodes(A)
+            fB, FB = mg.nodes(B)
+            self.overflow |= _kernel_outer(self.model, fA, FA, fB, FB, log=False)[1]
+
+    def _forget(self) -> None:
+        """Drop the transitions and what rebuilds them, once no pass needs them
+        (:func:`impute`, before the laws of the missing values); ``trans`` is
+        then unavailable. The messages, grids and column factors stay."""
+        self._store, self._stored, self._mg, self._fused = {}, 0, None, None
+        self._fixed = self.raw = None
+        self.Q = self.Wobs = None
+
+    def _kept(self, n: int) -> bool:
+        """Whether trans[n] is at hand without being rebuilt."""
+        return self._fixed[n] is not None or n in self._store
+
+    def _release(self) -> None:
+        """Drop what a chain taken over by another one (``reuse``) holds."""
+        self._store, self._stored, self._lazy, self._mg = {}, 0, {}, None
+        self._fixed = self.raw = None
+        self._fused = None
+
+    def _deferred(self, n: int, alphas, betas):
+        """(ξ part, report part) of the transition into n that the chain did not
+        keep: from the backward pass that rebuilt it (``_fused``), for these
+        messages, or rebuilt now."""
+        f = self._fused
+        if f is not None and f[0] is alphas and f[1] is betas and n in f[2]:
+            return f[2][n]
+        T, dev = self._build(n - 1)
+        return _fused_step(self, n - 1, T, dev, alphas, betas)
 
     def size(self, n: int) -> int:
         return self.K * self.G if self.miss[n] else self.K
@@ -3151,14 +3460,44 @@ class _Chain:
         return np.array([self.grids[int(n)].nodes for n in positions]).reshape(-1, self.G)
 
 
-def _forward_chain(chain: _Chain):
-    """Scaled forward pass; ``None`` when a linear step underflows.
+def _joint(log: bool, a: np.ndarray, T: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Posterior mass through a transition, up to a constant: a_u T_uv b_v
+    (``log``: T in log space, the result scaled by its maximum)."""
+    if log:
+        L = np.log(a)[:, None] + T + np.log(b)[None, :]
+        mx = np.max(L)
+        return np.exp(L - mx) if np.isfinite(mx) else np.zeros_like(L)
+    return a[:, None] * T * b[None, :]
+
+
+def _fused_step(chain: _Chain, n: int, T: np.ndarray, dev, alphas, betas):
+    """(ξ part, report part) of the transition n → n + 1 between missing rows:
+    its joint posterior summed over the nodes of both ends (K, K), and its
+    term of :func:`_quadrature_report` (None: no weight), from the transition
+    T and its ``dev``."""
+    K, G = chain.K, chain.G
+    with np.errstate(divide="ignore", under="ignore", over="ignore", invalid="ignore"):
+        J = _joint(chain.log, alphas[n], T, betas[n + 1])
+        xi = J.reshape(K, G, -1).sum(axis=1)
+        xi = xi.reshape(K, K, G).sum(axis=2)
+    with np.errstate(all="ignore"):
+        if chain._lazy[n][0] == "q":
+            part = _block_part(chain, n + 1, dev[0], dev[1], J)
+        else:
+            part = _lead_part(chain, n + 1, dev[0], dev[1], J)
+    return xi, part
+
+
+def _forward_chain(chain: _Chain, *, stop_on_overflow: bool = False):
+    """Scaled forward pass; ``None`` when a linear step underflows (or, with
+    ``stop_on_overflow``, when a transition it builds overflows).
 
     Returns ``(alphas, log_lik)`` with ``alphas[n]`` the normalised message in
     *linear* scale (S_n,).
     """
     N = chain.N
     alphas = [None] * N
+    trans = chain.trans
     if chain.log:
         la = chain.init
         lc = float(_inf._lse(la))
@@ -3171,7 +3510,7 @@ def _forward_chain(chain: _Chain):
         la = la - lc
         alphas[0] = np.exp(la)
         for n in range(N - 1):
-            r = _inf._lse(la[:, None] + chain.trans[n], axis=0)
+            r = _inf._lse(la[:, None] + trans[n], axis=0)
             lc = float(_inf._lse(r))
             if not np.isfinite(lc):
                 raise IncompatibleObservationError(
@@ -3183,6 +3522,7 @@ def _forward_chain(chain: _Chain):
             ll += lc
             la = r - lc
             alphas[n + 1] = np.exp(la)
+        chain._built_all()
         return alphas, float(ll)
 
     a = chain.init
@@ -3192,26 +3532,37 @@ def _forward_chain(chain: _Chain):
     ll = np.log(C)
     alphas[0] = a / C
     for n in range(N - 1):
-        raw = alphas[n] @ chain.trans[n]
+        T = trans[n]
+        if stop_on_overflow and chain.overflow:
+            return None
+        raw = alphas[n] @ T
         C = float(raw.sum())
         if not (np.isfinite(C) and C >= MIN_POSITIVE):
             return None
         ll += np.log(C)
         alphas[n + 1] = raw / C
+    chain._built_all()
     return alphas, float(ll)
 
 
-def _backward_chain(chain: _Chain):
-    """Scaled backward pass (own normaliser per step); ``None`` on linear underflow."""
+def _backward_chain(chain: _Chain, alphas=None):
+    """Scaled backward pass (own normaliser per step); ``None`` on linear underflow.
+
+    ``alphas``: the chain's forward messages; with them, at every transition
+    the chain did not keep (rebuilt here), the parts of ξ and of the
+    quadrature report that need it are computed on the way (``chain._fused``).
+    """
     N = chain.N
     betas = [None] * N
+    fused = None if alphas is None else {}
     S = chain.size(N - 1)
     if chain.log:
         lb = np.full(S, -np.log(S))
         betas[N - 1] = np.exp(lb)
         n_void = 0
         for n in range(N - 2, -1, -1):
-            r = _inf._lse(chain.trans[n] + lb[None, :], axis=1)
+            T, dev, kept = chain._step(n)
+            r = _inf._lse(T + lb[None, :], axis=1)
             ld = float(_inf._lse(r))
             if np.isfinite(ld):
                 lb = r - ld
@@ -3220,20 +3571,29 @@ def _backward_chain(chain: _Chain):
                 s = chain.size(n)
                 lb = np.full(s, -np.log(s))
             betas[n] = np.exp(lb)
+            if fused is not None and not kept:
+                fused[n + 1] = _fused_step(chain, n, T, dev, alphas, betas)
         if n_void:
             logger.warning(
                 "Backward (missing data, log space): %d step(s) with zero weight "
                 "under every state — β̂ reset to uniform there.", n_void,
             )
+        if fused is not None:
+            chain._fused = (alphas, betas, fused)
         return betas
     b = np.full(S, 1.0 / S)
     betas[N - 1] = b
     for n in range(N - 2, -1, -1):
-        raw = chain.trans[n] @ betas[n + 1]
+        T, dev, kept = chain._step(n)
+        raw = T @ betas[n + 1]
         D = float(raw.sum())
         if not (np.isfinite(D) and D >= MIN_POSITIVE):
             return None
         betas[n] = raw / D
+        if fused is not None and not kept:
+            fused[n + 1] = _fused_step(chain, n, T, dev, alphas, betas)
+    if fused is not None:
+        chain._fused = (alphas, betas, fused)
     return betas
 
 
@@ -3246,10 +3606,12 @@ def _pass(model, Y, miss, grid, grids, ev, *, backward: bool, reuse=None):
     if reuse is None or not reuse.log:
         chain = _Chain(model, Y, miss, grid, log=False, ev=ev, grids=grids, reuse=reuse)
         if not chain.overflow:
-            fw = _forward_chain(chain)
-            if fw is not None and backward:
-                bw = _backward_chain(chain)
+            fw = _forward_chain(chain, stop_on_overflow=True)
+            if fw is not None and backward and not chain.overflow:
+                bw = _backward_chain(chain, fw[0])
         if chain.overflow or fw is None or (backward and bw is None):
+            if not chain.overflow:
+                chain._scan_overflow()
             logger.warning(
                 "Missing-data pass: %s in linear space; recomputing in log space.",
                 "a kernel value overflows" if chain.overflow else "a step underflows",
@@ -3259,7 +3621,7 @@ def _pass(model, Y, miss, grid, grids, ev, *, backward: bool, reuse=None):
         chain = _Chain(model, Y, miss, grid, log=True, ev=ev, grids=grids,
                        reuse=reuse if (reuse is not None and reuse.log) else None)
         fw = _forward_chain(chain)
-        bw = _backward_chain(chain) if backward else None
+        bw = _backward_chain(chain, fw[0]) if backward else None
     return chain, fw, bw
 
 
@@ -3278,8 +3640,10 @@ def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
     if last is not None and not last[3]:
         chain, fw, bw = last[:3]
     else:
-        chain, fw, bw = _pass(model, Y, miss, grid, grids, ev, backward=backward,
-                              reuse=None if last is None else last[0])
+        # the weighting pass's messages go now; its chain, once taken over
+        reuse, last = (None if last is None else last[0]), None
+        chain, fw, bw = _pass(model, Y, miss, grid, grids, ev, backward=backward, reuse=reuse)
+        reuse = None
     chain.quad_error = _quadrature_report(chain, fw[0], bw)
     limit = quad_warn_limit(miss)
     if chain.quad_error > limit:
@@ -3328,6 +3692,74 @@ _REL_CAP = 1.0
 _LEAD_SCALE = 0.02
 
 
+def _block_rel(raw, tgt, log: bool):
+    """Capped relative errors of raw block masses against their exact values,
+    and those exact values in linear scale (:func:`_quadrature_report`)."""
+    if log:
+        ok = np.isfinite(raw) & np.isfinite(tgt)
+        rel = np.where(ok, np.abs(np.expm1(np.where(ok, raw - tgt, 0.0))), 0.0)
+        T = np.where(np.isfinite(tgt), np.exp(tgt), 0.0)
+        bad = np.isfinite(tgt) & ~np.isfinite(raw)
+    else:
+        ok = np.isfinite(raw) & (tgt > 0.0)
+        rel = np.where(ok, np.abs(raw / np.where(ok, tgt, 1.0) - 1.0), 0.0)
+        T = np.where(np.isfinite(tgt), tgt, 0.0)
+        bad = (tgt > 0.0) & ~(np.isfinite(raw) & (raw > 0.0))
+    return np.minimum(np.where(bad, 1.0, rel), _REL_CAP), T
+
+
+def _block_w(chain: _Chain, n: int, J: np.ndarray, shape) -> np.ndarray:
+    """Posterior weights of the blocks into n from the joint mass J through
+    trans[n − 1], rows from background panels left out."""
+    K, G = chain.K, chain.G
+    w = J.reshape(J.shape[0], K, G).sum(axis=2).reshape(shape)
+    src = chain.grids[n - 1] if chain.miss[n - 1] else None
+    if src is not None and src.local:
+        bgn = ~np.isfinite(src.mix.loc[src.mix.panel])      # (G,)
+        w = np.where(bgn[None, :, None], 0.0, w)
+    return w
+
+
+def _lead_rel(lraw, lex):
+    """(finite exact values, capped relative errors) of a leading gap's
+    reverse masses (:func:`_quadrature_report`)."""
+    ok = np.isfinite(lex)
+    rel = np.where(ok & np.isfinite(lraw),
+                   np.abs(np.expm1(np.where(ok & np.isfinite(lraw), lraw - lex, 0.0))), 0.0)
+    return ok, np.minimum(np.where(ok & ~np.isfinite(lraw), 1.0, rel), _REL_CAP)
+
+
+def _lead_mask(chain: _Chain, n: int, w: np.ndarray) -> np.ndarray:
+    dst = chain.grids[n]
+    if dst.local:
+        # destinations on background panels: the broad tail of the
+        # prior, which the column rescaling keeps (as the rows of the
+        # forward blocks from background sources above)
+        w = np.where(np.isfinite(dst.mix.loc[dst.mix.panel])[None, None, :], w, 0.0)
+    return w
+
+
+def _weighted(w: np.ndarray, rel: np.ndarray):
+    """Σ w·rel / Σ w, or None without weight."""
+    tot = w.sum()
+    if np.isfinite(tot) and tot > 0.0:
+        return float((w * rel).sum() / tot)
+    return None
+
+
+def _block_part(chain: _Chain, n: int, raw, tgt, J: np.ndarray):
+    """Term of the blocks into n (``block_dev[n]``), J the joint mass through trans[n − 1]."""
+    rel, _ = _block_rel(raw, tgt, chain.log)
+    return _weighted(_block_w(chain, n, J, raw.shape), rel)
+
+
+def _lead_part(chain: _Chain, n: int, lraw, lex, J: np.ndarray):
+    """Term of a leading gap's reverse masses into n (``lead_dev[n]``), before _LEAD_SCALE."""
+    K, G = chain.K, chain.G
+    _, rel = _lead_rel(lraw, lex)
+    return _weighted(_lead_mask(chain, n, J.reshape(K, G, K, G).sum(axis=1)), rel)
+
+
 def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = False):
     """Convergence diagnostic of the quadrature of a pass (module docstring).
 
@@ -3371,67 +3803,48 @@ def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = Fal
         run_of[a:b + 1] = a
     parts = dict.fromkeys((int(a) for a in a_), 0.0)
     if betas is None and (chain.block_dev or chain.lead_dev):
-        betas = _backward_chain(chain)
+        betas = _backward_chain(chain, alphas)
+
+    trans = chain.trans
 
     def joint(n):                          # posterior mass through trans[n - 1] (S_{n-1}, S_n)
-        Tn = chain.trans[n - 1]
-        if chain.log:
-            L = np.log(alphas[n - 1])[:, None] + Tn + np.log(betas[n])[None, :]
-            mx = np.max(L)
-            return np.exp(L - mx) if np.isfinite(mx) else np.zeros_like(L)
-        return alphas[n - 1][:, None] * Tn * betas[n][None, :]
+        return _joint(chain.log, alphas[n - 1], trans[n - 1], betas[n])
 
     with np.errstate(all="ignore"):
-        for n, (raw, tgt) in chain.block_dev.items():
-            if chain.log:
-                ok = np.isfinite(raw) & np.isfinite(tgt)
-                rel = np.where(ok, np.abs(np.expm1(np.where(ok, raw - tgt, 0.0))), 0.0)
-                T = np.where(np.isfinite(tgt), np.exp(tgt), 0.0)
-                bad = np.isfinite(tgt) & ~np.isfinite(raw)
+        for n, dev in chain.block_dev.items():
+            if dev is _DEFERRED:           # a transition the chain did not keep
+                part = chain._deferred(n, alphas, betas)[1]
             else:
-                ok = np.isfinite(raw) & (tgt > 0.0)
-                rel = np.where(ok, np.abs(raw / np.where(ok, tgt, 1.0) - 1.0), 0.0)
-                T = np.where(np.isfinite(tgt), tgt, 0.0)
-                bad = (tgt > 0.0) & ~(np.isfinite(raw) & (raw > 0.0))
-            rel = np.minimum(np.where(bad, 1.0, rel), _REL_CAP)
-            if betas is None:                            # forward weights only
-                if n == 0 and miss[0]:
-                    w = T                                                # (K,)
+                raw, tgt = dev
+                rel, T = _block_rel(raw, tgt, chain.log)
+                if betas is None:                            # forward weights only
+                    if n == 0 and miss[0]:
+                        w = T                                                # (K,)
+                    else:
+                        a = alphas[n - 1]
+                        a = a.reshape(K, G) if miss[n - 1] else a
+                        w = a[..., None] * T
+                elif n == 0 and miss[0]:
+                    w = (alphas[0] * betas[0]).reshape(K, G).sum(axis=1)
                 else:
-                    a = alphas[n - 1]
-                    a = a.reshape(K, G) if miss[n - 1] else a
-                    w = a[..., None] * T
-            elif n == 0 and miss[0]:
-                w = (alphas[0] * betas[0]).reshape(K, G).sum(axis=1)
+                    w = _block_w(chain, n, joint(n), raw.shape)
+                part = _weighted(w, rel)
+            if part is not None:
+                parts[int(run_of[n])] += part
+        for n, dev in chain.lead_dev.items():
+            if dev is _DEFERRED:
+                part = chain._deferred(n, alphas, betas)[1]
             else:
-                J = joint(n)
-                w = J.reshape(J.shape[0], K, G).sum(axis=2).reshape(raw.shape)
-                src = chain.grids[n - 1] if miss[n - 1] else None
-                if src is not None and src.local:
-                    bgn = ~np.isfinite(src.mix.loc[src.mix.panel])      # (G,)
-                    w = np.where(bgn[None, :, None], 0.0, w)
-            tot = w.sum()
-            if np.isfinite(tot) and tot > 0.0:
-                parts[int(run_of[n])] += float((w * rel).sum() / tot)
-        for n, (lraw, lex) in chain.lead_dev.items():
-            ok = np.isfinite(lex)
-            rel = np.where(ok & np.isfinite(lraw),
-                           np.abs(np.expm1(np.where(ok & np.isfinite(lraw), lraw - lex, 0.0))), 0.0)
-            rel = np.minimum(np.where(ok & ~np.isfinite(lraw), 1.0, rel), _REL_CAP)
-            if betas is None:
-                w = np.where(ok, np.exp(np.where(ok, lex, -np.inf)), 0.0) * \
-                    alphas[n - 1].reshape(K, G).sum(axis=1)[:, None, None]
-            else:
-                w = joint(n).reshape(K, G, K, G).sum(axis=1)             # (K_i, K_j, G)
-            dst = chain.grids[n]
-            if dst.local:
-                # destinations on background panels: the broad tail of the
-                # prior, which the column rescaling keeps (as the rows of the
-                # forward blocks from background sources above)
-                w = np.where(np.isfinite(dst.mix.loc[dst.mix.panel])[None, None, :], w, 0.0)
-            tot = w.sum()
-            if np.isfinite(tot) and tot > 0.0:
-                parts[int(run_of[n])] += _LEAD_SCALE * float((w * rel).sum() / tot)
+                lraw, lex = dev
+                ok, rel = _lead_rel(lraw, lex)
+                if betas is None:
+                    w = np.where(ok, np.exp(np.where(ok, lex, -np.inf)), 0.0) * \
+                        alphas[n - 1].reshape(K, G).sum(axis=1)[:, None, None]
+                else:
+                    w = joint(n).reshape(K, G, K, G).sum(axis=1)             # (K_i, K_j, G)
+                part = _weighted(_lead_mask(chain, n, w), rel)
+            if part is not None:
+                parts[int(run_of[n])] += _LEAD_SCALE * part
         exits = [int(n) for n in np.nonzero(miss[:-1] & ~miss[1:])[0] if chain.grids[int(n)].local]
         cached = [chain.grids[n].exit_rel for n in exits]
         todo = np.array([n for n, c in zip(exits, cached) if c is None], dtype=int)
@@ -3551,21 +3964,19 @@ def _chain_posterior(chain: _Chain, alphas, betas, *, want_xi: bool) -> dict:
     xi = None
     if want_xi and N > 1:
         xi = np.empty((N - 1, K, K))
+        trans = chain.trans
         with np.errstate(divide="ignore", under="ignore", over="ignore", invalid="ignore"):
             for n in range(N - 1):
-                T = chain.trans[n]
-                if chain.log:
-                    la = np.log(alphas[n])[:, None]
-                    lb = np.log(betas[n + 1])[None, :]
-                    L = la + T + lb
-                    mx = np.max(L)
-                    J = np.exp(L - mx) if np.isfinite(mx) else np.zeros_like(L)
+                if n in chain._lazy and not chain._kept(n):
+                    # a transition the chain did not keep: summed by the
+                    # backward pass that rebuilt it
+                    J = chain._deferred(n + 1, alphas, betas)[0]
                 else:
-                    J = alphas[n][:, None] * T * betas[n + 1][None, :]
-                if miss[n]:
-                    J = J.reshape(K, G, -1).sum(axis=1)
-                if miss[n + 1]:
-                    J = J.reshape(K, K, G).sum(axis=2)
+                    J = _joint(chain.log, alphas[n], trans[n], betas[n + 1])
+                    if miss[n]:
+                        J = J.reshape(K, G, -1).sum(axis=1)
+                    if miss[n + 1]:
+                        J = J.reshape(K, K, G).sum(axis=2)
                 s = J.sum()
                 if np.isfinite(s) and s > 0.0:
                     xi[n] = J / s
@@ -3605,6 +4016,12 @@ def gap_posterior(
     model     : PMCModel — known parameters.
     Y         : (N,) or (N, d) observations, NaN (any non-finite value) where missing.
     gap_nodes : number G of quadrature nodes (default 64; grid variants only).
+                Memory grows with G: about 0.3 kB per missing row and per
+                node (K = 3; messages, grids, posteriors), plus 8·(K·G)²
+                bytes per step of a gap that touches a local grid (295 kB
+                at G = 64, 4.7 MB at G = 256), of which at most 2 GiB are
+                kept and the rest rebuilt when needed (module docstring,
+                "Memory").
     xi        : also compute the pairwise posteriors ξ (default True).
     """
     return _posterior(model, Y, gap_nodes, xi)[0]
@@ -3885,13 +4302,6 @@ def _nystrom_density(chain: _Chain, alphas, betas, positions: np.ndarray,
     return dens
 
 
-def _fine_grids(chain: _Chain, positions: np.ndarray) -> list:
-    """The Nyström grid (_NYSTROM_FACTOR × G nodes) of every missing position."""
-    ref = chain.grid
-    ref_fine = reference_grid(chain.model, _NYSTROM_FACTOR * ref.G)
-    return [_fine_grid(ref, ref_fine, chain.grids[int(n)], _NYSTROM_FACTOR) for n in positions]
-
-
 # ---------------------------------------------------------------------------
 # Laws on the grid: moments and quantiles
 # ---------------------------------------------------------------------------
@@ -4062,18 +4472,31 @@ def _grid_laws(chain: _Chain, alphas, betas, positions: np.ndarray, mass: np.nda
     loc_rows = np.array([g.local for g in grids], dtype=bool)
     fine = fine_mass = None
     if qs or loc_rows.any():
-        fine = _fine_grids(chain, positions)
-        pts = np.array([g.nodes for g in fine])
-        dens = _nystrom_density(chain, alphas, betas, positions,
-                                np.concatenate([pts, np.broadcast_to(ref.nodes, (len(grids), G))],
-                                               axis=1))
-        Mf = pts.shape[1]
-        om = np.array([g.omega for g in fine])
-        with np.errstate(invalid="ignore"):
-            fm = dens[:, :Mf] * om
-            Z = fm.sum(axis=1, keepdims=True)
-            fine_mass = fm / Z
-            dref = dens[:, Mf:] / Z
+        # by blocks of positions (:data:`_CHUNK`): the Nyström density takes
+        # (P, 5G, K, K) margins and kernels, every position alone
+        positions = np.asarray(positions)
+        ref_fine = reference_grid(chain.model, _NYSTROM_FACTOR * ref.G)
+        P, Mf = len(grids), _NYSTROM_FACTOR * G
+        fine = [None] * P
+        fine_mass = np.empty((P, Mf))
+        dref = np.empty((P, G))
+        for r in _row_blocks(P, (Mf + G) * chain.K * chain.K):
+            fb = [_fine_grid(ref, ref_fine, g, _NYSTROM_FACTOR) for g in grids[r]]
+            pts = np.array([g.nodes for g in fb])
+            dens = _nystrom_density(chain, alphas, betas, positions[r],
+                                    np.concatenate([pts, np.broadcast_to(ref.nodes, (len(fb), G))],
+                                                   axis=1))
+            om = np.array([g.omega for g in fb])
+            with np.errstate(invalid="ignore"):
+                fm = dens[:, :Mf] * om
+                Z = fm.sum(axis=1, keepdims=True)
+                fine_mass[r] = fm / Z
+                dref[r] = dens[:, Mf:] / Z
+            # _grid_summary needs the rule and the panels of a local fine grid
+            # only, not its node arrays
+            fine[r] = [g if g.mix is None else
+                       replace(g, nodes=None, ref_pdf=None, omega=None, w=None,
+                               mix=replace(g.mix, panel=None)) for g in fb]
     mean, sd, qv = _grid_summary(mass, nodes, qs, fine_mass if qs else None, grids, fine)
     density = mass / ref.omega[None, :]
     if loc_rows.any():
@@ -4211,8 +4634,16 @@ def impute(
     idx = post.index
     d = getattr(model, "d", 1)
     nodes = density = grid_nodes = grid_mass = None
+    x_s = y_s = None
     if post.method == "grid":
         chain, alphas, betas = run
+        if n_samples > 0:
+            # the draws first (they need the transitions, the laws below do not)
+            gen = np.random.default_rng(rng)
+            U = _ffbs(chain.trans, alphas, chain.log, gen, n_samples)
+            x_s = np.where(post.miss[None, :], U // chain.G, U).astype(int)
+            y_s = _node_draws(chain, U[:, idx], idx)
+        chain._forget()          # the transitions are not needed any more (module docstring, "Memory")
         mass = post.node_post.sum(axis=1)                              # (M, G)
         mean, sd, qv, density = _grid_laws(chain, alphas, betas, idx, mass, qs)
         nodes, grid_nodes, grid_mass = post.grid.nodes, post.nodes, mass
@@ -4230,21 +4661,13 @@ def impute(
     Y_mean = np.array(Y, copy=True)
     Y_mean[idx] = mean
 
-    x_s = y_s = None
-    if n_samples > 0:
+    if n_samples > 0 and post.method != "grid":
         gen = np.random.default_rng(rng)
-        miss = post.miss
-        if post.method == "grid":
-            chain, alphas, _ = run
-            U = _ffbs(chain.trans, alphas, chain.log, gen, n_samples)
-            x_s = np.where(miss[None, :], U // chain.G, U).astype(int)
-            y_s = _node_draws(chain, U[:, idx], idx)
-        else:
-            W = run[0]
-            trans = [W[n] for n in range(len(Y) - 1)]
-            alphas = list(post.alpha_hat)
-            x_s = _ffbs(trans, alphas, False, gen, n_samples)
-            y_s = _draw_state_margins(model, x_s[:, idx], gen)
+        W = run[0]
+        trans = [W[n] for n in range(len(Y) - 1)]
+        alphas = list(post.alpha_hat)
+        x_s = _ffbs(trans, alphas, False, gen, n_samples)
+        y_s = _draw_state_margins(model, x_s[:, idx], gen)
     return Imputation(index=idx, mean=mean, sd=sd, quantiles=qs, quantile_values=qv,
                       gamma=post.gamma[idx], log_lik=post.log_lik, Y_mean=Y_mean,
                       method=post.method, nodes=nodes, density=density,
@@ -4327,6 +4750,11 @@ def forecast(
     Y         : (N,) or (N, d) conditioning observations (N ≥ 1).
     h         : horizon ≥ 1.
     gap_nodes : quadrature nodes G for the grid variants (default 64).
+                Memory, as for :func:`gap_posterior` over the missing rows of
+                Y and the h appended ones: about 0.3 kB per missing row and
+                per node (K = 3), plus at most 2 GiB of transitions between
+                local grids, 8·(K·G)² bytes per step (module docstring,
+                "Memory").
     quantiles : levels in (0, 1) of the predictive quantiles.
     """
     Y = np.asarray(Y, dtype=float)

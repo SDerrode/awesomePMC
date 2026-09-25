@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — memory of the gap quadrature: bounded, with bit-for-bit the same results
+
+- **Why.** Long gappy series made the gap quadrature use a great deal of
+  memory. On the Intel Lab mote-48 detection window (46 860 rows, 16 271
+  missing, `pmc_state` K = 3), `gap_posterior` took 2.3 GB at G = 64 and
+  more than 8 GB at G = 128; the G = 256 detection check reached 21–23 GB
+  per process, and parallel study runs caused a kernel panic. A chain kept
+  every missing → missing transition that touches a local grid, a dense
+  (K·G)² block (295 kB at G = 64, 4.7 MB at G = 256), and the pass that
+  weights the proposals kept its chain while the final one was built. The
+  grid construction, `impute`'s Nyström densities and the grid cache added
+  whole-series temporaries.
+- **What.** These transitions are built when a pass first needs them and
+  kept up to 2 GiB (`gaps._TRANSITION_BUDGET`). Beyond that, the backward
+  pass rebuilds them and computes their parts of ξ and of the quadrature
+  report on the way; FFBS rebuilds them too. The weighting pass's chain and
+  messages are released when the final pass takes over, and `impute`
+  releases the transitions before the laws of the missing values. The
+  grid-construction temporaries and the Nyström densities run by blocks of
+  32 MB, the grid cache stops at 256 MB, and the node margins of
+  state-margin models are kept K times smaller. A rebuilt transition is the
+  same operations on the same inputs, so no result depends on the budget;
+  beyond it only the time grows (`gaps` docstring, "Memory").
+- **Measured** (peak footprint / maximum resident size, time; before →
+  now; `report/out/memprobe/bench.csv`, not versioned):
+  - mote-48 window, `gap_posterior`: G = 64, 2.3 / 5.2 → 2.1 / 3.8 GB in
+    61 s; G = 128, stopped above 8 GB → 2.3 / 4.5 GB in 245 s (11 252 such
+    transitions, 13 GB, of which 1 792 kept); G = 256, 3.5 / 5.1 GB in
+    818 s. Its third quarter at G = 256: 6.7 / 6.6 → 2.3 / 3.0 GB, 23 →
+    36 s. `impute` at G = 64: 4.9 / 5.4 → 2.0 / 3.7 GB, 469 → 492 s.
+  - Mote-20 forecasts at G = 256: `pmc_state` K = 3, 3.9 / 6.3 → 2.3 /
+    4.1 GB, 26 → 38 s; `pmc_pair` K = 2, 1.9 / 3.3 → 1.6 / 2.8 GB in 17 s.
+  - The 16 other probes (G ≤ 128) keep all their transitions: 0.68–1.03
+    times the footprint, 0.85–1.06 times the time.
+  - Beyond the budget the time grows (+42 % and +57 % on the two G = 256
+    probes that have a reference); `_TRANSITION_BUDGET` trades one for the
+    other.
+- **Bit identity.** A harness of 9 cases (state and pair margins, K = 2
+  and 3, leading and long gaps, τ ≈ 0.99, "state" and "state-markov"
+  missingness, HMC-DN, mote-20 and mote-48 windows, a log-space pass) ×
+  74 outputs (`gap_posterior`, `forecast`, `impute` with FFBS draws,
+  `predictive_pit`, `flag_outliers`, sampling, 2-iteration ICE and SEM):
+  every array equal byte for byte to the previous version, at budgets
+  2 GiB, 3 MB and 0 and with blocks of one row.
+- **Tests.** `test_gaps_memory.py`: results independent of the budget and
+  of the blocks, the budget respected, the cache bound, no reference cycle,
+  the linear-pass failure message.
+
 ### Fixed — gap quadrature: local grids placed from the filter, not from the state law of y alone (cause 4)
 
 - **Why.** The pieces placing a run's local grid were weighted by the state
