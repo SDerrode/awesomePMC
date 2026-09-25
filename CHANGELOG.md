@@ -52,7 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   74 outputs (`gap_posterior`, `forecast`, `impute` with FFBS draws,
   `predictive_pit`, `flag_outliers`, sampling, 2-iteration ICE and SEM):
   every array equal byte for byte to the previous version, at budgets
-  2 GiB, 3 MB and 0 and with blocks of one row.
+  2 GiB, 3 MB and 0 and with blocks of one row (numpy 2; with numpy 1.24 a
+  blocked reduction can differ in its last bit, 1 ulp in `impute`'s
+  densities and quantiles, so `test_gaps_memory.py` allows a relative 1e-12
+  there).
 - **Tests.** `test_gaps_memory.py`: results independent of the budget and
   of the blocks, the budget respected, the cache bound, no reference cycle,
   the linear-pass failure message.

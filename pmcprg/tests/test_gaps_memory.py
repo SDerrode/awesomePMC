@@ -8,7 +8,11 @@ block, one per step of a gap; a long gappy series kept thousands of them
 needs them again (backward, ξ, FFBS, the next chain of the filter-weighted
 grids). A rebuilt transition is the same operations on the same inputs, so
 every result must be the same *bit for bit* whatever the budget: every
-comparison below is ``np.array_equal``, on the same machine and code.
+comparison below is ``np.array_equal``, on the same machine and code. With
+numpy < 2 a reduction over a block of rows can differ in its last bit from
+the same reduction over the whole array (the min-versions CI job: 1 ulp in
+``impute``'s densities and quantiles, and once in ``quad_error``), so the
+output comparisons there allow a relative 1e-12 (``_same``).
 """
 from __future__ import annotations
 
@@ -22,6 +26,18 @@ import pytest
 
 from pmcprg.pmc import (PMCModel, StateMarkovMissingness, StateMissingness, flag_outliers, gaps,
                         predictive_pit, simulate)
+
+
+#: numpy >= 2 gives the same bits whatever the blocks (macOS arm64 and the Linux CI).
+_NUMPY2 = int(np.__version__.split(".")[0]) >= 2
+
+
+def _same(a, b) -> bool:
+    """Bit for bit with numpy >= 2; within a relative 1e-12 with numpy 1.x."""
+    if _NUMPY2:
+        return np.array_equal(a, b, equal_nan=True)
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    return a.shape == b.shape and np.allclose(a, b, rtol=1e-12, atol=1e-300, equal_nan=True)
 
 
 def _tau(rho):
@@ -138,7 +154,7 @@ def test_results_do_not_depend_on_the_transition_budget(name, budget):
         budget(b)
         got = _outputs(model, Y)
         for k, v in full.items():
-            assert np.array_equal(got[k], v, equal_nan=True), (name, b, k)
+            assert _same(got[k], v), (name, b, k)
 
 
 @pytest.mark.parametrize("name", ["pair_K2_markov", "hmcdn"])
@@ -155,7 +171,7 @@ def test_results_do_not_depend_on_the_blocks_of_the_whole_sequence_temporaries(n
     got = _outputs(model, Y)
     gaps._GRID_CACHE.clear()
     for k, v in full.items():
-        assert np.array_equal(got[k], v, equal_nan=True), (name, k)
+        assert _same(got[k], v), (name, k)
 
 
 def test_the_grid_cache_keeps_the_newest_entry_within_its_bytes(monkeypatch):
