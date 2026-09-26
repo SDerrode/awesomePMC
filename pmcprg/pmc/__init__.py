@@ -27,7 +27,8 @@ simulate  : generate a synthetic (X, Y) sequence from a PMCModel.
 classify  : supervised MPM classification of an observation sequence.
 sample_posterior : Forward-Filter Backward-Sample draw  X̃ ~ P(X | Y).
 impute    : posterior law of missing observations (NaN) given the observed ones.
-forecast  : h-step predictive law of (x_{N+k}, y_{N+k}) given Y.
+forecast  : h-step predictive law of (x_{N+k}, y_{N+k}) given Y; ``check_nodes``
+            checks its convergence in the quadrature nodes (``NodeCheck``).
 gap_posterior : α̂, β̂, γ, ξ and log-likelihood of a sequence with missing values.
 StateMissingness, StateMarkovMissingness : non-ignorable missingness mechanisms
             (``PMCModel.missingness``, TOML ``[missingness]``) — the mask is
@@ -55,7 +56,7 @@ from pmcprg.pmc.inference     import (
     mpm, error_rate, sample_posterior,
 )
 from pmcprg.pmc.gaps          import (
-    Forecast, GapPosterior, Imputation, forecast, gap_posterior, impute,
+    Forecast, GapPosterior, Imputation, NodeCheck, forecast, gap_posterior, impute,
 )
 from pmcprg.pmc._estim_common import ice_estim_defaults, sem_estim_defaults
 from pmcprg.pmc.ice           import (
@@ -108,6 +109,7 @@ __all__ = [
     "gap_posterior",
     "Imputation",
     "Forecast",
+    "NodeCheck",
     "GapPosterior",
     # non-ignorable missingness mechanisms (PMCModel.missingness)
     "StateMissingness",

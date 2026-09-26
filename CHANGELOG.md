@@ -9,6 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `forecast(check_nodes=...)`: is the predictive law converged in `gap_nodes`?
+
+- **Why.** `quad_error` estimates the error of log p(y_obs) only: a
+  forecast horizon is a trailing gap and contributes 0 (the bullet "What
+  `quad_error` does not cover" below). `forecast` gave no warning when its
+  predictive law was not converged in `gap_nodes`. In the forecasting
+  study, forecasts move by 3.8 % of the predictive sd (tails 9.8 %) between
+  G = 128 and 256 while `quad_error` / limit is 0.18–0.44.
+- **What.** `forecast(..., check_nodes=True)` computes the predictive laws a
+  second time at 2G nodes (an integer G_ref > G: at G_ref). The new field
+  `Forecast.node_check` (None without the check) is a frozen `NodeCheck`,
+  exported from `pmcprg.pmc`:
+  - `gap_nodes`, `gap_nodes_ref`;
+  - `mean_sd`: the largest change of the predictive mean and sd over the
+    horizons, in units of the sd at G_ref;
+  - `tails`: the largest change of the 2.5 % and 97.5 % quantiles of the
+    node law (the discrete law on `grid_nodes` / `grid_mass`, its CDF
+    linear between the cell edges), in the same unit;
+  - `converged`: `mean_sd` ≤ `FORECAST_CHECK_TOL` = 0.01 and `tails` ≤
+    `FORECAST_CHECK_TOL_TAIL` = 0.05 (module constants).
+
+  The definitions and tolerances are the study's
+  (`report/forecasting/fc_common.py`: `quad_diff`, `node_law_quantiles`,
+  `QUAD_TOL`, `QUAD_TOL_TAIL`), at the forecast's own origin.
+- **WARNING** when not converged, from the `pmcprg.pmc.gaps` logger:
+  "Forecast not stable in gap_nodes: from gap_nodes = G to G_ref the
+  predictive means move by up to …, the sds by … and the node-law 2.5 /
+  97.5 % quantiles by … predictive sd (tolerances 0.01, 0.01 and 0.05). The
+  forecast at gap_nodes = G is returned. Increase gap_nodes." It matches
+  neither the quad_error regexes of the studies (`_QUAD_RE` of
+  `fc_common.py` and `il_common.py`) nor their prefix "Missing-data
+  quadrature not converged", and it does not contain "not converged", which
+  the test suite looks for.
+- **Edge cases.**
+  - A predictive sd below 1e-3 of the sd of the observed values of Y, at G
+    or at G_ref, is a collapse (a law on one node): `mean_sd` = `tails` =
+    inf, not converged, and a WARNING that says so (`quad_diff` returns inf
+    too). When Y has fewer than two distinct observed values, the sd of the
+    reference law is used. A law that is genuinely that narrow is flagged
+    as well.
+  - The exact variants (HMC-IN, HMC-IN2, PMC-IN with state margins; d ≥ 1)
+    are not recomputed: 0.0, 0.0, converged. The grid variants are d = 1
+    only, as before.
+- **The forecast is unchanged.** The returned forecast is the one at G, the
+  same bit for bit with the check on or off. The check's pass runs after
+  the forecast, and computes neither quantiles, densities, nor its own
+  quadrature diagnostic and WARNING (`_run_chain(report=False)`). Measured
+  against 83d812b on every fixture model and on a τ = 0.99 pair-margin PMC
+  with and without state missingness, at G = 16 and 64: every field of
+  `Forecast` is equal byte for byte.
+- **Cost.** A whole forecast at 2G costs 1.6–3.6 times the one at G, mostly
+  for its densities and quantiles. The check's pass costs 0.04–0.64 times
+  the forecast at G (N = 500 with 25 missing rows, h = 24, G = 32–128,
+  K = 2–3, τ = 0.6–0.99). It runs once the forecast's chain is released;
+  its transitions between local grids take 4 times the memory per step.
+- **The tails criterion is the node law's.** The node-law quantiles are
+  first order in the node spacing, and the returned `quantile_values`
+  converge much faster. So `tails` can flag a G whose returned quantiles are
+  converged: τ = 0.3 at G = 16, tails 0.28 while the returned 2.5 / 97.5 %
+  quantiles are within 1.1e-3 sd of G = 256. At the default G = 64, tails
+  1.5e-3.
+- **Tests.** `test_forecast_node_check.py` (14 tests, 6 s; they also pass
+  with numpy 1.24 and scipy 1.10):
+  - bit identity with the check on or off, cold or warm caches;
+  - a pair-margin PMC at τ = 0.99, from a reading in the upper tail, at
+    G = 16 is flagged (`mean_sd` 0.20, `tails` 0.42), with the WARNING;
+  - τ = 0.3 at G = 64 passes with no WARNING (6.8e-8, 1.5e-3);
+  - the numbers equal `quad_diff` recomputed from forecasts at G and 2G;
+  - the int form and the argument checks, the exact variants, a collapsed
+    sd.
+
 ### Fixed — gap quadrature: long runs of missing rows converge in G, and `quad_error` estimates the error in nats (library problem 4)
 
 - **What was wrong (long runs).** Inside a long run of missing rows the
@@ -141,7 +212,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The accuracy of a predictive law (`forecast`, the laws of `impute`) is
   not in it: in the forecasting study, forecasts that move by 3.8 % of the
   predictive sd between G = 128 and 256 have `quad_error` / limit
-  0.18–0.44. Check a forecast by doubling `gap_nodes`.
+  0.18–0.44. Check a forecast with `forecast(check_nodes=True)`, which
+  doubles `gap_nodes` for you (the "Added" entry above); for `impute`,
+  double `gap_nodes` by hand.
 
 ### Fixed — memory of the gap quadrature: bounded, with bit-for-bit the same results
 

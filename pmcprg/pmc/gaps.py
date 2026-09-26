@@ -11,9 +11,11 @@ impute(model, Y, *, gap_nodes=64, quantiles=(0.05, 0.5, 0.95), n_samples=0, rng=
     -> Imputation
     Posterior mean, standard deviation and quantiles of every missing y_n given
     all the observed data; optionally joint FFBS draws of the missing values.
-forecast(model, Y, h, *, gap_nodes=64, quantiles=(0.05, 0.5, 0.95)) -> Forecast
+forecast(model, Y, h, *, gap_nodes=64, quantiles=(0.05, 0.5, 0.95), check_nodes=False)
+    -> Forecast
     h-step predictive law of (x_{N+k}, y_{N+k}), k = 1..h, given the observed
-    part of Y (Y may itself contain NaN).
+    part of Y (Y may itself contain NaN); ``check_nodes`` also checks that law
+    against a second forecast with more nodes (:class:`NodeCheck`).
 missing_mask(Y), needs_grid(model), reference_grid(model, gap_nodes)
     Helpers (mask of missing rows, whether a model needs the quadrature grid,
     the quadrature grid itself).
@@ -545,6 +547,12 @@ A WARNING ("Missing-data quadrature not converged … increase gap_nodes") is
 logged above ``QUAD_WARN`` = 0.05 nats, whatever the number of runs
 (:func:`quad_warn_limit`). It is a screen, not an error bound.
 
+``quad_error`` covers log p(y_obs) only: a trailing gap, a forecast horizon
+among them, contributes 0, and the predictive laws of :func:`forecast` are
+not in it. ``forecast(check_nodes=True)`` checks those: it computes them a
+second time at 2G and compares their means, sds and node-law tails
+(:class:`NodeCheck`, with a WARNING of its own).
+
 Calibration (``report/out/quadfix``, not versioned): 286 passes against exact
 references, G = 32–256 — Gaussian AR(1) at ρ = 0.999, 0.9999, 0.99999 with
 interior gaps of 20, 100 and 500 rows, a 100-row leading gap, a 300-row
@@ -687,6 +695,9 @@ __all__ = [
     "GapPosterior",
     "Imputation",
     "Forecast",
+    "NodeCheck",
+    "FORECAST_CHECK_TOL",
+    "FORECAST_CHECK_TOL_TAIL",
     "missing_mask",
     "needs_grid",
     "reference_grid",
@@ -4385,14 +4396,19 @@ def _pass(model, Y, miss, grid, grids, ev, *, backward: bool, reuse=None):
     return chain, fw, bw
 
 
-def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
+def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL,
+               report: bool = True):
     """Build the chain and run forward (and backward), linear first, log on failure.
 
     ``ev``: missingness evidence factors (:class:`_Chain`), by default those
     of ``model.missingness`` on ``miss``. When the grids are built by this
     call (:func:`_gap_grids_pass`), the pass that weighted them is reused:
     as it is if it ran on the final grids, else for the transitions between
-    grids that did not change.
+    grids that did not change. ``report`` False skips the quadrature
+    diagnostic and its WARNING (``chain.quad_error`` stays None): the
+    reference pass of :func:`forecast`'s node check, whose conditioning
+    series the forecast's own pass has already checked. The messages are
+    computed before the diagnostic and do not depend on it.
     """
     if ev is _inf._FROM_MODEL:
         ev = _inf._evidence(model, miss)
@@ -4404,6 +4420,8 @@ def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
         reuse, last = (None if last is None else last[0]), None
         chain, fw, bw = _pass(model, Y, miss, grid, grids, ev, backward=backward, reuse=reuse)
         reuse = None
+    if not report:
+        return chain, fw[0], fw[1], bw
     chain.quad_error = _quadrature_report(chain, fw[0], bw)
     limit = quad_warn_limit(miss)
     if chain.quad_error > limit:
@@ -5643,6 +5661,74 @@ def _draw_state_margins(model: PMCModel, states: np.ndarray, rng) -> np.ndarray:
 # Forecasting
 # ---------------------------------------------------------------------------
 
+#: Tolerance of the node check of :func:`forecast` (``check_nodes``) on the
+#: predictive means and sds: the largest change of either between
+#: ``gap_nodes`` and the reference nodes, over the horizons, in units of the
+#: reference predictive sd. The value of the forecasting study
+#: (``report/forecasting/fc_common.py``, ``QUAD_TOL``).
+FORECAST_CHECK_TOL = 0.01
+#: Tolerance of the node check on the 2.5 % and 97.5 % quantiles of the node
+#: law (the discrete law on ``Forecast.grid_nodes`` / ``grid_mass``, its CDF
+#: linear between the cell edges), in the same unit: the study's
+#: ``QUAD_TOL_TAIL``. The study scores its interval forecasts on that law,
+#: whose tails move more with G than its moments.
+FORECAST_CHECK_TOL_TAIL = 0.05
+#: Levels of the node-law quantiles compared by the node check.
+_CHECK_LEVELS = (0.025, 0.975)
+#: A predictive sd below this fraction of the sd of the observed values is a
+#: collapse (a law on one node, the failure the local grids fixed): the node
+#: check is inf (the study's ``quad_diff``).
+_CHECK_COLLAPSE = 1e-3
+
+
+@dataclass(frozen=True)
+class NodeCheck:
+    """Convergence of a forecast's predictive laws in ``gap_nodes``.
+
+    The result of :func:`forecast`'s ``check_nodes``: the forecast at
+    ``gap_nodes`` = G against a second one at ``gap_nodes_ref`` = G_ref > G
+    (2G by default), at every horizon, with the definitions of the
+    forecasting study (``report/forecasting/fc_common.py``, ``quad_diff``).
+
+    Attributes
+    ----------
+    gap_nodes     : int — G, the nodes of the returned forecast.
+    gap_nodes_ref : int — G_ref, the nodes of the reference forecast.
+    mean_sd       : float — the largest |mean(G) − mean(G_ref)| and
+                    |sd(G) − sd(G_ref)| over the horizons, in units of
+                    sd(G_ref) at the same horizon.
+    tails         : float — the largest change of the 2.5 % and 97.5 %
+                    quantiles of the node law over the horizons, in the same
+                    unit. The node law is the discrete law on ``grid_nodes``
+                    / ``grid_mass``, its CDF linear between the cell edges
+                    (the midpoints of the sorted nodes).
+    converged     : bool — mean_sd ≤ :data:`FORECAST_CHECK_TOL` (0.01) and
+                    tails ≤ :data:`FORECAST_CHECK_TOL_TAIL` (0.05).
+
+    The node-law quantiles are first order in the node spacing, and the
+    returned ``quantile_values`` (the Legendre interpolant of the Nyström
+    density) converge much faster: ``tails`` can flag a G whose returned
+    quantiles are converged (τ = 0.3, G = 16: tails 0.28, while the returned
+    2.5 % and 97.5 % quantiles are within 1.1e-3 sd of those at G = 256; at
+    the default G = 64, tails 1.5e-3). It is the study's criterion: the
+    study scores its interval forecasts on the node law.
+
+    ``mean_sd`` and ``tails`` are inf, and ``converged`` False, when a
+    predictive sd collapses: below 1e-3 of the sd of the observed values of
+    Y, at some horizon, at G or at G_ref. When Y has fewer than two distinct
+    observed values, the sd of the reference law g_ref is used instead. A law
+    that is genuinely that narrow is flagged too. The exact variants
+    (``Forecast.method == "exact"``) get 0.0, 0.0 and True: their laws do
+    not depend on ``gap_nodes``, and nothing is recomputed.
+    """
+
+    gap_nodes: int
+    gap_nodes_ref: int
+    mean_sd: float
+    tails: float
+    converged: bool
+
+
 @dataclass
 class Forecast:
     """h-step predictive law of (x_{N+k}, y_{N+k}) given the observed part of Y.
@@ -5661,6 +5747,9 @@ class Forecast:
     grid_nodes      : (h, G) or None — the quadrature nodes of each horizon
                       (grid variants: reference or local grid).
     grid_mass       : (h, G) or None — the predictive masses on ``grid_nodes``.
+    node_check      : :class:`NodeCheck` or None — the convergence of these
+                      laws in ``gap_nodes`` (``check_nodes`` of
+                      :func:`forecast`); None when not requested.
     """
 
     h: int
@@ -5675,6 +5764,7 @@ class Forecast:
     density: np.ndarray | None = None
     grid_nodes: np.ndarray | None = None
     grid_mass: np.ndarray | None = None
+    node_check: NodeCheck | None = None
 
 
 def forecast(
@@ -5684,6 +5774,7 @@ def forecast(
     *,
     gap_nodes: int | None = DEFAULT_GAP_NODES,
     quantiles=DEFAULT_QUANTILES,
+    check_nodes: bool | int = False,
 ) -> Forecast:
     """Predictive laws of the next h observations, a trailing gap of length h.
 
@@ -5698,16 +5789,43 @@ def forecast(
 
     Parameters
     ----------
-    model     : PMCModel — known parameters.
-    Y         : (N,) or (N, d) conditioning observations (N ≥ 1).
-    h         : horizon ≥ 1.
-    gap_nodes : quadrature nodes G for the grid variants (default 64).
-                Memory, as for :func:`gap_posterior` over the missing rows of
-                Y and the h appended ones: about 0.3 kB per missing row and
-                per node (K = 3), plus at most 2 GiB of transitions between
-                local grids, 8·(K·G)² bytes per step (module docstring,
-                "Memory").
-    quantiles : levels in (0, 1) of the predictive quantiles.
+    model       : PMCModel — known parameters.
+    Y           : (N,) or (N, d) conditioning observations (N ≥ 1).
+    h           : horizon ≥ 1.
+    gap_nodes   : quadrature nodes G for the grid variants (default 64).
+                  Memory, as for :func:`gap_posterior` over the missing rows
+                  of Y and the h appended ones: about 0.3 kB per missing row
+                  and per node (K = 3), plus at most 2 GiB of transitions
+                  between local grids, 8·(K·G)² bytes per step (module
+                  docstring, "Memory").
+    quantiles   : levels in (0, 1) of the predictive quantiles.
+    check_nodes : False (default), True, or an integer G_ref > G. Checks that
+                  the predictive laws are converged in ``gap_nodes``, which
+                  ``GapPosterior.quad_error`` does not cover (a forecast
+                  horizon is a trailing gap; module docstring, "Convergence
+                  diagnostic"). The laws are computed a second time at G_ref
+                  nodes (True: 2G), and ``Forecast.node_check`` compares them
+                  (:class:`NodeCheck`). When they are not converged
+                  (:data:`FORECAST_CHECK_TOL`,
+                  :data:`FORECAST_CHECK_TOL_TAIL`), a WARNING is logged
+                  ("Forecast not stable in gap_nodes: … Increase
+                  gap_nodes."). The returned forecast is the one at G, the
+                  same bit for bit as without the check. The reference is a
+                  separate pass, run after it and without its own quadrature
+                  diagnostic (nor its WARNING). The exact variants are not
+                  recomputed: their laws do not depend on G.
+                  Cost: a whole forecast at 2G costs 1.6–3.6 times the one
+                  at G, mostly for its densities and quantiles. The check's
+                  pass computes only the moments and the node masses: 0.04–
+                  0.64 times the forecast at G (measured: N = 500 with 25
+                  missing rows, h = 24, G = 32–128, K = 2–3, τ = 0.6–0.99,
+                  the default quantiles). It runs once the forecast's chain
+                  is released; its transitions between local grids take 4
+                  times the memory per step, 8·(K·2G)² bytes.
+
+    Returns
+    -------
+    Forecast — see its docstring.
     """
     Y = np.asarray(Y, dtype=float)
     qs = _check_quantiles(quantiles)
@@ -5716,30 +5834,16 @@ def forecast(
         raise ValueError(f"forecast horizon h must be ≥ 1, got {h}.")
     if len(Y) < 1:
         raise ValueError("forecast needs at least one row of Y (it may be NaN).")
-    tail = np.full((h,) + Y.shape[1:], np.nan)
-    Yx = np.concatenate([Y, tail], axis=0)
+    G_ref = _check_nodes_ref(check_nodes, gap_nodes)
+    Yx, miss, ev = _horizon_rows(model, Y, h)
     N = len(Y)
-    miss = missing_mask(Yx)
-    # Missingness factors of the N conditioning rows only: the mask of the h
-    # future rows is unknown, and Σ_m p(m_n | m_{n-1}, x_n) = 1.
-    ev = _inf._evidence(model, miss[:N])
-    if ev is not None:
-        ev = np.concatenate([ev, np.ones((h, model.K))], axis=0)
     d = getattr(model, "d", 1)
     nodes = density = grid_nodes = grid_mass = None
     if needs_grid(model):
         _check_grid_supported(model)
-        grid = reference_grid(model, gap_nodes)
-        chain, alphas, ll, _ = _run_chain(model, Yx, miss, grid, backward=False, ev=ev)
-        K, G = chain.K, chain.G
-        joint = np.array([alphas[N + k].reshape(K, G) for k in range(h)])   # (h, K, G)
-        joint /= joint.sum(axis=(1, 2), keepdims=True)
-        state_probs = joint.sum(axis=2)
-        mass = joint.sum(axis=1)
-        pos = np.arange(N, N + h)
-        mean, sd, qv, density = _grid_laws(chain, alphas, None, pos, mass, qs)
+        (state_probs, mean, sd, qv, density, ll,
+         nodes, grid_nodes, grid_mass) = _grid_forecast(model, Yx, miss, ev, N, h, gap_nodes, qs)
         method = "grid"
-        nodes, grid_nodes, grid_mass = grid.nodes, chain.nodes_at(pos), mass
     else:
         W, f_pdf = _inf._weights(model, Yx, ev)
         a, ll = _inf._forward(model, Yx, W, f_pdf, ev=ev)
@@ -5750,6 +5854,145 @@ def forecast(
         if d == 1:
             nodes = reference_grid(model, gap_nodes).nodes
             density = _mixture_density(model, state_probs, nodes)
-    return Forecast(h=h, state_probs=state_probs, mean=mean, sd=sd, quantiles=qs,
-                    quantile_values=qv, log_lik=float(ll), method=method,
-                    nodes=nodes, density=density, grid_nodes=grid_nodes, grid_mass=grid_mass)
+    fc = Forecast(h=h, state_probs=state_probs, mean=mean, sd=sd, quantiles=qs,
+                  quantile_values=qv, log_lik=float(ll), method=method,
+                  nodes=nodes, density=density, grid_nodes=grid_nodes, grid_mass=grid_mass)
+    if G_ref is not None:
+        # after the forecast, whose chain is gone: a second, separate pass
+        fc.node_check = _node_check(model, Y, h, fc, _resolve_nodes(gap_nodes), G_ref)
+    return fc
+
+
+def _horizon_rows(model: PMCModel, Y: np.ndarray, h: int):
+    """(Yx, miss, ev): Y followed by h missing rows, its mask, and the
+    missingness factors of the N conditioning rows only — the mask of the h
+    future rows is unknown, and Σ_m p(m_n | m_{n-1}, x_n) = 1."""
+    tail = np.full((h,) + Y.shape[1:], np.nan)
+    Yx = np.concatenate([Y, tail], axis=0)
+    N = len(Y)
+    miss = missing_mask(Yx)
+    ev = _inf._evidence(model, miss[:N])
+    if ev is not None:
+        ev = np.concatenate([ev, np.ones((h, model.K))], axis=0)
+    return Yx, miss, ev
+
+
+def _horizon_chain(model: PMCModel, Yx, miss, ev, N: int, h: int, gap_nodes, *, report=True):
+    """(chain, alphas, log p(y_obs), mass (h, G), positions) of the h
+    appended rows: the forward pass on Yx (``report``: :func:`_run_chain`)."""
+    grid = reference_grid(model, gap_nodes)
+    chain, alphas, ll, _ = _run_chain(model, Yx, miss, grid, backward=False, ev=ev, report=report)
+    K, G = chain.K, chain.G
+    joint = np.array([alphas[N + k].reshape(K, G) for k in range(h)])   # (h, K, G)
+    joint /= joint.sum(axis=(1, 2), keepdims=True)
+    return chain, alphas, ll, joint, np.arange(N, N + h)
+
+
+def _grid_forecast(model: PMCModel, Yx, miss, ev, N: int, h: int, gap_nodes, qs):
+    """The laws of :func:`forecast` for the grid variants."""
+    chain, alphas, ll, joint, pos = _horizon_chain(model, Yx, miss, ev, N, h, gap_nodes)
+    state_probs = joint.sum(axis=2)
+    mass = joint.sum(axis=1)
+    mean, sd, qv, density = _grid_laws(chain, alphas, None, pos, mass, qs)
+    return (state_probs, mean, sd, qv, density, ll,
+            chain.grid.nodes, chain.nodes_at(pos), mass)
+
+
+def _check_nodes_ref(check_nodes, gap_nodes) -> int | None:
+    """G_ref of ``forecast(check_nodes=...)``, or None for no check."""
+    if check_nodes is None:
+        return None
+    if isinstance(check_nodes, (bool, np.bool_)):
+        return 2 * _resolve_nodes(gap_nodes) if check_nodes else None
+    if not isinstance(check_nodes, (int, np.integer)):
+        raise TypeError(f"check_nodes must be a bool or an integer, got {check_nodes!r}.")
+    G, G_ref = _resolve_nodes(gap_nodes), int(check_nodes)
+    if G_ref <= G:
+        raise ValueError(
+            f"check_nodes must be True or an integer > gap_nodes = {G}, got {G_ref}.")
+    return G_ref
+
+
+def _node_law_quantiles(nodes: np.ndarray, mass: np.ndarray, levels) -> np.ndarray:
+    """(P, L) quantiles of the node law of each row: the inverse of its CDF
+    linear between the cell edges (the midpoints of the sorted nodes, the
+    outer cells as wide as their inner halves) — ``node_law_quantiles`` of
+    the forecasting study (``report/forecasting/fc_common.py``)."""
+    nodes = np.asarray(nodes, dtype=float)
+    mass = np.asarray(mass, dtype=float)
+    out = np.empty((nodes.shape[0], len(levels)))
+    for k in range(nodes.shape[0]):
+        o = np.argsort(nodes[k])
+        x, m = nodes[k][o], np.clip(mass[k][o], 0.0, None)
+        b = np.r_[x[0] - 0.5 * (x[1] - x[0]), 0.5 * (x[1:] + x[:-1]), x[-1] + 0.5 * (x[-1] - x[-2])]
+        F = np.r_[0.0, np.cumsum(m / m.sum())]
+        out[k] = np.interp(levels, F, b)
+    return out
+
+
+def _check_scale(model: PMCModel, Y: np.ndarray, G: int) -> tuple[float, str]:
+    """(scale, what) of the collapse test of the node check: the sd of the
+    observed values of Y, or of the reference law g_ref (its G-node
+    quadrature) when Y has fewer than two distinct observed values."""
+    y = Y[np.isfinite(Y)]
+    sd = float(np.std(y)) if y.size >= 2 else 0.0
+    if math.isfinite(sd) and sd > 0.0:
+        return sd, "the observed values"
+    ref = reference_grid(model, G)
+    w = ref.w / ref.w.sum()
+    m = float(w @ ref.nodes)
+    return float(np.sqrt(max(float(w @ (ref.nodes - m) ** 2), 0.0))), "the reference law"
+
+
+def _node_check(model: PMCModel, Y: np.ndarray, h: int, fc: Forecast, G: int,
+                G_ref: int) -> NodeCheck:
+    """:class:`NodeCheck` of the forecast ``fc`` at G against G_ref nodes, and
+    its WARNING when not converged."""
+    if fc.method != "grid":
+        return NodeCheck(gap_nodes=G, gap_nodes_ref=G_ref, mean_sd=0.0, tails=0.0,
+                         converged=True)
+    Yx, miss, ev = _horizon_rows(model, Y, h)
+    chain, _, _, joint, pos = _horizon_chain(model, Yx, miss, ev, len(Y), h, G_ref,
+                                             report=False)
+    grids = [chain.grids[int(n)] for n in pos]
+    nodes = chain.nodes_at(pos)
+    del chain
+    mass = joint.sum(axis=1)
+    # the moments of forecast(gap_nodes=G_ref), bit for bit (_grid_laws)
+    mean_r, sd_r, _ = _grid_summary(mass, nodes, (), None, grids, None)
+    scale, of = _check_scale(model, Y, G)
+    floor = _CHECK_COLLAPSE * scale
+    sd_min, sd_min_r = float(np.min(fc.sd)), float(np.min(sd_r))
+    collapsed = not (sd_min >= floor and sd_min_r >= floor and sd_min_r > 0.0)
+    if collapsed:
+        d_mean = d_sd = tails = math.inf
+    else:
+        d_mean = float(np.max(np.abs(fc.mean - mean_r) / sd_r))
+        d_sd = float(np.max(np.abs(fc.sd - sd_r) / sd_r))
+        qa = _node_law_quantiles(fc.grid_nodes, fc.grid_mass, _CHECK_LEVELS)
+        qb = _node_law_quantiles(nodes, mass, _CHECK_LEVELS)
+        tails = float(np.max(np.abs(qa - qb) / sd_r[:, None]))
+    mean_sd = float(np.max([d_mean, d_sd]))
+    converged = bool(mean_sd <= FORECAST_CHECK_TOL and tails <= FORECAST_CHECK_TOL_TAIL)
+    # Worded apart from the quad_error WARNING ("Missing-data quadrature not
+    # converged: relative error X > Y … (N missing rows, gap_nodes = G)"),
+    # which the studies parse (report/forecasting/fc_common.py,
+    # report/erroneous_data/intel_lab/il_common.py).
+    if not converged and collapsed:
+        logger.warning(
+            "Forecast not stable in gap_nodes: a predictive sd collapses (smallest %.1e at "
+            "gap_nodes = %d and %.1e at %d, for a floor of %g times %.3g, the sd of %s); the "
+            "node check is inf. The forecast at gap_nodes = %d is returned. Increase gap_nodes.",
+            sd_min, G, sd_min_r, G_ref, _CHECK_COLLAPSE, scale, of, G,
+        )
+    elif not converged:
+        logger.warning(
+            "Forecast not stable in gap_nodes: from gap_nodes = %d to %d the predictive means "
+            "move by up to %.1e, the sds by %.1e and the node-law 2.5 / 97.5 %% quantiles by "
+            "%.1e predictive sd (tolerances %g, %g and %g). The forecast at gap_nodes = %d is "
+            "returned. Increase gap_nodes.",
+            G, G_ref, d_mean, d_sd, tails, FORECAST_CHECK_TOL, FORECAST_CHECK_TOL,
+            FORECAST_CHECK_TOL_TAIL, G,
+        )
+    return NodeCheck(gap_nodes=G, gap_nodes_ref=G_ref, mean_sd=mean_sd, tails=tails,
+                     converged=converged)

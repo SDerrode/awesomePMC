@@ -798,6 +798,9 @@ print(metrics.error_rate_split(X, X_hat, mask))  # error on missing / observed p
   ([`test_gaps_references.py`](https://github.com/SDerrode/awesomePMC/blob/main/pmcprg/tests/test_gaps_references.py)).
 * A forecast is a trailing gap; `forecast` returns the state probabilities and
   the predictive law of the observation k = 1, …, h steps ahead.
+  `forecast(..., check_nodes=True)` recomputes it at 2·`gap_nodes` and warns
+  when the predictive means, sds or tails move (`fc.node_check`); the
+  quadrature diagnostic `quad_error` covers the observed-data likelihood only.
 * **Estimation**: `ice`, `sem` (and `pmc estimate`, which prints the number of
   missing values) estimate from the observed data; `trace.log_liks` is
   log p(y_obs). SEM draws the states and the missing values jointly at each

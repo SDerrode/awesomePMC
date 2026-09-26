@@ -55,6 +55,8 @@ before inference.
 
 ::: pmcprg.pmc.Forecast
 
+::: pmcprg.pmc.NodeCheck
+
 ## Non-ignorable missingness mechanisms
 
 The `[missingness]` block of a model's TOML file: the missingness mask
