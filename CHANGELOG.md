@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.5.0] - 2026-09-26
+
+### Highlights
+
+- **Erroneous data (new).** `predictive_pit`, `flag_outliers` (per-row α or
+  Benjamini–Hochberg, sequential innovation gating), `pit_checks` and
+  `robust_estimate` (flag-and-mask ICE/SEM). An empty state no longer gives
+  NaN in the one-step PIT.
+- **The gap quadrature, reworked.** Missing values under strong serial
+  dependence (local grids placed from the forward filter and the backward
+  message), leading gaps, long runs of missing rows (moment-matched steps:
+  they now converge in `gap_nodes`), and the quantiles of `forecast` /
+  `impute`. Its memory is bounded (a G = 256 pass on a 47 000-row gappy
+  series: 21–23 GB → 2.7 GB, bit for bit the same results). The price is
+  time: on long gappy series a pass costs several times what 1.4.0's
+  (inaccurate) quadrature did — an ICE fit of the Intel Lab robust study
+  went from about 26 s to several minutes — although P7 recovered 3–10× of
+  it; each entry below gives its measurements.
+- **Diagnostics you can read.** `GapPosterior.quad_error` estimates the
+  error of log p(y_obs) in nats (on exact Gaussian references it tracks the
+  true error; a trailing gap counts 0). `forecast(check_nodes=True)` checks
+  the predictive law itself by recomputing it at 2·`gap_nodes`
+  (`Forecast.node_check`, a WARNING when it moves).
+- **Two real-data studies** in `report/`: erroneous readings on Intel Lab
+  (gated detection flags the battery failure hours ahead; flag-and-mask
+  estimation breaks down because the failure becomes a state) and
+  forecasting against pmmforecast (the copula PMC wins on regime and spiky
+  data, the Gaussian PMM on smooth data).
+
+### Known issues (to be addressed in 1.5.1)
+
+- **Gated detection at the default G = 64 on failing sensors.** On the Intel
+  Lab detection windows, the sequential (gated) flags at G = 64 differ from
+  those at G = 256 on 74 / 17 / 7 rows (motes 48 / 22 / 47, α = 1e-3), more
+  than before the long-run fix (26 / 1 / 0); the detection lead times are
+  unchanged. Suspected: the kernel-piece rule (`_KERNEL_BROAD`), whose cost
+  at G = 64–128 is documented below. Check such runs with a larger
+  `gap_nodes`.
+- **`quad_error` over-reports on some clean series.** On the Intel Lab clean
+  days it reports 0.06–0.64 nats where G = 64 → 256 moves the
+  log-likelihood by 0.006–0.042 (a WARNING at G = 64 that a larger G does
+  not need). It errs on the safe side.
+- Posteriors inside a long LEADING gap are still coarse (their
+  log-likelihood is exact); `impute` has no `check_nodes` yet (double
+  `gap_nodes` by hand).
+
 ### Added — `forecast(check_nodes=...)`: is the predictive law converged in `gap_nodes`?
 
 - **Why.** `quad_error` estimates the error of log p(y_obs) only: a
