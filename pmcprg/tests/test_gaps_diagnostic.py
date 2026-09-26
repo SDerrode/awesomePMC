@@ -405,3 +405,24 @@ def test_warning_names_the_estimated_error(caplog):
     pat = re.compile(r"relative error ([0-9.eE+-]+) > ([0-9.eE+-]+) .*\((\d+) missing rows, gap_nodes = (\d+)\)")
     got = pat.search(msg[0]) if msg else None
     assert got is not None and got.group(3) == "100" and got.group(4) == "32"
+
+
+def test_local_derivs_survive_an_exactly_singular_system():
+    """Distinct nodes far closer to m than the farthest of the five nearest
+    make the scaled powers underflow and the system exactly singular (the
+    Intel Lab detection run of 2026-09-26 stopped on it, inside a narrow
+    local grid). That row goes to least squares; the other rows keep the
+    numbers they have without it."""
+    y = np.array([[-1.0, 1e-200, 2e-200, 3e-200, 4e-200, 1.0],
+                  [-2.0, -1.0, 0.1, 1.0, 2.0, 3.0]])
+    b = np.array([[0.3, 0.5, 0.6, 0.7, 0.8, 0.2],
+                  [0.1, 0.4, 0.5, 0.45, 0.3, 0.1]])
+    m = np.zeros(2)
+    x = y[0, :5]
+    V = (x / np.max(np.abs(x)))[:, None] ** np.arange(5)[None, :]
+    with pytest.raises(np.linalg.LinAlgError):   # premise: exactly singular
+        np.linalg.solve(V, np.ones(5))
+    h, _ = gaps._local_derivs(y, b, m)
+    assert np.all(np.isfinite(h))
+    alone, _ = gaps._local_derivs(y[1:], b[1:], m[1:])
+    assert np.array_equal(h[1], alone[0])

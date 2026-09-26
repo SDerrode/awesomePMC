@@ -4534,7 +4534,19 @@ def _local_derivs(y: np.ndarray, b: np.ndarray, m: np.ndarray):
         rep_ = ~np.all(np.diff(x, axis=1) > 0.0, axis=1) | ~np.all(np.isfinite(V), axis=(1, 2))
         ok = np.nonzero(~rep_)[0]
         if ok.size:
-            c[ok] = np.linalg.solve(V[ok], v[ok])[:, :, 0]
+            try:
+                c[ok] = np.linalg.solve(V[ok], v[ok])[:, :, 0]
+            except np.linalg.LinAlgError:
+                # distinct nodes whose scaled powers underflow (nodes far closer
+                # to m than the farthest of the five, as in a narrow local grid)
+                # make a system exactly singular: those rows go to least
+                # squares, the others keep their own solve — row by row, the
+                # same numbers as in a batch without a singular system
+                for r in ok:
+                    try:
+                        c[r] = np.linalg.solve(V[r], v[r])[:, 0]
+                    except np.linalg.LinAlgError:
+                        rep_[r] = True
         for r in np.nonzero(rep_)[0]:
             if np.all(np.isfinite(V[r])) and np.all(np.isfinite(v[r])):
                 c[r] = (np.linalg.pinv(V[r]) @ v[r])[:, 0]
