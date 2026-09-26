@@ -455,7 +455,11 @@ def test_diagnostic_is_quiet_when_converged_and_warns_otherwise(caplog, monkeypa
 
 def test_diagnostic_warns_on_a_gap_too_long_for_the_grid(caplog):
     # Measured, ρ = 0.9999, a 100-row gap: log-lik error 0.16 and
-    # quad_error 2.1 at G = 64; 1.6e-4 and < QUAD_WARN at G = 128.
+    # quad_error 2.1 at G = 64; 1.6e-4 and < QUAD_WARN at G = 128. Since the
+    # moment-matched steps of long runs (gaps docstring, "Moment-matched
+    # rows") G = 64 is 0.015 nats off (quad_error 0.015, below QUAD_WARN):
+    # the case too coarse for the grid is now G = 48, 0.075 nats off
+    # (quad_error 0.080); G = 128, 9.1e-5 (quad_error 8.8e-5).
     rho = 0.9999
     m = _ar1_model("PMC-state", rho)
     Y = _ar1(120, rho, 3)
@@ -464,7 +468,7 @@ def test_diagnostic_warns_on_a_gap_too_long_for_the_grid(caplog):
     Yn = np.where(miss, np.nan, Y)
     ll = _ar1_reference(Y, miss, rho)[0]
     with caplog.at_level(logging.WARNING, logger="pmcprg.pmc.gaps"):
-        post = gaps.gap_posterior(m, Yn, gap_nodes=64, xi=False)
+        post = gaps.gap_posterior(m, Yn, gap_nodes=48, xi=False)
     assert post.quad_error > gaps.QUAD_WARN and abs(post.log_lik - ll) > 1e-2
     assert any("not converged" in r.message for r in caplog.records)
     post = gaps.gap_posterior(m, Yn, gap_nodes=128, xi=False)

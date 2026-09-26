@@ -286,6 +286,8 @@ from pmcprg.pmc.gaps import (
     _normalise_blocks,
     _prior_known,
     _run_grids,
+    _tilt_of,
+    _tilt_steps,
     _x_transition,
     missing_mask,
     needs_grid,
@@ -593,19 +595,21 @@ class _Grid:
         self.lw = np.log(grid.omega)
         self.lf, self.F = _margin_eval(model, grid.nodes, log=True)          # (G, K, K)
         self.logT = _log_x_transition(model, self.lf)                        # (G, K, K)
-        self._Q = None
+        self._Q = {}
         self._Qlead = None
         self.model = model
 
-    def Q(self) -> np.ndarray:
-        """log Q[(i, g), (j, g')] — missing → missing, as ``gaps._Chain``."""
-        if self._Q is None:
+    def Q(self, cls: int = -1) -> np.ndarray:
+        """log Q[(i, g), (j, g')] — missing → missing, as ``gaps._Chain``
+        (``cls`` ≥ 0: moment-matched in that distance class, ``gaps._tilt_steps``)."""
+        if cls not in self._Q:
             model, G, K = self.model, self.G, self.model.K
             ker = _kernel_outer(model, self.lf, self.F, self.lf, self.F, log=True)
             Q = ker.transpose(2, 0, 3, 1) + self.lw[None, None, None, :]      # (K, G, K, G)
-            Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True)
-            self._Q = Q.reshape(K * G, K * G)
-        return self._Q
+            Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True,
+                                     tilt=self._tilt(self, cls) if cls >= 0 else None)
+            self._Q[cls] = Q.reshape(K * G, K * G)
+        return self._Q[cls]
 
     def lead_to(self, other: "_Grid") -> np.ndarray:
         """log Q inside a leading gap of known prior (``gaps._lead_transition``)."""
@@ -615,15 +619,26 @@ class _Grid:
             return self._Qlead
         return _lead_transition(self.model, self.grid, other.grid, log=True)[0]
 
-    def Q_to(self, other: "_Grid") -> np.ndarray:
+    def Q_to(self, other: "_Grid", cls: int = -1) -> np.ndarray:
         """log Q from the nodes of this grid to those of ``other``, as ``gaps._Chain``."""
         if other is self and not self.grid.local:
-            return self.Q()
+            return self.Q(cls)
         model, G, K = self.model, self.G, self.model.K
         ker = _kernel_outer(model, self.lf, self.F, other.lf, other.F, log=True)
         Q = ker.transpose(2, 0, 3, 1) + other.lw[None, None, None, :]         # (K, G, K, G)
-        Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True)
+        Q, _ = _normalise_blocks(Q, self.logT.transpose(1, 0, 2), log=True,
+                                 tilt=self._tilt(other, cls) if cls >= 0 else None)
         return Q.reshape(K * G, K * G)
+
+    def _tilt(self, other: "_Grid", cls: int):
+        """The moment tilt of the blocks (i, g → j, ·) into ``other`` (``gaps._Chain``)."""
+        F, nodes = self.F, other.grid.nodes
+
+        def split(idx):
+            return idx[0], idx[2], F[idx[1], idx[0], idx[2]]
+
+        return _tilt_of(self.model, split, lambda idx: np.broadcast_to(nodes, (idx[0].size, nodes.size)),
+                        cls)
 
 
 def _take(F, idx):
@@ -657,6 +672,8 @@ class _Filter:
         ev = _inf._evidence(model, miss)
         with np.errstate(divide="ignore"):
             self.lev = None if ev is None else np.log(ev)
+        # the missing → missing steps that the batch pass moment-matches
+        self.tclass = _tilt_steps(miss)
         self._grid = None
         self._pre = None                 # grids of the runs of missing rows (_grid_at)
         self._reset_grids()
@@ -831,7 +848,8 @@ class _Filter:
         self._cur = g
         G = g.G
         if aug:
-            T = prev.lead_to(g) if (self._lead and self._lead_mode) else prev.Q_to(g)
+            T = (prev.lead_to(g) if (self._lead and self._lead_mode)
+                 else prev.Q_to(g, int(self.tclass[n - 1])))
             return T + self._ev(n, True), True
         rep = np.zeros(G, dtype=int) + (n - 1)
         ker = _log_kernel(self.model, self.lf[rep], _take(self.Fc, rep), g.lf, g.F)  # (G, K, K)

@@ -9,6 +9,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — gap quadrature: long runs of missing rows converge in G, and `quad_error` estimates the error in nats (library problem 4)
+
+- **What was wrong (long runs).** Inside a long run of missing rows the
+  one-step kernels are narrower than the node spacing of the grid, which
+  must cover the law of y after many steps. The renormalised
+  (Tauchen–Hussey) rows of such a kernel keep a node's mass on it (no
+  diffusion, no mean reversion) or move it to the nearest node of another
+  grid, and which grid a position takes flips with G. A Gaussian AR(1) at
+  ρ = 0.9999 with a 1 000-row gap: the forward sd stuck at 0.223 from step
+  100 to step 500 (exact 0.141 → 0.308), the posterior sd of the missing
+  values 0.008 for 0.13–0.22, the log-likelihood 2.7 nats off at G = 64.
+  Intel mote 47 with rows 1500–3499 removed: 3306.306 / 3306.058 /
+  3303.385 nats at G = 64 / 128 / 256, the change growing with G; at
+  G = 256 a kernel test piece at the centre of a broad (switched)
+  Gaussian-sum component made the reference grid win at the last 524
+  positions of that gap, a grid that misses the exit kernel.
+- **What changed (long runs).** In the missing → missing steps of runs of
+  at least 32 rows, a block whose one-step law the nodes do not resolve
+  (raw mass off by more than 1e-3, sd below the node spacing) is replaced
+  by the discrete law closest to it with the exact conditional mean and
+  variance (maximum entropy, Tanaka & Toda 2013, Farmer & Toda 2017; the
+  three-node stencil of Kushner & Dupuis for a law on one node; the mean
+  alone where the variance cannot be reached). The exact moments come from
+  a Gauss–Hermite rule through the copula's h-inverse, tabulated once per
+  model. Rows next to the exit (where the backward message is the narrow
+  exit kernel) and rows from an observed row keep their renormalised
+  blocks. Gaussian-sum components broader than G / 16 of their kernel
+  scales give no kernel test piece (`gaps` docstring, "Moment-matched
+  rows"). The PIT filter of `pmcprg.pmc.outliers` takes the same
+  transitions.
+- **What was wrong (`quad_error`).** It summed, over every step, the capped
+  relative errors of the raw block masses, weighted by the posterior: about
+  1 per row wherever the kernels are narrower than the nodes, whatever the
+  error. Trailing rows appended to mote 47's clean window: 0.93–0.96 per
+  row (55.7 without them, 1 982 with 2 000; a trailing gap adds exactly 0
+  to the log-likelihood); a 5 000-row trailing AR(1) gap, 4 900 at G = 64;
+  the Intel robust window, 4 533 for its 4 656-row trailing gap; the
+  mote-48 window after the clean days, 5 015 on two network outages the
+  gated passes cross within 0.1–2.4 nats. On 262 calibration passes
+  (below) it was 30 times the error (median; 1.6–264 for 10–90 %), with 36
+  false alarms.
+- **What changed (`quad_error`).** It estimates the error of each run's
+  log-likelihood factor from the local errors of the steps into its
+  positions: each block's row against the exact one-step law, both applied
+  to the local quartic of the backward message (the moments of the row
+  against the exact ones), or, where the law is wider than two node
+  spacings or the backward message steep across it, the block's
+  renormalisation factor times the variation of the backward message over
+  it; signed sum per run, |log(1 + S)|. A trailing gap contributes 0. The
+  leading-gap terms (exit integral; the posterior inside the gap) are
+  unchanged. `QUAD_WARN` stays 0.05 nats and the WARNING keeps the form
+  the studies parse ("relative error X > Y … (N missing rows, gap_nodes =
+  G)") (`gaps` docstring, "Convergence diagnostic").
+- **Measured** (exact references, `report/out/quadfix`, not versioned;
+  |log-likelihood error of the gap| at G = 64 / 128 / 256, before → now):
+  - Gaussian AR(1), ρ = 0.9999, interior gaps of 100 / 1 000 / 5 000 rows:
+    0.24 / 1.0e-4 / 2e-12 → 1.2e-2 / 9.7e-5 / 2e-12; 2.7 / 2.8e-2 / 0.19 →
+    0.12 / 1.1e-3 / 3.8e-4; 1.6 / 0.44 / 6.1e-2 → 3.6e-3 / 7.5e-4 / 5.1e-5.
+    `quad_error` on the 5 000-row gap 4 700 / 3 100 / 120 → 3.2e-3 /
+    6.8e-4 / 4.5e-5. Trailing gaps: exact as before, `quad_error` below
+    1e-14 (was up to 4 900); their laws (the forecasts) now right: sds up
+    to 12 % / 32 % off at G = 64 / 128 → 8 % / 1.6 %.
+  - Switch model with mote 47's structure, 2 000-row gap: 0.18 / 0.56 /
+    1.6 → 0.13 / 1.4e-3 / 6.6e-5. Mote 47, rows 1500–3499 removed:
+    3305.553 / 3305.581 / 3305.581 nats (3305.582 at G = 512).
+  - Regime AR(1) with states of different means or scales converge
+    monotonically now but are not always below the old value at one G:
+    500-row gap at ρ = 0.9999, 0.16 / 0.79 / 3.9e-2 → 1.5 / 0.27 / 4.5e-4;
+    2 000-row gap at ρ = 0.999, 9.1e-2 / 3.9e-6 / 7e-7 → 1.3e-2 / 1.3e-3 /
+    1.2e-6. Of the 286 calibration passes, 57 improve and 6 get worse by
+    more than 1.5 times (3 of them at G = 32).
+  - Diagnostic, 286 passes (AR(1), regime AR(1), switch model, pair-margin
+    brute force; G = 32–256), leading gaps aside: 63 passes off by more
+    than 0.05 nats, 62 warn; 2 false alarms (both 0.01–0.05 nats off); the
+    report 0.94 times the error (median; 0.36–1.8 for 10–90 %). The
+    leading-gap check is unchanged: it misses 4 short leading gaps of the
+    regime models off by 0.05–0.12 nats at G = 32–64, and reports the
+    posterior inside long leading gaps, which the prior's transitions keep
+    sticky (a 1 000-row gap at ρ = 0.9999: sds 24–41 % off at G = 64–128,
+    `quad_error` 9–17, the log-likelihood exact).
+  - Intel mote 48, the window after the clean days (73 906 rows, 41 068
+    missing, non-gated pass): `quad_error` at G = 64, 28 530 → 2 980 — the
+    two network outages 5 015 → 2.3 (0.08 at G = 128), the 1 253 runs next
+    to readings above 40 °C 23 260 → 2 946 (their runs at the floor,
+    |log 0.01|: the pass is not converged there, 25 060 nats between G = 64
+    and 128), the other 3 723 runs 252 → 32.
+- **Cost** (best of 3, G = 64). Intel mote 48, days 1–7 (no run of 32
+  rows): `gap_posterior` 2.29 → 2.62 s (+14 %, the diagnostic),
+  `predictive_pit` unchanged (4.5 s). Runs of 32 rows and more pay for the
+  tilt, about 4 ms per step between local grids: mote 47's clean window
+  after day 7 (a 145-row gap at its end) 1.10 → 2.53 s; an AR(1) with a
+  100-row gap 0.37 → 0.65 s; mote 48 after its clean days (73 906 rows,
+  41 068 missing) 107 → 168–188 s, peak footprint 2.13 → 2.23 GB. Weak
+  dependence: unchanged.
+- **Kernel-piece rule, the price.** On regime AR(1) models whose states
+  differ in mean or scale it costs accuracy at G = 64–128 (500-row gap at
+  ρ = 0.9999: 0.37 with the tilt alone, 1.5 with both; 2 000-row gap at
+  ρ = 0.999, G = 128: 9e-5 → 1.3e-3), while the switch model needs it (its
+  2 000-row gap at G = 256: 1.7 nats off with the tilt alone). The results
+  converge monotonically in G there, and `quad_error` reports them (0.8,
+  1.4e-3).
+- **Studies, not rerun.** Intel Lab: `quad_error` and the WARNING counts
+  of the passes over long runs and trailing gaps fall by orders of
+  magnitude (the robust window's 4 533 → 0 for its trailing gap); the
+  log-likelihoods and the flags that involve runs of 32 rows or more
+  (outages, masked failure blocks, gated runs of the PIT filter) move, and
+  G = 64 results can move through the kernel-piece rule on shorter runs.
+  Forecasting: `quad_ratio` no longer counts the forecast horizon (a
+  trailing gap); horizons beyond ~16 steps at G = 64 can move through the
+  kernel-piece rule (runs under 32 rows are not tilted).
+- **Tests.** `test_gaps_diagnostic.py` (12 tests, 21 cases): a trailing gap
+  → 0 (with state missingness too); the diagnostic within a factor of 4
+  of the error of the run on Gaussian AR(1) references (G = 32–128, gaps of
+  20–500 rows), quiet on a resolved kernel, within 2 on a pair-margin
+  bridge; a 500-row AR(1) gap and a 300-row gap of the switch model
+  converge in G (exact references); batch and filter equal; short runs bit
+  for bit; the tilt; the kernel moments. `test_gaps_local_grids.py::
+  test_diagnostic_warns_on_a_gap_too_long_for_the_grid` moves from G = 64
+  to G = 48 (a property test: G = 64 is now 0.015 nats off, below the
+  threshold; G = 48, 0.075 and warns). No frozen reference value changed.
+
 ### Fixed — memory of the gap quadrature: bounded, with bit-for-bit the same results
 
 - **Why.** Long gappy series made the gap quadrature use a great deal of

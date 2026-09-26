@@ -215,7 +215,9 @@ laws the reference grid does not resolve gets its own grid instead:
 * **Selection.** A position keeps the reference grid unless a piece of weight
   ≥ 1e-4 has fewer than 4 reference nodes within one scale, the reference
   grid misintegrates the pieces and the transition kernels into the position
-  (their mass and second moment, :func:`_proposal_error`) by more than 1e-6,
+  (their mass and second moment, :func:`_proposal_error`; no kernel from a
+  piece broader than G / 16 of its kernel scales, "Moment-matched rows") by
+  more than 1e-6,
   and the local grid's total error — that proxy plus its error on the
   integrals known in closed form next to an observed row
   (:func:`_neighbour_error`: the entry masses T_ij(y_{a−1}), the exit masses
@@ -390,52 +392,185 @@ by 0.11). Otherwise (asymmetric p with pair margins, state-dependent
 missingness with pair margins) and on reference grids alone the rows of an
 interior gap are kept (bit for bit the results of the reference grid).
 
+Moment-matched rows
+-------------------
+Inside a long run of missing rows the law of y spreads over many one-step
+kernels (its sd grows as √k after k steps of an AR(1)), and the grid that
+covers it spaces its nodes wider than one kernel. A renormalised row
+(Tauchen–Hussey) of a kernel narrower than the node spacing puts its mass on
+the one or two nodes nearest its mean: the chain is *sticky*. Between two
+identical grids a node's mass stays on it — the law neither diffuses nor
+reverts to the mean — and between different grids it is moved to the nearest
+nodes. The error grows with the number of steps, and which grid a position
+takes flips with G, so that the result does not converge in G. Gaussian AR(1)
+at ρ = 0.9999, a 1000-row interior gap, G = 64 (839 consecutive positions on
+the reference grid): the forward sd stays 0.223 from step 100 to step 500,
+where the exact one grows from 0.141 to 0.308; the posterior sd of the
+missing values is 0.008 where it is 0.13–0.22; the log-likelihood is 2.7 nats
+off (2.8e-2 at G = 128). Intel mote 47 with its rows 1500–3499 removed
+(``report/erroneous_data/intel_lab``, the clean window after day 7):
+3306.306 / 3306.058 / 3303.385 nats at G = 64 / 128 / 256, the change growing
+with G.
+
+* **Tilt.** In the missing → missing steps of a run of at least _TILT_RUN =
+  32 rows, a block whose raw mass is off its exact value by more than
+  _TILT_GATE = 1e-3 and whose one-step law is narrower than the node spacing
+  around its mean (and lies inside the grid) is replaced by the discrete law
+  closest to it with the exact conditional mean and variance: maximum
+  entropy relative to the renormalised row, p_g ∝ exp(LB_g + λ₁x_g + λ₂x_g²)
+  (Tanaka & Toda 2013; Farmer & Toda 2017; :func:`_moment_tilt`). A block
+  that sits on one node takes the limit of that law, the three nodes around
+  its mean with the exact mean and variance (the stencil of a Markov chain
+  approximation of a diffusion, Kushner & Dupuis 2001); where the variance
+  cannot be reached (a law narrower than the spacing, centred between two
+  nodes), the mean alone. The chain then diffuses and reverts at the exact
+  rate, whatever the node spacing. The exact moments are those of the law
+  y' = F_ji⁻¹(h_ij⁻¹(Φ(z) | F_ij(y))), a Gauss–Hermite rule in z tabulated
+  once per model and pair of states in the source's normal score
+  (:class:`_KernelMoments`; 2e-6 sd on the mean for the Gaussian, Clayton,
+  Gumbel and Frank copulas).
+* **Where not.** Next to the exit the backward message is the exit kernel,
+  as narrow as one step: a row is tilted only where it is smooth at the node
+  spacing, sd √k ≥ the spacing, k the steps to the next observed row (a
+  trailing gap: everywhere). Rows from an observed row are never tilted: the
+  renormalised block keeps the kernel's exact values at the nodes, which a
+  bridge far into the kernel's tail needs (tilted, the pair-margin bridge of
+  ``test_gaps_diagnostic.py`` was 1.2 nats off, 0.04 without). Short runs,
+  resolved kernels (weak dependence, or the rows the grid resolves to 1e-3)
+  and models without a copula are not tilted. The reference-grid transition
+  is shared by the positions of one distance class, k in [2^c, 2^(c+1))
+  (:func:`_tilt_steps`).
+* **Kernel test pieces.** A run's local grids are also judged on the
+  one-step kernels of its Gaussian-sum components (:func:`_gap_proposals`).
+  A component broader than G / _KERNEL_BROAD = G / 16 of its kernel scales
+  no longer gives one (runs with an observed left neighbour; leading gaps
+  unchanged): the grid built for that component cannot resolve that kernel
+  anyway, and the test piece at its centre, far from the posterior, chose the
+  reference grid for the last 524 positions of mote 47's 2000-row gap at G =
+  256, a grid that misses the exit kernel. The rule also reaches runs of
+  fewer than 32 rows (at G = 64, a piece broader than 4 kernel scales: some
+  16 steps of an AR(1), or a switch of state): Intel mote 48, days 1–7 (no
+  run longer than 17 rows), +3.4e-4 nats at G = 64 (1.9e-4 from the value
+  at G = 256, 1.4e-4 before); G = 128 and 256 unchanged bit for bit.
+* **Measured** (exact references; ``report/out/quadfix``, not versioned):
+  |error of the gap's log-likelihood factor| at G = 64 / 128 / 256, before →
+  now. Gaussian AR(1) at ρ = 0.9999, interior gaps of 100, 1 000 and 5 000
+  rows: 0.24 / 1.0e-4 / 2e-12 → 1.2e-2 / 9.7e-5 / 2e-12; 2.7 / 2.8e-2 /
+  0.19 → 0.12 / 1.1e-3 / 3.8e-4; 1.6 / 0.44 / 6.1e-2 → 3.6e-3 / 7.5e-4 /
+  5.1e-5. At ρ = 0.999, 5 000 rows, 0.24 / 9.3e-4 / 2.3e-6 → 3.4e-4 /
+  5.6e-4 / 1.3e-6 (1 000 rows, 0.32 / 2.6e-4 / 7e-7 → 9.1e-4 / 6.9e-4 /
+  1e-6). The switch model of ``test_gaps_diagnostic.py`` (mote 47's
+  structure), 500- and 2000-row gaps: 1.2 / 7.7e-2 / 5.5e-4 → 0.55 / 1.5e-3
+  / 1.2e-3 and 0.18 / 0.56 / 1.6 → 0.13 / 1.4e-3 / 6.6e-5. Intel mote 47,
+  rows 1500–3499 removed: 3306.306 / 3306.058 / 3303.385 → 3305.553 /
+  3305.581 / 3305.581 nats (3305.582 at G = 512). The regime AR(1) of
+  ``test_gaps_leading.py``, whose states differ in mean or scale (a switch
+  is a narrow kernel displaced by whole margins), converge monotonically
+  now, but not always from below the old values at one G: 500-row gaps at
+  ρ = 0.9999, 0.16 / 0.79 / 3.9e-2 → 1.5 / 0.27 / 4.5e-4 (means 0 and 1)
+  and 0.84 / 0.19 / 4.7e-2 → 0.91 / 0.23 / 1.6e-2 (scales 1 and 2); a
+  2000-row gap at ρ = 0.999, 9.1e-2 / 3.9e-6 / 7e-7 → 1.3e-2 / 1.3e-3 /
+  1.2e-6. The kernel-piece rule costs these at G = 64–128 (with the tilt
+  alone, 0.37 / 0.24 / 5.4e-4 and 2.5e-2 / 9.0e-5 / 1.2e-6), and the switch
+  model needs both (2000-row gap: tilt alone −0.27 / 7.2e-2 / −1.7, rule
+  alone 0.92 / 0.11 / 1.2e-2). Trailing gaps keep log C = 0 and their laws
+  are now right: a 1 000-row trailing gap at ρ = 0.9999 (the forecasts) had
+  sds up to 12 % / 32 % off at G = 64 / 128 (0.29 for 0.43 at the last
+  row), now 8 % / 1.6 %. Leading gaps are carried by the prior's
+  transitions, which are not tilted: their log-likelihood is exact as
+  before, but the posterior inside a long one is still that of the
+  renormalised rows — a 1 000-row leading gap at ρ = 0.9999, sds up to
+  24–41 % off at G = 64–128 and 9 % at 256, which ``quad_error`` reports
+  (9–17 and 0.45).
+* **Cost** (best of 3, one process, G = 64): Intel mote 48, days 1–7 (no run
+  of 32 rows), ``gap_posterior`` 2.29 → 2.62 s (+14 %: the local errors of
+  the diagnostic), ``predictive_pit`` 4.48 → 4.42 s; mote 47's clean window
+  after day 7, which ends in a 145-row gap between local grids, 1.10 →
+  2.53 s (the tilted steps, about 4 ms each); an AR(1) at ρ = 0.9999 with
+  a 100-row gap, 0.37 → 0.65 s; τ = 0.6 with 10 % single gaps, 0.05 →
+  0.06 s. Mote 48 after its clean days (73 906 rows, 41 068 missing), 107
+  → 168–188 s (two runs), of which 31 s in the tilt and 25 s in the local
+  errors of the diagnostic; peak footprint 2.13 → 2.23 GB.
+
 Convergence diagnostic
 ----------------------
-:func:`_quadrature_report` checks, after each pass, integrals every grid must
-reproduce and whose exact values are known, and sums them over the runs of
-missing rows (``GapPosterior.quad_error``; ``per_run=True`` returns the
-parts):
+:func:`_quadrature_report` estimates, after each pass, the error of the
+log-likelihood factor of every run of missing rows and sums its absolute
+value over the runs (``GapPosterior.quad_error``, in nats; ``per_run=True``
+returns the parts). The factor of a run is the forward message carried
+through the transitions of its steps onto the backward message; to first
+order its relative error is a sum over those steps of their *local* errors —
+the discrete transition against the exact one-step law, both applied to the
+backward message β̂ that follows — weighted by the posterior through them
+(:func:`_block_parts`). At every block (i, y → j, ·) whose raw mass is off
+its exact value by more than _REPORT_GATE = 1e-6 (the others resolve their
+law to that order) and whose posterior weight is above 1e-12 of the step's:
 
-* the raw block masses before the renormalisation, weighted by the posterior
-  mass through them (rows from the background panels of a local grid, which
-  carry a broad law, left out), and the exit masses of the local grids,
-  weighted by the posterior of the exit transition (until this version by
-  their prior masses: with the filter-weighted proposals that reported
-  0.07–0.50 on regime-AR(1) passes 5e-6–4e-5 nats off);
-* inside a leading gap, the reverse masses of the prior's transitions, at
-  the destinations of the core panels, weighted by the posterior and scaled
-  by 0.02 (the column rescaling makes each reverse mass exact, so a relative
-  error r moves the posterior inside the gap by at most 0.02 r, measured).
-  Until this version the rows of a leading gap were not checked at all: a
-  leading gap off by 22 nats reported 3e-5.
+* where the law is at most _TAYLOR_WIDTH = 2 node spacings wide and β̂_n(j,
+  ·) changes by less than e² across its sd: the central moments of the row
+  about the exact mean m against the exact ones (:class:`_KernelMoments`),
+  on the quartic of β̂ through the five nodes nearest m — Σ_{k=1..4}
+  h⁽ᵏ⁾(m)(μ̂_k − μ_k) / k!, relative to the row applied to β̂. A
+  moment-matched row adds only its third- and fourth-moment terms;
+* elsewhere (a law the nodes resolve, or a y pinned by the next reading far
+  in the kernel's tail): the row holds the kernel's values at the nodes
+  rescaled by exact mass / raw mass, and that factor minus 1 (within ±1) is
+  its error as far as β̂ varies over it, Σ_g p_g |β̂_g − β̄| / β̄. In a
+  trailing gap β̂ is constant within each state: 0 (the renormalised blocks
+  make its factor exactly 1, log C = 0).
 
-Each block's relative error is capped at 1: a rescaled block carries its
-posterior weight whatever its raw mass (uncapped, the k-means start of an
-Intel ICE reported 590 for a pass off by 6.7 nats; 27 now, for 4.2). The
-cap does not remove a false alarm of that start: a state 8 sds from y,
-where Φ rounds to 1 so that the copula term is constant, has raw block
-masses 32 times the exact ones, which the renormalisation makes exact — 22
-of the 27, and 22 at G = 256 for a pass 0.056 nats off. The sum
-estimates Σ_runs |error of the run's log-likelihood factor| in nats, to
-within a factor of about 15 on the references below (that start aside). A
-WARNING ("Missing-data quadrature not converged … increase gap_nodes") is
-logged above ``QUAD_WARN`` = 0.05, whatever the number of runs
-(:func:`quad_warn_limit`; it was 1e-3 · √R, R the number of runs). It is a
-screen, not an error bound.
+The terms of a run are summed with their signs, S, and its part is |log(1 +
+S)| (S floored at −0.99). A missing y_1 adds the capped relative errors of
+the prior's raw masses (the stationary law, which its grid resolves). A
+leading gap carried by the prior's transitions ("Leading gaps": log C = 0
+inside it) adds the relative error of its exit integral against the closed
+form, weighted by the posterior through the exit, and — for the posterior
+inside the gap, not for its factor — the reverse masses of the prior's
+transitions against their exact values, weighted by the posterior and
+scaled by _LEAD_SCALE = 0.02 (a relative error r moves the posterior inside
+the gap by at most 0.02 r, measured; unchanged by this version, see below).
 
-Calibration: 67 passes, a pass "off" when the sum of |per-run
-log-likelihood errors| exceeds 0.01 nats — against the exact references of
-``test_gaps_leading.py`` (18 regime-AR(1) series at G = 64 and 128,
-9 leading gaps of the reproduction at G = 64 and 256) and the G = 512–1024
-references of the Intel Lab windows (10 passes of the step-1 fits at G =
-64–512, 3 of ICE iterates). Off: 11, of which 3 missed (0.010–0.015 nats
-off, reports 0.015–0.030). Not off: 56, no false alarm. The report is 0.8–3
-times the error on the regime-AR(1) passes off by more than 1e-3, 2–15
-times on the Intel ones (860 on the k-means start of ICE at G = 256, a pass
-0.027 nats off: the state 8 sds from y above). Before the filter-weighted
-proposals and this exit weighting (67 passes of that code): 25 off, 5
-missed, 2 false alarms.
+Until this version the diagnostic summed, over every step, the capped
+absolute relative errors of the raw block masses weighted by the posterior,
+and the exit masses of the local grids. A block renormalised to its exact
+mass counted its raw error even where the renormalisation makes the step
+exact: about 1 per row wherever the kernels are narrower than the nodes
+(Intel Lab: 4 533 for a trailing gap of 4 656 rows, which contributes
+exactly 0; 5 015 for two network outages the gated passes cross within
+0.1–2.4 nats; 55.7 on mote 47's clean window at G = 64, whose
+log-likelihood moves by 7e-4 nats to G = 128, and 0.93–0.96 more per row
+appended to it as a trailing gap).
+
+A WARNING ("Missing-data quadrature not converged … increase gap_nodes") is
+logged above ``QUAD_WARN`` = 0.05 nats, whatever the number of runs
+(:func:`quad_warn_limit`). It is a screen, not an error bound.
+
+Calibration (``report/out/quadfix``, not versioned): 286 passes against exact
+references, G = 32–256 — Gaussian AR(1) at ρ = 0.999, 0.9999, 0.99999 with
+interior gaps of 20, 100 and 500 rows, a 100-row leading gap, a 300-row
+trailing gap and runs of 1–5 rows (two series each); the regime AR(1) of
+``test_gaps_leading.py`` (two models, ρ = 0.99–0.9999, runs of 1–6 rows, and
+runs of 30 and 150 rows with a 100-row trailing gap); the switch model of
+``test_gaps_diagnostic.py`` (runs of 1–25 and 100 rows, and a 500-row gap);
+the ten pair-margin brute-force cases of ``test_gaps_local_grids.py`` (G =
+32–128). Leaving the leading gaps aside (262 passes): 63 passes are off by
+more than 0.05 nats and 62 warn (the one missed: the pair-margin case with
+leading and trailing gaps at G = 32, 3.3 nats off, reporting 7e-8 — 1.9e-3
+before); 2 false alarms, both 0.01–0.05 nats off; on the passes off by more
+than 1e-3, the report is 0.94 times the error (median; 0.36–1.8, 10–90 %),
+and the trailing gaps report below 1e-14. Before: 81 off, 80 warned, 36
+false alarms (24 on passes within 0.01 nats, 18 of them from a trailing gap
+alone, 3.9–282), the report 30 times the error (1.6–260). The leading gaps
+are checked as before: 4 of the 104 passes are off by more than 0.05 nats
+in their leading gap (regime models, runs of 4–5 rows, G = 32–64; reported
+1e-4–1e-2), and 12 false alarms are the 100-row AR(1) leading gaps at G =
+32 and 64 (1.3–1.6 and 0.13–0.21 for 1e-7–9e-4 nats), where the posterior
+inside the gap is off (sds 13 % and 1 %) — the term for the posterior.
+Intel mote 48 after its clean days (73 906 rows, 41 068 missing,
+non-gated pass), G = 64: 28 530 → 2 980, of which the two network outages
+5 015 → 2.3 (0.08 at G = 128) and the 1 253 runs next to readings above
+40 °C, where the pass is not converged (25 060 nats between G = 64 and 128),
+23 260 → 2 946.
 
 Memory
 ------
@@ -457,7 +592,12 @@ about 0.3 kB per missing row and per node (K = 3: the messages α̃ and β̃,
 the grids, the node posteriors, and the node margins while transitions are
 rebuilt). A rebuilt transition is the same operations on the same inputs:
 every result is the same bit for bit whatever the budget
-(``test_gaps_memory.py``); beyond it only the time grows.
+(``test_gaps_memory.py``); beyond it only the time grows. The
+moment-matched transition between reference grids is kept once per
+distance class ("Moment-matched rows": at most ⌊log₂ L⌋ + 2, L the longest
+run, one (K·G)² block each), and the local errors of the quadrature report
+are computed by blocks of _CHUNK over the kept transitions, row by row: the
+same numbers as the backward pass computes for the transitions it rebuilds.
 Measured (peak footprint / maximum resident size, one process; the version
 before → this one): the mote-48 window, ``gap_posterior`` at G = 64, 2.3 /
 5.2 → 2.1 / 3.8 GB in the same 61 s; at G = 128, stopped above 8 GB → 2.3 /
@@ -499,6 +639,15 @@ References
 * Davis, P. J. & Rabinowitz, P. (1984). *Methods of Numerical Integration*,
   2nd ed., Academic Press — composite Gauss–Legendre rules and variable
   transformations (the sinh map of the core panels).
+* Tanaka, K. & Toda, A. A. (2013). Discrete approximations of continuous
+  distributions by maximum entropy. *Economics Letters* 118(3), 445–450;
+  Farmer, L. E. & Toda, A. A. (2017). Discretizing nonlinear, non-Gaussian
+  Markov processes with exact conditional moments. *Quantitative Economics*
+  8(2), 651–683 — the moment-matched rows.
+* Kushner, H. J. & Dupuis, P. (2001). *Numerical Methods for Stochastic
+  Control Problems in Continuous Time*, 2nd ed., Springer — Markov chain
+  approximations of a diffusion that match its local mean and variance (the
+  three-node rows).
 * Little, R. J. A. & Rubin, D. B. (2019). *Statistical Analysis with Missing
   Data*, 3rd ed., Wiley — ignorable missingness, observed-data likelihood;
   selection models for data missing not at random (the ``[missingness]``
@@ -911,6 +1060,13 @@ _SINH_SCALE = 2.0
 #: strung along the line, gets several panels.
 _NEST_RATIO = 4.0
 _MERGE_SPAN = 3.0 * _CORE_WIDTH
+#: A Gaussian-sum component whose scale exceeds G / _KERNEL_BROAD times its
+#: one-step kernel scale gives no kernel test piece (:func:`_gap_proposals`;
+#: module docstring, "Moment-matched rows"): the centre spacing of a local
+#: grid is about 13 s / G for a law of scale s, so a G-node grid resolves the
+#: kernel of such a law only up to s / k_s ≈ G / 13–16. None: every
+#: component gives one (before this version).
+_KERNEL_BROAD = 16.0
 #: ... and when the sinh map of the merged panel (centred on the narrower,
 #: scale c = _SINH_SCALE s) spaces its nodes at every merged piece's centre at
 #: most _MERGE_RES times wider than the piece's own panel would: √(c² + D²)
@@ -1235,7 +1391,7 @@ def _rows(x, keep):
 
 
 def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None, w_in=None, w_out=None,
-                   with_bridged: bool = False):
+                   with_bridged: bool = False, G: int | None = None):
     """Local proposals of the positions of P runs of missing rows (module docstring).
 
     ``yL``, ``yR`` (P,) the observed neighbours (NaN: none), ``L`` (P,) the
@@ -1358,6 +1514,21 @@ def _gap_proposals(model: PMCModel, yL, yR, L, *, fwd0=None, w_in=None, w_out=No
         Pw = Pl.reshape(Pl.shape[0], Fl.shape[1], Bl.shape[1])
         kt = np.where(hP[:, None], np.concatenate([Pw.sum(axis=2), Pw.sum(axis=1)], axis=1), kt)
     kt = kt / np.where(kt.sum(axis=1, keepdims=True) > 0.0, kt.sum(axis=1, keepdims=True), 1.0)
+    if G is not None and _KERNEL_BROAD is not None:
+        # a component more than G / _KERNEL_BROAD times broader than its
+        # one-step kernel stands for kernels from every point of a law that
+        # no G-node grid resolves at the kernel's scale, not for one kernel at
+        # its centre: that test piece measured only where the nodes happen to
+        # fall near the centre (module docstring, "Moment-matched rows") — it
+        # chose the reference grid at the end of a 2 000-row gap (a switch
+        # model at G = 256, 1.7 nats off where G = 128 is 0.06)
+        # (runs with an observed left neighbour only: inside a leading gap the
+        # log-likelihood does not depend on the inner grids, and its
+        # posterior is the reverse-time forecast that these pieces resolve)
+        c = G / _KERNEL_BROAD
+        left = np.repeat(hasF, L)[:, None]
+        broad = left & np.concatenate([Fs > c * Fk, Bs > c * Bk], axis=1)
+        kt = np.where(broad, 0.0, kt)
     kern = (kt, np.concatenate([Fm, Bm], axis=1), np.concatenate([Fk, Bk], axis=1))
     if with_bridged:
         return lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex, hP
@@ -2129,7 +2300,8 @@ def _run_grids(model: PMCModel, ref: QuadratureGrid, yL: float, yR: float, L: in
     wi = None if (w_in is None or fwd0 is not None or not np.isfinite(yL)) else \
         np.asarray(w_in, dtype=float)[None, :]
     lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex, bridged = _gap_proposals(
-        model, np.array([yL]), np.array([yR]), np.array([L]), fwd0=f0, w_in=wi, with_bridged=True)
+        model, np.array([yL]), np.array([yR]), np.array([L]), fwd0=f0, w_in=wi, with_bridged=True,
+        G=ref.G)
     yl, yr = np.full(L, np.nan), np.full(L, np.nan)
     yl[0] = yL if fwd0 is None else np.nan
     yr[-1] = yR
@@ -2245,7 +2417,8 @@ def _refine_grids(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: Quadrat
     w_in, w_out = np.asarray(w_in)[open_], np.asarray(w_out)[open_]
     yL = np.where(a > 0, Y[np.maximum(a - 1, 0)], np.nan)
     yR = np.where(b < N - 1, Y[np.minimum(b + 1, N - 1)], np.nan)
-    props = _gap_proposals(model, yL, yR, b - a + 1, w_in=w_in, w_out=w_out, with_bridged=True)
+    props = _gap_proposals(model, yL, yR, b - a + 1, w_in=w_in, w_out=w_out, with_bridged=True,
+                           G=ref.G)
     lam, loc, sc, _, kern, _, _ = props
     pos = np.concatenate([np.arange(s, e + 1) for s, e in zip(a, b)])
     run = np.repeat(np.arange(a.size), b - a + 1)
@@ -2404,7 +2577,8 @@ def _build_gap_grids(model: PMCModel, Y: np.ndarray, miss: np.ndarray, ref: Quad
     yL = np.where(a > 0, Y[np.maximum(a - 1, 0)], np.nan)
     yR = np.where(b < N - 1, Y[np.minimum(b + 1, N - 1)], np.nan)
     if props is None:
-        props = _gap_proposals(model, yL, yR, b - a + 1, w_in=w_in, w_out=w_out, with_bridged=True)
+        props = _gap_proposals(model, yL, yR, b - a + 1, w_in=w_in, w_out=w_out, with_bridged=True,
+                               G=ref.G)
     lam, loc, sc, (Fl, Fm, Fs, Fst, Fsy), kern, ex, bridged = props
     pos = np.concatenate([np.arange(s, e + 1) for s, e in zip(a, b)])
     yl = np.where(np.isin(pos, a) & (pos > 0), Y[np.maximum(pos - 1, 0)], np.nan)
@@ -2735,7 +2909,7 @@ def _x_transition(model: PMCModel, f: np.ndarray, *, log: bool) -> np.ndarray:
 
 
 def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
-                      with_mass: bool = False, rescue=None):
+                      with_mass: bool = False, rescue=None, tilt=None):
     """Rescale the quadrature tensor B (..., K, G) to its exact block masses.
 
     ``B[..., j, g]`` holds the weights of the destination (j, y_g) and
@@ -2754,6 +2928,15 @@ def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
     chain (module docstring, "Log space"). Without ``rescue`` a vanished
     block keeps 0 and its mass goes to the other blocks through the row step.
 
+    ``tilt(index)`` (``"block"`` mode): the exact conditional mean and
+    standard deviation (n,) of the one-step laws of the blocks ``index`` and
+    the destination nodes (n, G). A block whose raw mass is off its target by
+    more than _TILT_GATE (relative) takes the shape :func:`_moment_tilt` gives
+    its log-weights (``B`` in log space, ``rescue(index)`` in linear space, so
+    that both passes tilt the same numbers), scaled to its target like the
+    others (module docstring, "Moment-matched rows"); the others stay bit for
+    bit.
+
     Returns ``(rows, factors)``: the (..., K·G) rows and the (..., K) factors
     by which each block was multiplied, in linear scale. ``with_mass`` adds
     the raw block masses Σ_g B (log Σ_g exp B in log space) — the quadrature
@@ -2768,21 +2951,58 @@ def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
         return out + (raw,) if with_mass else out
     # the block masses of B as it is (``raw``, when computed), until the rescue changes B
     sums = raw
-    if not log and rescue is not None and _RENORMALISE == "block" and target is not None:
-        with np.errstate(invalid="ignore"):
-            sb = B.sum(axis=-1) if raw is None else raw
-            lost = ~(np.isfinite(sb) & (sb >= _UNDERFLOW)) & (target > 0.0)
-        if lost.any():
-            sums = None
-            index = np.nonzero(lost)
-            LB = np.asarray(rescue(index), dtype=float)
+    block = _RENORMALISE == "block" and target is not None
+    if block and ((not log and rescue is not None) or (tilt is not None and _TILT)):
+        with np.errstate(divide="ignore", invalid="ignore", under="ignore", over="ignore"):
+            sb = raw if raw is not None else (_inf._lse(B, axis=-1) if log else B.sum(axis=-1))
+            if log:
+                lost = np.zeros(sb.shape, dtype=bool)
+                rel = np.abs(np.expm1(sb - target))
+                live = np.isfinite(target)
+            else:
+                lost = ~(np.isfinite(sb) & (sb >= _UNDERFLOW)) & (target > 0.0)
+                if rescue is None:
+                    lost[...] = False
+                rel = np.abs(sb / target - 1.0)
+                live = target > 0.0
+            gated = np.zeros(sb.shape, dtype=bool)
+            if tilt is not None and _TILT and (log or rescue is not None):
+                gated = live & ~(rel <= _TILT_GATE)
+        if lost.any() or gated.any():
+            index = np.nonzero(lost | gated)
+            LB = np.asarray(B[index] if log else rescue(index), dtype=float)
             with np.errstate(divide="ignore", invalid="ignore", under="ignore", over="ignore"):
                 ls = _inf._lse(LB, axis=-1)
                 fin = np.isfinite(ls)
-                shp = np.where(fin[:, None], np.exp(LB - np.where(fin, ls, 0.0)[:, None]), 0.0)
-            B = np.array(B, dtype=float, copy=True)
-            # the log-normalised shape, scaled to the (finite) target below
-            B[index] = np.where(np.isfinite(shp), shp, 0.0)
+                lsh = np.where(fin[:, None], LB - np.where(fin, ls, 0.0)[:, None], -np.inf)
+            changed = lost[index].copy()
+            g = gated[index]
+            if g.any():
+                sel = np.nonzero(g)[0]
+                m, sd, yd = tilt(tuple(ix[sel] for ix in index))
+                yd = np.asarray(yd, dtype=float)
+                ok = np.isfinite(m) & np.isfinite(sd) & (sd > 0.0)
+                # only a law narrower than the nodes around it, inside the grid,
+                # whose block's own moments are off (the others stay bit for bit)
+                ok[ok] = _unresolved(yd[ok], m[ok], sd[ok], getattr(tilt, "k", np.inf))
+                ok[ok] = _moments_off(lsh[sel[ok]], yd[ok], m[ok], sd[ok])
+                if ok.any():
+                    tl, fl = _moment_tilt(LB[sel[ok]], yd[ok], m[ok], sd[ok])
+                    done = fl > 0
+                    lsh[sel[ok][done]] = tl[done]
+                    changed[sel[ok][done]] = True
+            if changed.any():
+                sums = None
+                B = np.array(B, dtype=float, copy=True)
+                sub = tuple(ix[changed] for ix in index)
+                if log:
+                    # the tilted log-shape (log-sum 0), scaled to the target below
+                    B[sub] = lsh[changed]
+                else:
+                    with np.errstate(under="ignore"):
+                        shp = np.exp(lsh[changed])
+                    # the log-normalised shape, scaled to the (finite) target below
+                    B[sub] = np.where(np.isfinite(shp), shp, 0.0)
     with np.errstate(divide="ignore", invalid="ignore", under="ignore", over="ignore"):
         if log:
             fac = np.zeros(B.shape[:-1])
@@ -2811,6 +3031,488 @@ def _normalise_blocks(B: np.ndarray, target: np.ndarray | None, *, log: bool,
         fac = fac / np.where(ok, sr, 1.0)
         out = (R, np.broadcast_to(fac, B.shape[:-1]).copy())
         return out + (raw,) if with_mass else out
+
+
+# ---------------------------------------------------------------------------
+# Moment-matched rows: the exact conditional moments of the one-step laws
+# ---------------------------------------------------------------------------
+
+#: A block (i, y → j, ·) of a missing → missing transition of a long run
+#: (:func:`_tilt_steps`; the entries from an observed row are never tilted)
+#: whose raw quadrature mass is off its exact value by more than this
+#: relative amount — a one-step law narrower than the destination grid
+#: resolves — has its shape tilted to the exact conditional mean and variance
+#: of y' given (x = i, y, x' = j) (:func:`_moment_tilt`; module docstring,
+#: "Moment-matched rows"). Below it the renormalised quadrature is accurate
+#: (a resolved kernel, spectral accuracy) and the block is kept bit for bit:
+#: tilting such blocks (gate 1e-6) made the exact AR(1) references at ρ = 0.9
+#: 10–40 times worse (2.3e-9 → 2.0e-8 nats at G = 32; a tail node's kernel
+#: cut by the end of the grid).
+_TILT_GATE = 1e-3
+#: A block whose raw mass is off by more than this enters the convergence
+#: diagnostic (:func:`_block_parts`); below it its local error is negligible.
+_REPORT_GATE = 1e-6
+#: The local expansion of :func:`_local_core` holds where the backward
+#: message changes by less than e^_TAYLOR_REACH across one sd of the law and
+#: the law is at most _TAYLOR_WIDTH node spacings wide (the spacing around its
+#: mean); elsewhere the error of a block is its renormalisation.
+_TAYLOR_REACH = 2.0
+_TAYLOR_WIDTH = 2.0
+#: A tilted law must lie within this many sds of the ends of the grid (:func:`_unresolved`).
+_TILT_INSIDE = 4.0
+#: Private switch: False keeps the Tauchen–Hussey rows alone (before this version).
+_TILT = True
+#: Gauss–Hermite nodes (in the normal score of the conditional law) of the
+#: exact moments, and the table of the source's normal score z = Φ⁻¹(F_ij(y))
+#: on which they are computed and interpolated (:class:`_KernelMoments`): u is
+#: clipped to [EPS, 1 − EPS], |z| ≤ 8.13.
+_MOM_NODES = 24
+_MOM_ZMAX = 8.25
+_MOM_DZ = 1.0 / 16.0
+#: Nodes of a tilted block: those whose raw log-weight is within this of the
+#: block's largest, and the two nearest nodes on each side of the exact mean
+#: (a law far narrower than the node spacing puts e^−800 on its neighbours;
+#: they carry its variance once tilted). The others get weight 0.
+_TILT_WINDOW = 60.0
+
+
+class _KernelMoments:
+    """Exact moments of the one-step laws y' | (x_n = i, y_n = y, x_{n+1} = j).
+
+    The law has CDF h_ij(F_ji(y') | F_ij(y)) (the copula's h-function; the
+    margin f_ji alone without a copula) and depends on y through u = F_ij(y)
+    only. Its mean and central moments of orders 2–4 are the Gauss–Hermite
+    rule (_MOM_NODES nodes) in its normal score: y'_k = F_ji⁻¹(h_ij⁻¹(Φ(z_k)
+    | u)), exact for a Gaussian copula between Gaussian margins; they are
+    computed once per (i, j) on a table of z_u = Φ⁻¹(u) (step _MOM_DZ over
+    ±_MOM_ZMAX) and interpolated by a cubic spline. One instance per model
+    (:func:`_kernel_moments`); tables built for the pairs asked for.
+    """
+
+    def __init__(self, model: PMCModel):
+        from scipy.interpolate import CubicSpline
+        self._spline = CubicSpline
+        self.model = model
+        zk, wk = np.polynomial.hermite_e.hermegauss(_MOM_NODES)
+        self._zk, self._wk = zk, wk / wk.sum()
+        n = int(round(2.0 * _MOM_ZMAX / _MOM_DZ))
+        self._zt = np.linspace(-_MOM_ZMAX, _MOM_ZMAX, n + 1)
+        self._tab = {}
+
+    def _table(self, i: int, j: int):
+        key = (i, j)
+        if key in self._tab:
+            return self._tab[key]
+        model = self.model
+        unk = _margin_law(model, j, i)
+        zt, zk, wk = self._zt, self._zk, self._wk
+        with np.errstate(all="ignore"):
+            t = _sp_ndtr(zk)
+            if model.variant.uses_copula:
+                u = np.clip(_sp_ndtr(zt), EPS, ONE_MINUS_EPS)
+                w = np.ascontiguousarray(np.broadcast_to(t[None, :], (zt.size, zk.size)).ravel())
+                uu = np.ascontiguousarray(np.broadcast_to(u[:, None], (zt.size, zk.size)).ravel())
+                v = np.asarray(model.copula(i, j).inv_h_array(w, uu), dtype=float)
+                q = np.asarray(unk.ppf(v.reshape(zt.size, zk.size)), dtype=float)
+            else:
+                q = np.broadcast_to(np.asarray(unk.ppf(t), dtype=float), (zt.size, zk.size))
+            m = q @ wk
+            d = q - m[:, None]
+            d2 = d * d
+            mom = np.column_stack([m, d2 @ wk, (d2 * d) @ wk, (d2 * d2) @ wk])
+        ok = np.all(np.isfinite(mom), axis=1) & (mom[:, 1] > 0.0)
+        tab = None
+        if ok.sum() >= 4:
+            tab = (self._spline(zt[ok], mom[ok]), float(zt[ok][0]), float(zt[ok][-1]))
+        self._tab[key] = tab
+        return tab
+
+    def at(self, i_idx, j_idx, F) -> np.ndarray:
+        """(n, 4): mean, variance, third and fourth central moments of the
+        laws (i_idx[k] → j_idx[k]) from sources of clipped CDF F[k] = F_ij(y)
+        (NaN where not available)."""
+        i_idx = np.asarray(i_idx, dtype=int)
+        j_idx = np.asarray(j_idx, dtype=int)
+        F = np.asarray(F, dtype=float)
+        out = np.full((F.size, 4), np.nan)
+        with np.errstate(all="ignore"):
+            z = _norm_quantile(np.clip(F, EPS, ONE_MINUS_EPS))
+        for i, j in set(zip(i_idx.tolist(), j_idx.tolist())):
+            sel = np.nonzero((i_idx == i) & (j_idx == j))[0]
+            tab = self._table(i, j)
+            if tab is None:
+                continue
+            sp, lo, hi = tab
+            out[sel] = sp(np.clip(z[sel], lo, hi))
+        return out
+
+
+#: Only the missing → missing steps of a run of at least this many missing
+#: rows are moment-matched (module docstring, "Moment-matched rows"): the
+#: error of the renormalised blocks grows with the number of steps (a sticky
+#: chain loses the diffusion of every step), while a short run keeps the
+#: results of its local grids bit for bit.
+_TILT_RUN = 32
+#: A block is tilted only where the backward message is smooth at the node
+#: spacing: sd √k ≥ _TILT_SMOOTH × the spacing around its mean, k the number
+#: of steps to the next observed row (the width of the exit kernel diffused
+#: over k steps; a trailing gap: any k). Next to an observed row the backward
+#: message is the exit kernel, as narrow as the step: moving mass to the
+#: neighbouring nodes of a law narrower than their spacing puts it where the
+#: exit kernel is (a bridge 16 sds into the entry kernel's tail: 1.2 nats off
+#: where the renormalised block is 0.04), whereas the renormalised block keeps
+#: the kernel's exact values at the nodes.
+_TILT_SMOOTH = 1.0
+#: Distance classes: a step whose next observed row is k rows after its
+#: destination uses k_lo = 2^⌊log₂ k⌋ (a trailing gap: 2^_TILT_CLASSES), so
+#: that the shared reference-grid transition has one version per class.
+_TILT_CLASSES = 30
+
+
+def _tilt_steps(miss: np.ndarray) -> np.ndarray:
+    """(N,) distance class c of every step n → n + 1 between missing rows of
+    a run of at least _TILT_RUN rows (k_lo = 2^c, :data:`_TILT_CLASSES` for a
+    trailing gap), −1 elsewhere (no tilt)."""
+    miss = np.asarray(miss, dtype=bool)
+    N = miss.size
+    out = np.full(N, -1, dtype=int)
+    a_, b_ = _runs(miss)
+    for a, b in zip(a_, b_):
+        if b - a + 1 < _TILT_RUN:
+            continue
+        dest = np.arange(a + 1, b + 1)                 # destinations of the steps a..b−1
+        if b == N - 1:
+            out[a:b] = _TILT_CLASSES
+        else:
+            k = b + 1 - dest
+            out[a:b] = np.minimum(np.floor(np.log2(k)).astype(int), _TILT_CLASSES)
+    return out
+
+
+def _tilt_of(model: PMCModel, split, dst, cls: int = _TILT_CLASSES):
+    """The ``tilt`` of :func:`_normalise_blocks`, or None without a copula
+    (the one-step law is a margin, which every grid resolves). ``split(idx)``
+    → (i, j, F): the transition of every block and the clipped CDF F_ij(y)
+    of its source; ``dst(idx)`` → (n, G): its destination nodes; ``cls`` the
+    distance class of the step (:func:`_tilt_steps`), as ``tilt.k`` = 2^cls."""
+    if not (_TILT and model.variant.uses_copula):
+        return None
+
+    def tilt(idx):
+        i, j, F = split(idx)
+        mm = _kernel_moments(model).at(i, j, F)
+        with np.errstate(invalid="ignore"):
+            return mm[:, 0], np.sqrt(mm[:, 1]), dst(idx)
+
+    tilt.k = float(2 ** int(cls))
+    return tilt
+
+
+_MOM_CACHE: "OrderedDict" = OrderedDict()
+_MOM_CACHE_SIZE = 4
+
+
+def _kernel_moments(model: PMCModel) -> _KernelMoments:
+    """The :class:`_KernelMoments` of a model (the last _MOM_CACHE_SIZE, by parameters)."""
+    key = hashlib.sha1(json.dumps(model.raw, sort_keys=True, default=repr).encode()).hexdigest()
+    mom = _MOM_CACHE.get(key)
+    if mom is None:
+        mom = _MOM_CACHE[key] = _KernelMoments(model)
+        while len(_MOM_CACHE) > _MOM_CACHE_SIZE:
+            _MOM_CACHE.popitem(last=False)
+    else:
+        _MOM_CACHE.move_to_end(key)
+    return mom
+
+
+def _dual_step(L, X, T2, lam, rows):
+    """log-partition and tilted law of the blocks ``rows`` (compressed arrays
+    of :func:`_moment_tilt`) at λ = ``lam[rows]``."""
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        A = L[rows] + lam[rows, :1] * X[rows] + lam[rows, 1:] * T2[rows]
+        f = _inf._lse(A, axis=1)
+        p = np.exp(A - np.where(np.isfinite(f), f, 0.0)[:, None])
+        p = np.where(np.isfinite(A), p, 0.0)
+    return f, p
+
+
+def _unresolved(y: np.ndarray, m: np.ndarray, sd: np.ndarray, k: float = np.inf) -> np.ndarray:
+    """(n,) True where a one-step law of mean m and sd (n,) is narrower than
+    the spacing of the nodes y (n, G) around its mean (the renormalised
+    quadrature of a Gaussian law is exact to 5e-9 at one node per sd, 1e-2 at
+    one per two) and lies inside the grid (m ± _TILT_INSIDE sd): a law the
+    grid cuts at its end keeps its renormalised block — tilted to moments its
+    nodes cannot carry, the tail rows of the reference grid made the exact
+    AR(1) references at ρ = 0.9 up to 40 times worse. ``k``: the steps to
+    the next observed row (sd √k ≥ _TILT_SMOOTH × spacing, :data:`_TILT_SMOOTH`)."""
+    G = y.shape[1]
+    c = np.clip((y < m[:, None]).sum(axis=1), 1, G - 1)
+    r = np.arange(y.shape[0])
+    with np.errstate(invalid="ignore"):
+        gap = y[r, c] - y[r, c - 1]
+        inside = (m - _TILT_INSIDE * sd >= y[:, 0]) & (m + _TILT_INSIDE * sd <= y[:, -1])
+        return inside & (sd < gap) & (sd * math.sqrt(k) >= _TILT_SMOOTH * gap)
+
+
+def _moments_off(lsh: np.ndarray, y: np.ndarray, m: np.ndarray, sd: np.ndarray) -> np.ndarray:
+    """(n,) True where the normalised log-shapes lsh (n, G) at the nodes y
+    have a mean or variance off the exact m, sd² by more than _TILT_MOM
+    (units of sd and of sd²): the blocks :func:`_normalise_blocks` tilts."""
+    with np.errstate(all="ignore"):
+        p = np.where(np.isfinite(lsh), np.exp(lsh), 0.0)
+        x = np.where(p > 0.0, (y - m[:, None]) / sd[:, None], 0.0)
+        e1 = (p * x).sum(axis=1)
+        e2 = (p * x * x).sum(axis=1) - 1.0
+    return ~((np.abs(e1) <= _TILT_MOM) & (np.abs(e2) <= _TILT_MOM))
+
+
+#: Newton iterations and backtracking halvings of :func:`_moment_tilt`, and
+#: its tolerance on the moments (units of the exact sd and variance).
+_TILT_ITER = 30
+#: Private switch: tilt to the mean alone where the variance cannot be reached.
+_TILT_MEAN_ONLY = True
+_TILT_HALVINGS = 20
+_TILT_TOL = 1e-10
+#: A gated block whose own mean and variance are within this of the exact
+#: ones (units of sd, sd²) is not tilted.
+_TILT_MOM = 1e-9
+
+
+def _mean_newton(L, X, zero, lam, act):
+    """λ₁ of the blocks ``act`` with E[X] = 0 under exp(L + λ₁X), from the
+    start ``lam[:, 0]``: E[X] increases with λ₁, so a bracket is found from
+    the start and λ₁ = 0 (doubling the step while both have one sign), then
+    Newton's method is kept inside it, bisecting where a step leaves it
+    (rtsafe, Press et al. 2007 §9.4). ``lam`` updated in place."""
+    rows = np.nonzero(act)[0]
+    if not rows.size:
+        return lam
+
+    def g_at(r, lr):
+        lam[r, 0] = lr
+        f, p = _dual_step(L, X, zero, lam, r)
+        Xr = X[r]
+        g = (p * Xr).sum(axis=1)
+        return np.where(np.isfinite(f), g, np.nan), (p * Xr * Xr).sum(axis=1) - g * g
+
+    l0 = lam[rows, 0].copy()
+    g0, _ = g_at(rows, l0)
+    z = np.zeros(rows.size)
+    gz, _ = g_at(rows, z)
+    lo = np.where(g0 < 0.0, l0, np.where(gz < 0.0, z, np.nan))
+    hi = np.where(g0 > 0.0, l0, np.where(gz > 0.0, z, np.nan))
+    lo = np.where(np.isnan(lo) & ~np.isnan(hi), np.minimum(l0, z), lo)   # both > 0: expand below
+    hi = np.where(np.isnan(hi) & ~np.isnan(lo), np.maximum(l0, z), hi)   # both < 0: expand above
+    # doubling the bracket where both ends have one sign
+    width = np.maximum(np.abs(l0), 1.0 / np.maximum(np.max(np.abs(X[rows]), axis=1), 1e-300))
+    glo, _ = g_at(rows, lo)
+    ghi, _ = g_at(rows, hi)
+    for _ in range(60):
+        need_lo = np.isfinite(glo) & (glo > 0.0)
+        need_hi = np.isfinite(ghi) & (ghi < 0.0)
+        if not (need_lo.any() or need_hi.any()):
+            break
+        width = np.where(need_lo | need_hi, 2.0 * width, width)
+        lo = np.where(need_lo, lo - width, lo)
+        hi = np.where(need_hi, hi + width, hi)
+        q = np.nonzero(need_lo)[0]
+        if q.size:
+            glo[q] = g_at(rows[q], lo[q])[0]
+        q = np.nonzero(need_hi)[0]
+        if q.size:
+            ghi[q] = g_at(rows[q], hi[q])[0]
+    ok = np.isfinite(glo) & np.isfinite(ghi) & (glo <= 0.0) & (ghi >= 0.0)
+    lm = np.where(np.isfinite(l0) & (l0 > lo) & (l0 < hi), l0, 0.5 * (lo + hi))
+    live = ok.copy()
+    for _ in range(_TILT_ITER):
+        q = np.nonzero(live)[0]
+        if not q.size:
+            break
+        g, h = g_at(rows[q], lm[q])
+        done = ~np.isfinite(g) | (np.abs(g) < _TILT_TOL)
+        lo[q] = np.where(g < 0.0, lm[q], lo[q])
+        hi[q] = np.where(g > 0.0, lm[q], hi[q])
+        with np.errstate(all="ignore"):
+            nl = lm[q] - g / h
+        inside = np.isfinite(nl) & (h > 0.0) & (nl > lo[q]) & (nl < hi[q])
+        new = np.where(inside, nl, 0.5 * (lo[q] + hi[q]))
+        # no progress in floating point: stop there
+        done |= new == lm[q]
+        lm[q] = np.where(done, lm[q], new)
+        live[q[done]] = False
+    lam[rows, 0] = np.where(ok, lm, l0)
+    return lam
+
+
+def _dual_newton(L, X, T2, lam, act, two: bool):
+    """Newton's method with backtracking on the convex dual log Σ exp(L + λ₁X
+    + λ₂T2) of the blocks ``act`` (λ₂ = 0 unless ``two``): its minimum has
+    E[X] = 0 (and E[T2] = 0). ``lam`` updated in place. The accepted trial
+    point of the line search is the next iterate: its log-partition and law
+    are kept (row by row, the same numbers as computed again)."""
+    r = np.nonzero(act)[0]
+    if not r.size:
+        return lam
+    f, p = _dual_step(L, X, T2, lam, r)
+    for _ in range(_TILT_ITER):
+        Xr, Tr = X[r], T2[r]
+        g1 = (p * Xr).sum(axis=1)
+        g2 = (p * Tr).sum(axis=1) if two else np.zeros(r.size)
+        conv = ~np.isfinite(f) | ((np.abs(g1) < _TILT_TOL) & (np.abs(g2) < _TILT_TOL))
+        go = ~conv
+        if not go.any():
+            break
+        r, f, p, g1, g2, Xr, Tr = r[go], f[go], p[go], g1[go], g2[go], Xr[go], Tr[go]
+        with np.errstate(all="ignore"):
+            h11 = (p * Xr * Xr).sum(axis=1) - g1 * g1
+            if two:
+                h12 = (p * Xr * Tr).sum(axis=1) - g1 * g2
+                h22 = (p * Tr * Tr).sum(axis=1) - g2 * g2
+                det = h11 * h22 - h12 * h12
+                d1 = -(h22 * g1 - h12 * g2) / det
+                d2 = -(h11 * g2 - h12 * g1) / det
+                bad = ~(np.isfinite(d1) & np.isfinite(d2) & (det > 0.0))
+            else:
+                d1 = -g1 / h11
+                d2 = np.zeros(r.size)
+                bad = ~(np.isfinite(d1) & (h11 > 0.0))
+        d = np.stack([np.where(bad, -g1, d1), np.where(bad, -g2, d2)], axis=1)
+        slope = g1 * d[:, 0] + g2 * d[:, 1]
+        step = np.ones(r.size)
+        todo = np.ones(r.size, dtype=bool)
+        base = lam[r].copy()
+        fn, pn = np.empty_like(f), np.empty_like(p)
+        for _ls in range(_TILT_HALVINGS):
+            q = np.nonzero(todo)[0]
+            lam[r[q]] = base[q] + step[q, None] * d[q]
+            ft, pt = _dual_step(L, X, T2, lam, r[q])
+            # Armijo, within the rounding of f (near the minimum the decrease
+            # g²/h is below the last bit of f)
+            ok = np.isfinite(ft) & (ft <= f[q] + 1e-4 * step[q] * slope[q]
+                                    + 4.0 * EPS * (1.0 + np.abs(f[q])))
+            fn[q[ok]], pn[q[ok]] = ft[ok], pt[ok]
+            todo[q[ok]] = False
+            if not todo.any():
+                break
+            step[q[~ok]] *= 0.5
+        # no descent: stop there (flat within rounding, or no minimum)
+        lam[r[todo]] = base[todo]
+        moved = ~todo
+        r, f, p = r[moved], fn[moved], pn[moved]
+        if not r.size:
+            break
+    return lam
+
+
+def _moment_tilt(LB: np.ndarray, y: np.ndarray, m: np.ndarray, sd: np.ndarray):
+    """Blocks of log-weights LB (n, G) at the nodes y (n, G, increasing),
+    tilted to the mean m and standard deviation sd (n,) of their exact law.
+
+    The discrete law closest to the block in Kullback–Leibler divergence
+    with the given mean and variance (maximum entropy relative to the
+    quadrature weights): p_g ∝ exp(LB_g + λ₁ x_g + λ₂ (x_g² − 1)), x = (y −
+    m) / sd, λ by Newton's method with backtracking on the convex dual
+    (Tanaka & Toda 2013; Farmer & Toda 2017). Where the variance cannot be
+    reached on the nodes (a law narrower than their spacing, centred between
+    two of them at a distance δ from one: the least variance with that mean
+    is δ(Δ − δ)), the mean alone. A block that sits on one node (99 % of its
+    raw weight: the dual is flat there) takes the limit of that law, the
+    three-node law with the exact mean and variance on that node and its two
+    neighbours (the stencil of a Markov chain approximation of a diffusion,
+    Kushner & Dupuis 2001), or the two-node law with the exact mean on the
+    nodes around it. Nodes outside _TILT_WINDOW get weight 0; the iterations
+    run on the kept nodes only.
+
+    Returns (log shapes (n, G), normalised; flags (n,): 2 mean and variance,
+    1 mean only, 0 unchanged — no node on one side of the mean).
+    """
+    n, G = LB.shape
+    with np.errstate(all="ignore"):
+        x = (y - m[:, None]) / sd[:, None]
+        fin = np.isfinite(LB) & np.isfinite(x)
+        top = np.max(np.where(fin, LB, -np.inf), axis=1)
+        keep = fin & (LB >= (top - _TILT_WINDOW)[:, None])
+        k = (y < m[:, None]).sum(axis=1)
+    for off in (-2, -1, 0, 1):
+        c = k + off
+        r = np.nonzero((c >= 0) & (c < G))[0]
+        keep[r, c[r]] |= fin[r, c[r]]
+    flags = np.zeros(n, dtype=int)
+    out = np.where(keep, LB, -np.inf)
+    both = np.any(keep & (x < 0.0), axis=1) & np.any(keep & (x > 0.0), axis=1)
+    if not both.any():
+        return out, flags
+    # the kept nodes of every block first (in node order), padded to W
+    W = int(keep.sum(axis=1).max())
+    order = np.argsort(~keep, axis=1, kind="stable")[:, :W]
+    valid = np.take_along_axis(keep, order, axis=1)
+    L = np.where(valid, np.take_along_axis(LB, order, axis=1), -np.inf)
+    X = np.where(valid, np.take_along_axis(x, order, axis=1), 0.0)
+    T2 = X * X - 1.0
+    # the kept nodes on each side of the mean (valid nodes are in increasing
+    # order): the least variance with the exact mean, −x_lo·x_hi in units of
+    # sd², must be below the exact one, else the dual has no minimum
+    rr = np.arange(n)
+    ilo = np.clip((valid & (X < 0.0)).sum(axis=1) - 1, 0, W - 1)
+    ihi = np.clip(ilo + 1, 0, W - 1)
+    lo, hi = X[rr, ilo], X[rr, ihi]
+    with np.errstate(invalid="ignore"):
+        two = both & (-lo * hi < 0.99)
+    res = np.full((n, W), -np.inf)
+    # a block that sits on one node: the three-node law with the exact mean
+    # and variance on the nearest node and its neighbours, else the two-node
+    # law with the exact mean on the nodes around it
+    near = np.where(np.abs(lo) <= np.abs(hi), ilo, ihi)
+    ia, ic = np.clip(near - 1, 0, W - 1), np.clip(near + 1, 0, W - 1)
+    a, b, c = X[rr, ia], X[rr, near], X[rr, ic]
+    with np.errstate(all="ignore"):
+        pa = (1.0 + b * c) / ((a - b) * (a - c))
+        pb = (1.0 + a * c) / ((b - a) * (b - c))
+        pc = (1.0 + a * b) / ((c - a) * (c - b))
+        lead = np.exp(np.max(L, axis=1) - _inf._lse(L, axis=1))
+        plo, phi = hi / (hi - lo), -lo / (hi - lo)
+    sits = both & (lead >= 0.99)
+    three = sits & two & (ia < near) & (near < ic) & (pa > 0.0) & (pb > 0.0) & (pc > 0.0)
+    q = np.nonzero(three)[0]
+    with np.errstate(divide="ignore"):
+        res[q, ia[q]], res[q, near[q]], res[q, ic[q]] = np.log(pa[q]), np.log(pb[q]), np.log(pc[q])
+    flags[q] = 2
+    pair = sits & ~three & (ilo < ihi) & (lo < 0.0) & (hi > 0.0) & _TILT_MEAN_ONLY
+    q = np.nonzero(pair)[0]
+    with np.errstate(divide="ignore"):
+        res[q, ilo[q]], res[q, ihi[q]] = np.log(plo[q]), np.log(phi[q])
+    flags[q] = 1
+    # the others: Newton's method on the dual, from λ = 0
+    two &= ~sits
+    lam = np.zeros((n, 2))
+    lam = _dual_newton(L, X, T2, lam, two, True)
+
+    def settle(rows, T):
+        f, p = _dual_step(L, X, T, lam, rows)
+        g1, g2 = (p * X[rows]).sum(axis=1), (p * T[rows]).sum(axis=1)
+        ok = np.isfinite(f) & (np.abs(g1) < _TILT_MOM) & (np.abs(g2) < _TILT_MOM)
+        with np.errstate(invalid="ignore"):
+            res[rows[ok]] = (L[rows] + lam[rows, :1] * X[rows] + lam[rows, 1:] * T[rows]
+                             - f[:, None])[ok]
+        return rows[ok]
+
+    flags[settle(np.nonzero(two)[0], T2)] = 2
+    # the mean alone where the variance cannot be reached
+    one = both & ~sits & (flags == 0) & _TILT_MEAN_ONLY
+    if one.any():
+        # start: the two-node law with the exact mean on the nodes around it
+        with np.errstate(all="ignore"):
+            s1 = (np.log(-lo / hi) - (L[rr, ihi] - L[rr, ilo])) / (hi - lo)
+        lam[one] = 0.0
+        lam[one, 0] = np.where(np.isfinite(s1[one]), s1[one], 0.0)
+        zero = np.zeros_like(T2)
+        lam = _mean_newton(L, X, zero, lam, one)
+        flags[settle(np.nonzero(one)[0], zero)] = 1
+    done = flags > 0
+    tilted = np.full((int(done.sum()), G), -np.inf)
+    np.put_along_axis(tilted, order[done], np.where(valid[done], res[done], -np.inf), axis=1)
+    out[done] = tilted
+    return out, flags
 
 
 # ---------------------------------------------------------------------------
@@ -3085,6 +3787,7 @@ class _Chain:
         self.lead_dev = {}
         self.lead_c = {}
         self.Q_dev = None
+        self.Qc = {}
         obs = np.nonzero(~miss)[0]
         self.lead = int(obs[0]) if obs.size else N
         # the transitions of the prior once a local grid enters the leading
@@ -3191,17 +3894,34 @@ class _Chain:
                 else:
                     self._lazy[int(n)] = ("lead", a, b, None)
                     self.lead_dev[int(n) + 1] = _DEFERRED
+        # the steps of long runs, moment-matched by distance class (module
+        # docstring, "Moment-matched rows"); one reference transition per class
+        tcls = _tilt_steps(miss)
         ref_inner = np.array([is_ref(n) and is_ref(n + 1) for n in inner], dtype=bool)
-        if ref_inner.any():
-            if Q is None or reuse.Q_dev is None:
-                Q, dev = self._between(grid, grid, mg)
+        Qc = dict(reuse.Qc) if usable else {}
+        for c in (np.unique(tcls[inner[ref_inner]]).tolist() if ref_inner.any() else []):
+            sel = inner[ref_inner & (tcls[inner] == c)]
+            if c < 0:
+                if Q is None or reuse.Q_dev is None:
+                    Q, dev = self._between(grid, grid, mg)
+                else:
+                    dev = reuse.Q_dev
+                Qs = Q
             else:
-                dev = reuse.Q_dev
+                if c not in Qc or reuse.Q_dev is None:
+                    Qc[c], dev = self._between(grid, grid, mg, cls=c)
+                else:
+                    dev = reuse.Q_dev
+                Qs = Qc[c]
             self.Q_dev = dev
-            for n in inner[ref_inner]:
+            for n in sel:
                 self.block_dev[int(n) + 1] = dev
+                if c >= 0:
+                    Qn[int(n)] = Qs
         for n in inner[~ref_inner]:
-            self._lazy[int(n)] = ("q", self.grids[int(n)], self.grids[int(n) + 1], None)
+            c = int(tcls[n])
+            self._lazy[int(n)] = ("q" if c < 0 else f"q{c}", self.grids[int(n)], self.grids[int(n) + 1],
+                                  None)
             self.block_dev[int(n) + 1] = _DEFERRED
 
         E = {}
@@ -3311,6 +4031,7 @@ class _Chain:
         self.raw = list(trans)
         self.init_raw = self.init
         self.Q = Q
+        self.Qc = Qc
         self.ev = ev
         self._fac = None
         if ev is not None:
@@ -3324,10 +4045,10 @@ class _Chain:
                 if trans[n] is None:         # built later, factors included
                     continue
                 v = self._at(n + 1)
-                if Q is not None and trans[n] is Q:
-                    key = v.tobytes()
+                if any(q is not None and trans[n] is q for q in (Q, *Qc.values())):
+                    key = (id(trans[n]), v.tobytes())
                     if key not in q_scaled:
-                        q_scaled[key] = self._scale(Q, v[None, :])
+                        q_scaled[key] = self._scale(trans[n], v[None, :])
                     trans[n] = q_scaled[key]
                 else:
                     trans[n] = self._scale(trans[n], v[None, :])
@@ -3351,9 +4072,10 @@ class _Chain:
 
     # ---- transitions built when needed -------------------------------------
 
-    def _between(self, A: QuadratureGrid, B: QuadratureGrid, mg: _Margins):
-        """Q[(i, g), (j, g')] from the nodes of A to those of B, block-normalised,
-        and its (raw block masses, exact masses)."""
+    def _between(self, A: QuadratureGrid, B: QuadratureGrid, mg: _Margins, cls: int = -1):
+        """Q[(i, g), (j, g')] from the nodes of A to those of B, block-normalised
+        (moment-matched in distance class ``cls`` ≥ 0, :func:`_tilt_steps`), and
+        its (raw block masses, exact masses)."""
         model, K, G, log = self.model, self.K, self.G, self.log
         fA, FA = mg.nodes(A)
         fB, FB = mg.nodes(B)
@@ -3370,14 +4092,21 @@ class _Chain:
         def rescue(idx):                                 # blocks (i, g → j, ·)
             return _log_rows(model, mg.logs(A), idx[1], idx[0], idx[2], mg.logs(B), B.omega)
 
-        Qb, _, raw = _normalise_blocks(Qb, T, log=log, with_mass=True, rescue=rescue)
+        def split(idx):                                  # (i, j, F_ij(y_g)) of blocks (i, g → j)
+            return idx[0], idx[2], FA[idx[1], idx[0], idx[2]]
+
+        Qb, _, raw = _normalise_blocks(
+            Qb, T, log=log, with_mass=True, rescue=rescue,
+            tilt=_tilt_of(model, split, lambda idx: np.broadcast_to(B.nodes, (idx[0].size, B.G)), cls)
+            if cls >= 0 else None)
         return Qb.reshape(K * G, K * G), (raw, T)
 
     def _build(self, n: int):
         """(trans[n], dev) of a transition built when needed, factors included."""
         kind, A, B, mg = self._lazy[n]
-        if kind == "q":
-            T, dev = self._between(A, B, self._mg if mg is None else mg)
+        if kind != "lead":
+            T, dev = self._between(A, B, self._mg if mg is None else mg,
+                                   cls=int(kind[1:]) if len(kind) > 1 else -1)
         else:
             T, dev, lc = _lead_transition(self.model, A, B, log=self.log)
             self.lead_c[n] = lc
@@ -3400,7 +4129,7 @@ class _Chain:
         if self._stored + size <= _TRANSITION_BUDGET:
             self._store[n] = (T, dev)
             self._stored += size
-            (self.block_dev if self._lazy[n][0] == "q" else self.lead_dev)[n + 1] = dev
+            (self.lead_dev if self._lazy[n][0] == "lead" else self.block_dev)[n + 1] = dev
             return T, dev, True
         return T, dev, False
 
@@ -3417,7 +4146,7 @@ class _Chain:
         for n, (kind, A, B, mg) in self._lazy.items():
             if self.overflow:
                 return
-            if kind != "q" or n in self._built:
+            if kind == "lead" or n in self._built:
                 continue
             mg = self._mg if mg is None else mg
             fA, FA = mg.nodes(A)
@@ -3431,6 +4160,7 @@ class _Chain:
         self._store, self._stored, self._mg, self._fused = {}, 0, None, None
         self._fixed = self.raw = None
         self.Q = self.Wobs = None
+        self.Qc = {}
 
     def _kept(self, n: int) -> bool:
         """Whether trans[n] is at hand without being rebuilt."""
@@ -3454,6 +4184,36 @@ class _Chain:
 
     def size(self, n: int) -> int:
         return self.K * self.G if self.miss[n] else self.K
+
+    def source_cdf(self, n: int):
+        """F_ij(y) (clipped) at the source of the transition into n: (K, K) at
+        an observed y_{n−1}, (G, K, K) at the nodes of its grid; None without
+        a copula. Cached: the observed rows at once, the last grids by object."""
+        if not self.model.variant.uses_copula:
+            return None
+        if not self.miss[n - 1]:
+            Fo = getattr(self, "_Fobs", None)
+            if Fo is None:
+                Yf = np.where(self.miss, self.grid.nodes[self.G // 2], self.Y)
+                Fo = self._Fobs = _margin_eval(self.model, Yf, log=False)[1]
+            return Fo[n - 1]
+        cache = getattr(self, "_Fgrid", None)
+        if cache is None:
+            cache = self._Fgrid = OrderedDict()
+        g = self.grids[n - 1]
+        hit = cache.get(id(g))
+        if hit is None or hit[0] is not g:
+            hit = cache[id(g)] = (g, _margin_eval(self.model, g.nodes, log=False)[1])
+            while len(cache) > 8:
+                cache.popitem(last=False)
+        return hit[1]
+
+    def moments(self) -> "_KernelMoments":
+        """The exact moments of the one-step laws of the model (:class:`_KernelMoments`)."""
+        mom = getattr(self, "_moments", None)
+        if mom is None:
+            mom = self._moments = _kernel_moments(self.model)
+        return mom
 
     def nodes_at(self, positions) -> np.ndarray:
         """(P, G) quadrature nodes of the missing ``positions``."""
@@ -3481,8 +4241,8 @@ def _fused_step(chain: _Chain, n: int, T: np.ndarray, dev, alphas, betas):
         xi = J.reshape(K, G, -1).sum(axis=1)
         xi = xi.reshape(K, K, G).sum(axis=2)
     with np.errstate(all="ignore"):
-        if chain._lazy[n][0] == "q":
-            part = _block_part(chain, n + 1, dev[0], dev[1], J)
+        if chain._lazy[n][0] != "lead":
+            part = _block_parts(chain, [(n + 1, dev[0], dev[1], J, T, betas[n + 1])])[0]
         else:
             part = _lead_part(chain, n + 1, dev[0], dev[1], J)
     return xi, part
@@ -3648,18 +4408,22 @@ def _run_chain(model, Y, miss, grid, *, backward: bool, ev=_inf._FROM_MODEL):
     limit = quad_warn_limit(miss)
     if chain.quad_error > limit:
         logger.warning(
-            "Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals "
-            "the grid must reproduce exactly (%d missing rows, gap_nodes = %d). Results that "
-            "involve the missing rows may be off; increase gap_nodes.",
+            "Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated "
+            "error in nats of the log-likelihood factors of the runs of missing rows (%d missing "
+            "rows, gap_nodes = %d). Results that involve the missing rows may be off; increase "
+            "gap_nodes.",
             chain.quad_error, limit, int(miss.sum()), chain.G,
         )
     return chain, fw[0], fw[1], bw
 
 
 #: WARNING threshold of the quadrature diagnostic (:func:`_quadrature_report`),
-#: an estimate of Σ_runs |error of the run's log-likelihood factor| (module
-#: docstring, "Convergence diagnostic"). Calibrated on 67 passes against exact
-#: or G = 512–1024 references, a pass "off" when that sum exceeds 0.01 nats.
+#: in nats: an estimate of Σ_runs |error of the run's log-likelihood factor|
+#: (module docstring, "Convergence diagnostic"). Kept at 0.05 when that
+#: estimate changed from a sum of capped raw-mass errors to the local errors
+#: of the steps: on 286 passes against exact references the estimate is 0.94
+#: times the error (median, 0.36–1.8 for 10–90 %; leading gaps aside), and
+#: 62 of the 63 passes off by more than 0.05 nats warn, 2 within it.
 QUAD_WARN = 0.05
 
 
@@ -3668,9 +4432,10 @@ def quad_warn_limit(miss: np.ndarray) -> float:
 
     Until this version it was 1e-3 · √R, R the number of runs of missing
     rows: 0.046 on an Intel Lab window of 2 157 runs, 1e-3 on a leading gap
-    alone. ``quad_error`` now sums per-run estimates capped at 1, which
-    scale with the errors of the runs, not with their number (module
-    docstring, "Convergence diagnostic"). The argument is kept for callers.
+    alone. ``quad_error`` sums per-run estimates of the error of each run's
+    log-likelihood factor in nats, which scale with the errors of the runs,
+    not with their number or length (module docstring, "Convergence
+    diagnostic"). The argument is kept for callers.
     """
     return QUAD_WARN
 
@@ -3747,10 +4512,181 @@ def _weighted(w: np.ndarray, rel: np.ndarray):
     return None
 
 
-def _block_part(chain: _Chain, n: int, raw, tgt, J: np.ndarray):
-    """Term of the blocks into n (``block_dev[n]``), J the joint mass through trans[n − 1]."""
+def _local_derivs(y: np.ndarray, b: np.ndarray, m: np.ndarray):
+    """(n, 5): h and its first four derivatives at m (n,) of the polynomial
+    through the five nodes of each row of y (n, G) nearest to m (fewer when
+    G < 5), with the values b (n, G) — the backward message of a block's
+    destination state (:func:`_block_parts`); and (n,) the reach of those
+    nodes, max |y − m|. Row by row: the same numbers whatever the rows
+    computed together."""
+    n, G = y.shape
+    q = min(5, G)
+    k0 = np.clip((y < m[:, None]).sum(axis=1) - q // 2, 0, G - q)
+    idx = k0[:, None] + np.arange(q)[None, :]
+    x = np.take_along_axis(y, idx, axis=1) - m[:, None]
+    sc = np.max(np.abs(x), axis=1)
+    sc = np.where(np.isfinite(sc) & (sc > 0.0), sc, 1.0)
+    V = (x / sc[:, None])[:, :, None] ** np.arange(q)[None, None, :]
+    v = np.take_along_axis(b, idx, axis=1)[:, :, None]
+    c = np.full((n, q), np.nan)
+    with np.errstate(all="ignore"):
+        # repeated nodes (a singular system): least squares, row by row
+        rep_ = ~np.all(np.diff(x, axis=1) > 0.0, axis=1) | ~np.all(np.isfinite(V), axis=(1, 2))
+        ok = np.nonzero(~rep_)[0]
+        if ok.size:
+            c[ok] = np.linalg.solve(V[ok], v[ok])[:, :, 0]
+        for r in np.nonzero(rep_)[0]:
+            if np.all(np.isfinite(V[r])) and np.all(np.isfinite(v[r])):
+                c[r] = (np.linalg.pinv(V[r]) @ v[r])[:, 0]
+        fact = np.array([1.0, 1.0, 2.0, 6.0, 24.0])[:q]
+        h = np.zeros((n, 5))
+        h[:, :q] = c * fact[None, :] / sc[:, None] ** np.arange(q)[None, :]
+    return h, sc
+
+
+def _local_core(p: np.ndarray, b: np.ndarray, yd: np.ndarray, mom: np.ndarray):
+    """Relative local errors of blocks, row by row (module docstring,
+    "Convergence diagnostic"): p (n, G) the rows (normalised to their mass),
+    b (n, G) the backward message of their destination state, yd (n, G) the
+    destination nodes, mom (n, 4) the exact mean and central moments.
+
+    The row against the exact one-step law, both applied to the local
+    quartic h of b at the law's mean m: Σ_{k=1..4} h⁽ᵏ⁾(m) (μ̂_k − μ_k) / k!,
+    divided by Σ_g p_g b_g — μ̂_k the central moments of p about m, μ_k those
+    of the law (μ_1 = 0). Returns (e, far, var): ``far`` where no expansion
+    at m holds — b changes by more than e^_TAYLOR_REACH across one sd (a y
+    pinned by the next observed row far in the kernel's tail), or the law is
+    wider than _TAYLOR_WIDTH node spacings (the nodes resolve it) —, and
+    ``var`` the variation of b over the row, Σ p |b − b̄| / b̄ ≤ 1.
+    """
+    G = yd.shape[1]
+    with np.errstate(all="ignore"):
+        m = mom[:, 0]
+        d = yd - m[:, None]
+        d2 = d * d
+        mu1, mu2 = (p * d).sum(axis=1), (p * d2).sum(axis=1)
+        mu3, mu4 = (p * d2 * d).sum(axis=1), (p * d2 * d2).sum(axis=1)
+        h, _ = _local_derivs(yd, b, m)
+        pb = (p * b).sum(axis=1)
+        e = (h[:, 1] * mu1 + h[:, 2] * (mu2 - mom[:, 1]) / 2.0 + h[:, 3] * (mu3 - mom[:, 2]) / 6.0
+             + h[:, 4] * (mu4 - mom[:, 3]) / 24.0) / pb
+        # the log-slope of b between the nodes around m (a quartic through
+        # values many orders of magnitude apart does not show it)
+        r = np.arange(yd.shape[0])
+        c = np.clip((yd < m[:, None]).sum(axis=1), 1, G - 1)
+        gap = yd[r, c] - yd[r, c - 1]
+        slope = (np.log(b[r, c]) - np.log(b[r, c - 1])) / gap
+        sd = np.sqrt(mom[:, 1])
+        far = ~(np.abs(slope) * sd <= _TAYLOR_REACH)
+        # a law wider than a few node spacings is resolved by the nodes: its
+        # error is that of its mass (a quartic through the nodes around the
+        # mean of a switch kernel says nothing over its ±4 °C)
+        far |= ~(sd <= _TAYLOR_WIDTH * gap)
+        var = (p * np.abs(b - pb[:, None])).sum(axis=1) / pb
+    return (np.where(np.isfinite(e), e, np.nan), far,
+            np.where(np.isfinite(var), np.minimum(var, 1.0), 1.0))
+
+
+def _block_select(chain: _Chain, raw, tgt, J: np.ndarray):
+    """The blocks of a transition into a missing position that the diagnostic
+    examines: (w, tot, u, j, capped, ratio) — the blocks (u, j) whose raw
+    mass is off its
+    target by more than _REPORT_GATE with a weight above 1e-12 of the step
+    (below, a local error of O(1) is still negligible), the posterior mass
+    through them and through the step, their capped relative errors and raw
+    / target; None without weight."""
+    K, G = chain.K, chain.G
+    S = J.shape[0]
+    with np.errstate(all="ignore"):
+        W = J.reshape(S, K, G).sum(axis=2)
+        tot = W.sum()
+        if not (np.isfinite(tot) and tot > 0.0):
+            return None
+        if chain.log:
+            live = np.isfinite(tgt)
+            ratio = np.exp(raw - tgt)
+        else:
+            live = tgt > 0.0
+            ratio = raw / tgt
+        rel = np.abs(ratio - 1.0).reshape(S, K)
+        gated = live.reshape(S, K) & ~(rel <= _REPORT_GATE) & (W > 1e-12 * tot)
+        u, j = np.nonzero(gated)
+        capped, _ = _block_rel(raw.reshape(S, K)[u, j], tgt.reshape(S, K)[u, j], chain.log)
+    return W[u, j], tot, u, j, capped, ratio.reshape(S, K)[u, j]
+
+
+def _block_parts(chain: _Chain, steps: list) -> list:
+    """Terms of transitions into missing positions (``block_dev[n]``): the
+    signed relative error each adds to its run's log-likelihood factor.
+
+    ``steps``: (n, raw, tgt, J, T, beta) — J = α̂ T β̂ the posterior mass
+    through T = trans[n − 1], beta = β̂_n. For every step, Σ over its blocks
+    selected by :func:`_block_select` of the posterior mass through the block
+    times its relative local error (:func:`_local_core`), over the posterior
+    mass through the transition. A block far from an expansion (``far``)
+    counts the error of its renormalisation, target / raw − 1, times the
+    variation of the backward message over it; a block whose error cannot
+    be formed, its capped raw-mass error. The rows of all the steps are
+    computed together, row by row: each step's term is the same number as
+    alone (the transitions the backward pass rebuilds, :func:`_fused_step`).
+    Returns a list of floats (None: no weight).
+    """
+    K, G = chain.K, chain.G
+    sel, Ps, Bs, Ys, Fs, Is, Js = [], [], [], [], [], [], []
+    for n, raw, tgt, J, T, beta in steps:
+        pick = _block_select(chain, raw, tgt, J)
+        sel.append(pick)
+        if pick is None or not pick[2].size:
+            continue
+        _, _, u, j, _, _ = pick
+        with np.errstate(all="ignore"):
+            R = T[u[:, None], j[:, None] * G + np.arange(G)[None, :]]
+            if chain.log:
+                p = np.exp(R - _inf._lse(R, axis=1)[:, None])
+            else:
+                p = R / R.sum(axis=1, keepdims=True)
+        Ps.append(np.where(np.isfinite(p), p, 0.0))
+        Bs.append(beta.reshape(K, G)[j])
+        Ys.append(np.broadcast_to(chain.grids[n].nodes, (u.size, G)))
+        F = chain.source_cdf(n)
+        i, s_ = (u // G, u % G) if chain.miss[n - 1] else (u, None)
+        Fs.append(np.full(u.size, 0.5) if F is None else (F[i, j] if s_ is None else F[s_, i, j]))
+        Is.append(i)
+        Js.append(j)
+    if Ps:
+        mom = chain.moments().at(np.concatenate(Is), np.concatenate(Js), np.concatenate(Fs))
+        e_all, far_all, var_all = _local_core(np.concatenate(Ps), np.concatenate(Bs),
+                                              np.concatenate(Ys), mom)
+        live = [pick for pick in sel if pick is not None and pick[2].size]
+        w, capped, ratio = (np.concatenate([pick[q] for pick in live]) for q in (0, 4, 5))
+        with np.errstate(all="ignore"):
+            renorm = np.clip(1.0 / ratio - 1.0, -1.0, 1.0) * var_all
+            e = np.where(far_all, np.where(np.isfinite(renorm), renorm, 1.0), e_all)
+            e = w * np.where(np.isfinite(e), e, capped)
+    out, k = [], 0
+    for pick in sel:
+        if pick is None:
+            out.append(None)
+            continue
+        tot, nb = pick[1], pick[2].size
+        if not nb:
+            out.append(0.0)
+            continue
+        # the sum over the step's blocks: a contiguous slice, the same number
+        # as the step alone
+        out.append(float(e[k:k + nb].sum() / tot))
+        k += nb
+    return out
+
+
+def _init_part(chain: _Chain, raw, tgt, alphas, betas):
+    """Term of the initial blocks of a missing y_1 (``block_dev[0]``): the
+    capped relative errors of the prior's raw masses on the grid of y_1,
+    weighted by the posterior of x_1. The prior is the stationary law, which
+    its grid resolves (the reference grid is built on it)."""
+    K, G = chain.K, chain.G
     rel, _ = _block_rel(raw, tgt, chain.log)
-    return _weighted(_block_w(chain, n, J, raw.shape), rel)
+    return _weighted((alphas[0] * betas[0]).reshape(K, G).sum(axis=1), rel)
 
 
 def _lead_part(chain: _Chain, n: int, lraw, lex, J: np.ndarray):
@@ -3763,37 +4699,40 @@ def _lead_part(chain: _Chain, n: int, lraw, lex, J: np.ndarray):
 def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = False):
     """Convergence diagnostic of the quadrature of a pass (module docstring).
 
-    Every missing position is checked on integrals its grid must reproduce
-    and whose exact value is known, each check a weighted mean of relative
-    errors (capped at _REL_CAP), summed over the positions:
+    The error of a run's log-likelihood factor is a sum over the steps into
+    its positions of their local errors — the discrete transition against the
+    exact one-step law, both applied to the exact backward function —
+    weighted by the posterior through them (module docstring, "Convergence
+    diagnostic"). Per run of missing rows:
 
-    * the raw block masses before the Tauchen–Hussey renormalisation
-      (Σ_g ω_g q(j, y_g | u) against P(x_n = j | u) for every source u —
-      the observed row before a gap, a node of the previous missing
-      position, or the prior for a missing y_1), weighted by the posterior
-      mass that goes through them (α̂ × transition × β̂ summed over the
-      nodes of the block; a backward pass is run when the caller has none).
-      Rows from the background panels of a local grid, which carry a broad
-      law that the renormalised rows keep however sparse the nodes, are not
-      counted;
+    * the signed sum S of the terms of the transitions into its positions
+      (:func:`_block_parts`): at every block whose raw quadrature mass is off
+      its exact value by more than _REPORT_GATE, the moments of the row against
+      those of the exact law, on the local quartic of the backward message
+      (a law at most _TAYLOR_WIDTH node spacings wide, the message smooth
+      across it); elsewhere its renormalisation factor minus 1 times the
+      variation of the backward message over it. A row whose mean and
+      variance are right (the moment tilt) adds only its third- and
+      fourth-moment terms; one whose destination the backward message does
+      not distinguish (a trailing gap, or the middle of a long gap where it
+      is flat) adds nothing. The part is |log(1 + S)| (S floored at −0.99);
+    * for a missing y_1, the capped relative errors of the prior's raw
+      masses (:func:`_init_part`);
     * inside a leading gap carried by the prior's transitions
-      (:func:`_lead_transition`), the reverse masses Σ_g ψ_i(g) q(j, y_g' |
-      i, y_g) ω_g' against ρ_ij(y_g') ω_g', weighted by the posterior mass
-      through each destination node — how well the grid of n resolves the
-      reverse kernel into every node of n + 1 (until this version the rows
-      of a leading gap were not checked at all, and a leading gap off by 22
-      nats went unreported);
-    * at the last missing row before an observed y_{n+1}, on a local grid,
-      the exit integrals Σ_g ω_g μ(i, y_g) q(k, y_{n+1} | i, y_g) against
-      their closed form (:func:`_neighbour_error`, cached per (i, k) as the
-      grid's ``exit_rel``), weighted by the posterior of (x_n, x_{n+1})
-      through the exit transition: the exit kernel is as narrow as the
-      transition, and the renormalisation does not see it.
+      (:func:`_lead_transition`: the forward message is the prior, log C = 0
+      inside the gap), the log-likelihood factor is the exit integral of the
+      prior on the last grid: its relative error against the closed form
+      (:func:`_neighbour_error`), weighted by the posterior of (x_n,
+      x_{n+1}) through the exit; and, for the posterior inside the gap, the
+      reverse masses of the prior's transitions against their exact values,
+      weighted by the posterior and scaled by _LEAD_SCALE.
 
-    Returns the sum (0 with no missing row); with ``per_run`` also a dict
-    {first row of the run: its part}. The sum estimates Σ_runs |error of the
-    run's log-likelihood factor| in nats, within a factor of about 15 on the
-    references of the module docstring ("Convergence diagnostic").
+    A trailing gap contributes 0: its rows sum to their exact masses and its
+    backward message is constant within each state. Returns the sum over the
+    runs (0 with no missing row); with ``per_run`` also a dict {first row of
+    the run: its part}. The sum estimates Σ_runs |error of the run's
+    log-likelihood factor| in nats (module docstring, "Convergence
+    diagnostic").
     """
     K, G = chain.K, chain.G
     miss = chain.miss
@@ -3801,7 +4740,8 @@ def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = Fal
     run_of = np.full(chain.N, -1)
     for a, b in zip(a_, b_):
         run_of[a:b + 1] = a
-    parts = dict.fromkeys((int(a) for a in a_), 0.0)
+    signed = dict.fromkeys((int(a) for a in a_), 0.0)
+    extra = dict.fromkeys((int(a) for a in a_), 0.0)
     if betas is None and (chain.block_dev or chain.lead_dev):
         betas = _backward_chain(chain, alphas)
 
@@ -3811,61 +4751,59 @@ def _quadrature_report(chain: _Chain, alphas, betas=None, *, per_run: bool = Fal
         return _joint(chain.log, alphas[n - 1], trans[n - 1], betas[n])
 
     with np.errstate(all="ignore"):
+        # the terms of the kept transitions computed together in chunks (the
+        # same numbers as one by one), then summed in the order of the steps
+        terms, batch, rows = {}, [], 0
+
+        def flush():
+            for (n_, *_), part_ in zip(batch, _block_parts(chain, batch)):
+                terms[n_] = part_
+            batch.clear()
+
         for n, dev in chain.block_dev.items():
+            if n == 0 and miss[0]:
+                part = _init_part(chain, dev[0], dev[1], alphas, betas)
+                if part is not None:
+                    extra[int(run_of[0])] += part
+                continue
             if dev is _DEFERRED:           # a transition the chain did not keep
-                part = chain._deferred(n, alphas, betas)[1]
-            else:
-                raw, tgt = dev
-                rel, T = _block_rel(raw, tgt, chain.log)
-                if betas is None:                            # forward weights only
-                    if n == 0 and miss[0]:
-                        w = T                                                # (K,)
-                    else:
-                        a = alphas[n - 1]
-                        a = a.reshape(K, G) if miss[n - 1] else a
-                        w = a[..., None] * T
-                elif n == 0 and miss[0]:
-                    w = (alphas[0] * betas[0]).reshape(K, G).sum(axis=1)
-                else:
-                    w = _block_w(chain, n, joint(n), raw.shape)
-                part = _weighted(w, rel)
+                terms[n] = chain._deferred(n, alphas, betas)[1]
+                continue
+            batch.append((n, dev[0], dev[1], joint(n), trans[n - 1], betas[n]))
+            rows += batch[-1][3].shape[0] * K
+            if rows * G >= _CHUNK:
+                flush()
+                rows = 0
+        flush()
+        for n in chain.block_dev:
+            part = terms.get(n)
             if part is not None:
-                parts[int(run_of[n])] += part
+                signed[int(run_of[n])] += part
         for n, dev in chain.lead_dev.items():
             if dev is _DEFERRED:
                 part = chain._deferred(n, alphas, betas)[1]
             else:
                 lraw, lex = dev
-                ok, rel = _lead_rel(lraw, lex)
-                if betas is None:
-                    w = np.where(ok, np.exp(np.where(ok, lex, -np.inf)), 0.0) * \
-                        alphas[n - 1].reshape(K, G).sum(axis=1)[:, None, None]
-                else:
-                    w = joint(n).reshape(K, G, K, G).sum(axis=1)             # (K_i, K_j, G)
-                part = _weighted(_lead_mask(chain, n, w), rel)
+                _, rel = _lead_rel(lraw, lex)
+                part = _weighted(_lead_mask(chain, n, joint(n).reshape(K, G, K, G).sum(axis=1)), rel)
             if part is not None:
-                parts[int(run_of[n])] += _LEAD_SCALE * part
-        exits = [int(n) for n in np.nonzero(miss[:-1] & ~miss[1:])[0] if chain.grids[int(n)].local]
-        cached = [chain.grids[n].exit_rel for n in exits]
-        todo = np.array([n for n, c in zip(exits, cached) if c is None], dtype=int)
-        if todo.size:
-            nodes = np.array([chain.grids[int(n)].nodes for n in todo])
-            omega = np.array([chain.grids[int(n)].omega for n in todo])
-            rel = np.full((todo.size, K, K), np.nan)
-            _neighbour_error(chain.model, nodes, omega, np.full(todo.size, np.nan),
-                             chain.Y[todo + 1], exit_rel=rel)
-            done = dict(zip(todo.tolist(), rel))
-            cached = [done[n] if c is None else c for n, c in zip(exits, cached)]
-        for n, rel in zip(exits, cached):
+                extra[int(run_of[n])] += _LEAD_SCALE * part
+        if chain.lead_exact and 0 < chain.lead < chain.N:
+            # the exit of a leading gap carried by the prior's transitions
+            n = chain.lead - 1
+            g = chain.grids[n]
+            rel = g.exit_rel
+            if rel is None:
+                rel = np.full((1, K, K), np.nan)
+                _neighbour_error(chain.model, g.nodes[None], g.omega[None], np.full(1, np.nan),
+                                 chain.Y[n + 1:n + 2], exit_rel=rel)
+                rel = rel[0]
             rel = np.minimum(np.where(np.isfinite(rel), rel, 0.0), _REL_CAP)
-            if betas is None:
-                w = alphas[n].reshape(K, G).sum(axis=1)[:, None] * np.ones((1, K))
-            else:
-                # the posterior of (x_n, x_{n+1}) through the exit transition
-                w = joint(n + 1).reshape(K, G, K).sum(axis=1)
+            w = joint(n + 1).reshape(K, G, K).sum(axis=1)
             tot = w.sum()
             if np.isfinite(tot) and tot > 0.0:
-                parts[int(run_of[n])] += float((w * rel).sum() / tot)
+                extra[int(run_of[n])] += float((w * rel).sum() / tot)
+    parts = {a: abs(math.log1p(max(signed[a], -0.99))) + extra[a] for a in signed}
     total = float(sum(parts.values()))
     return (total, parts) if per_run else total
 
@@ -3897,13 +4835,15 @@ class GapPosterior:
                  position: the reference nodes, or those of its local grid
                  (module docstring, "Local grids").
     quad_error : float or None — the quadrature diagnostic of
-                 :func:`_quadrature_report` (grid variants): the relative
-                 errors of the quadrature on the integrals it must reproduce
-                 exactly, weighted by the posterior and summed over the runs
-                 of missing rows — an estimate of Σ_runs |error of the run's
-                 log-likelihood factor| in nats (module docstring,
-                 "Convergence diagnostic"). Above ``QUAD_WARN`` (0.05) a
-                 WARNING is logged.
+                 :func:`_quadrature_report` (grid variants): an estimate of
+                 Σ_runs |error of the run's log-likelihood factor| in nats,
+                 from the local errors of the steps into the missing rows
+                 (each discrete transition against the exact one-step law,
+                 on the backward message), weighted by the posterior; 0 for
+                 a trailing gap, whose factor is exactly 1. Inside a leading
+                 gap it also counts the errors of the posterior there
+                 (module docstring, "Convergence diagnostic"). Above
+                 ``QUAD_WARN`` (0.05 nats) a WARNING is logged.
     """
 
     miss: np.ndarray
