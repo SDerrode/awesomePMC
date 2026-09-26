@@ -1,32 +1,39 @@
 # Erroneous data on real sensors: the Intel Berkeley Lab temperatures
 
-> **Status (2026-09-25, pmcprg d14e91d).** Every number below comes from
-> the rerun on the current gap quadrature. Steps 1, 2 and 3 ran on pmcprg
-> d14e91d (commits c151f21, d637a06 and 2bbe5b8). The 256-node check of step
-> 2 ran on pmcprg 5f23fc9 (commit 6ef6a31), which only bounds the memory of
-> the quadrature and gives bit for bit the results of d14e91d (CHANGELOG
-> `[Unreleased]`, "memory of the gap quadrature").
+> **Status (2026-09-26, pmcprg 5351de0 / 35e897d).** Every number below
+> comes from the last rerun of the whole study, on the fix of library
+> problem 4 (long runs of missing rows, and a `quad_error` in nats). Step 1
+> ran on pmcprg 5351de0; step 2, the 256-node check and step 3 on 35e897d,
+> which adds only a fix for an exactly singular system in the quadrature
+> diagnostic (commits f92da76 and 700dcd4). Where a number moved since the
+> previous rerun (pmcprg d14e91d / 5f23fc9, 2026-09-25), the text says so.
 >
 > * **Library fixes since the first run** (CHANGELOG `[Unreleased]`): local
 >   grids for missing values under strong dependence (P1), the forecast and
 >   impute quantiles (P3), the empty state (P2), leading gaps, a calibrated
->   `quad_error` diagnostic and the cost of the quadrature (P5–P7), and local
->   grids placed from the filter (cause 4). They change every PMC number.
->   The HMC-IN results, the baselines and the labels are reproduced bit for
+>   `quad_error` diagnostic and the cost of the quadrature (P5–P7), local
+>   grids placed from the filter (cause 4), bounded memory (5f23fc9), and
+>   long runs of missing rows with `quad_error` in nats (5351de0). The
+>   HMC-IN results, the baselines and the labels are reproduced bit for
 >   bit.
+> * **What the long-run fix changed here.** Almost nothing on the clean
+>   days, and no lead time or sequential recall. `quad_error` no longer
+>   counts long gaps: 4 533 → under 0.01 for a 4 656-row trailing gap,
+>   5 015 → under 2.8 for two network outages (library problem 4, fixed). Where
+>   it stays high, on the failure, the pass is not converged. At G = 64 the
+>   non-sequential passes on the failure moved closer to G = 256 and the
+>   gated ones further (74 / 17 / 7 rows differ at α = 1e-3 instead of
+>   26 / 1 / 0). Three flag-and-mask loops end differently.
 > * **Clean days: converged in practice.** At the default G = 64 the PMC
->   log-likelihood of days 1–10 is within 0.04 nats of G = 256, and the
+>   log-likelihood of days 1–10 is within 0.042 nats of G = 256, and the
 >   flags are the same, although the quadrature WARNING fires.
 > * **Failure windows: not converged, at G = 64 or 256.** Wherever a PMC
 >   pass conditions on failing readings, its results move with G: the
 >   non-sequential flags of motes 48 and 47, and through gating the BH lead
 >   on mote 47 (section 2, "The check at 256 nodes"). The sequential recall
->   and the false alarms in normal operation do not move.
-> * **Flag-and-mask finds no fixed point in 9 of the 12 PMC loops**
+>   and the false-alarm episodes in normal operation do not move.
+> * **Flag-and-mask finds no fixed point in 10 of the 12 PMC loops**
 >   (section 3). The failure still becomes a state in every raw fit.
-> * **`quad_error` saturates on long runs of missing rows** (library
->   problem 4, open): about 1 per missing row whatever the error, which puts
->   it in the thousands on the detection and robust windows.
 > * **Clipped corner: decided, not changed.** The PIT at the clipped copula
 >   corner (library problem 1) is left as is. `pmcprg/pmc/outliers.py`
 >   documents why: without gating, a run of erroneous readings is judged
@@ -58,19 +65,22 @@ exception: one-off diagnostics, quoted in the text.
 > `gap_nodes = 64`; the HMC-IN uses the exact K-state message.
 >
 > * **Clean days (step 1).** Converged in practice: the log-likelihood
->   moves by 0.006–0.036 nats from G = 64 to 256, and the flags are the
+>   moves by 0.006–0.042 nats from G = 64 to 256, and the flags are the
 >   same.
-> * **Detection (step 2).** Converged where the gated filter has integrated
->   the failing readings out; not converged where a pass conditions on
->   them, far outside every clean margin. The
->   non-sequential PMC results of motes 48 and 47 and the sequential BH
->   lead of mote 47 depend on G.
+> * **Detection (step 2).** Not converged where a pass conditions on the
+>   failing readings, far outside every clean margin. The non-sequential
+>   PMC results of motes 48 and 47 and the sequential BH lead of mote 47
+>   depend on G. The gated passes at G = 64 are also some rows and a few
+>   nats off G = 256 in normal operation (mote 48: 65 more false flags at
+>   G = 256, in the same episodes).
 > * **Robust estimation (step 3).** Every PMC E-step warns, and the fits
 >   were not checked at 256 nodes. The failure states are unlikely to
->   depend on G; the masks and cycles may.
-> * **The WARNING itself.** On long runs of missing rows `quad_error`
->   reports about 1 per missing row, whatever the error (library problem
->   4). Its thousands on these windows are not nats.
+>   depend on G; the masks and cycles do (the long-run fix changed three
+>   loops' endings).
+> * **The WARNING itself.** `quad_error` now estimates nats and counts 0
+>   for a trailing gap. On the clean days it overstates the change to
+>   G = 256 by 10–17 times; on the failure it is capped at 4.6 nats per run
+>   and understates the change (142 against 3 669 nats on mote 47).
 
 ## Summary
 
@@ -93,11 +103,13 @@ exception: one-off diagnostics, quoted in the text.
     its first flag of the last 24 h comes 11.1, 17.3 and 16.2 h before it.
     It raises 0, 0 and 2 flags in 14–15 days of normal operation (one
     episode).
+    These leads did not move with the long-run fix.
   - **The mote-47 lead depends on the quadrature.** At G = 256 the alarm on
     the climb breaks up, and the episode that reaches the failure starts
     3.2 h before it, against 15.2 h at G = 64 on the same window; its first
     flag does not move. The other sequential leads move by at most 2.3 h
-    (mote 48 at α = 1e-3: 8.8 → 11.1 h), and the false alarms not at all.
+    (mote 48 at α = 1e-3: 8.8 → 11.1 h), and the false-alarm episodes not
+    at all.
   - **HMC-IN.** It warns earlier on motes 48 and 22 (13.4 and 6.5 h; 15.2 h
     on mote 47) but raises about 900–1 300 flags in the normal operation of
     motes 48 and 47, on warm afternoons.
@@ -107,13 +119,13 @@ exception: one-off diagnostics, quoted in the text.
     not detect this failure: their recall is 0.00–0.13. Both adapt to a smooth
     drift and to a stuck value.
 * **The flags before the threshold are mostly true early drift.** On motes
-  48 and 47, 57 % and 89 % of the out-of-range climb is flagged by the
+  48 and 47, 58 % and 88 % of the out-of-range climb is flagged by the
   sequential PMC at α = 1e-3; the rest is its lower end. Mote 22 is the
   exception (31 %): its clean-window PMC has a wide margin (sd 5.17 °C)
   that accepts a climb to about 50 °C. The false alarms, examined on the
   plots, fall into two classes:
   - warm afternoon peaks above the fit-window maximum (mote 48, 26–30 °C,
-    599 of its 605 flags; mote 47, 30.7–32.2 °C);
+    553 of its 559 flags; mote 47, 30.7–32.2 °C);
   - morning events at 07:01 that recur on several days: a jump from about
     22 to 28–30 °C on mote 22, a 0.3 °C dip on mote 47 (probably a
     building schedule).
@@ -123,41 +135,47 @@ exception: one-off diagnostics, quoted in the text.
   reading makes its successors look wrong, because the gated filter keeps
   predicting the old level while the true level moves on. On mote 48's warm
   afternoons of 03-13 and 03-20, 4 and 2 non-sequential flags become runs
-  of 331 and 268 sequential ones (605 against 12 normal-operation flags),
-  at G = 64 and at G = 256 alike. On the held-out clean days the lock-out
+  of 320 and 233 sequential ones (559 against 12 normal-operation flags;
+  624 at G = 256). On the held-out clean days the lock-out
   is small (10, 3 and 30 sequential flags against 3, 2 and 2). The
   Benjamini–Hochberg correction or α = 1e-4 removes almost all of it.
 * **Robust re-estimation breaks down, as the simulation predicts.** In every
   raw fit (6 of 6), the failing readings form a state of their own:
   mean 59–120 °C, sd 3–37 °C, stay ≥ 0.9998 for the HMC-IN; a broad state
-  of 39–52 °C, sd 26–35 °C, stay 0.97–1.00 for the PMC, which on motes 22
+  of 38–52 °C, sd 25–35 °C, stay 0.97–1.00 for the PMC, which on motes 22
   and 47 spends a second state on the stuck 122.15 °C value.
   - **Default flag-and-mask.** Under that state almost nothing is flagged
-    (0–22 rows), and every result keeps a failure state.
-  - **No fixed point in 9 of the 12 PMC loops** (3 of 12 for the HMC-IN,
-    all on mote 22). On mote 22 three loops end in one deterministic cycle:
-    the raw fit, then the raw fit with its 13 flagged climb rows masked,
-    every fit at the ICE cap of 50 iterations. On mote 47 the default and
-    Hampel loops cycle through 3–15 masked rows. With the threshold
-    pre-mask the masks drift (267–350 rows). The three PMC loops that
-    converge keep a failure state.
+    (0–16 rows), and every result keeps a failure state.
+  - **No fixed point in 10 of the 12 PMC loops** (9 in the previous rerun;
+    3 of 12 for the HMC-IN, all on mote 22). On mote 22 three loops end in
+    one deterministic cycle: the raw fit, then the raw fit with its 13
+    flagged rows masked, every fit at the ICE cap of 50 iterations.
+    On motes 48 and 47 the masks drift: 12–25 rows for the default loop of
+    mote 48 (a fixed point of 22 rows in the previous rerun), 5–15 for
+    that of mote 47, and 265–333 with the threshold pre-mask until mote
+    48's loop drops it (below). The two PMC loops that
+    converge (from the clean model, motes 22 and 47) keep a failure
+    state.
   - **Hampel `initial_mask`.** It does not help, because it catches spikes,
     not drifts (6 of 6 break down).
   - **Other starts.** Starting from the clean-window model does not help
     either (6 of 6 keep a failure state).
   - **Threshold `initial_mask`.** A sensor-level pre-mask (the 60 °C
-    threshold) gets 4 of 6 fits to mask every suspect row: both models on
-    motes 48 and 47. The HMC-IN on mote 48 also masks the whole climb, the
-    PMC on mote 48 66 % of it; on mote 47 the PMC keeps the climb as a
-    33 °C state. On mote 22 (19 % of the window failing) both models
-    release the pre-mask round after round and end in the raw fit's cycle.
+    threshold) gets 3 of 6 fits to mask every suspect row: the HMC-IN on
+    motes 48 and 47, and the PMC on mote 47, which keeps the climb in a
+    broad 27 °C state (sd 6.5 °C). The HMC-IN on mote 48 also masks the
+    whole climb. The PMC on mote 48 now drops the pre-mask at its 9th fit
+    and falls into the failure basin (in the previous rerun it
+    masked every suspect row and 66 % of the climb). On mote 22 (19 % of
+    the window failing) both models release the pre-mask round after round
+    and end in the raw fit's cycle.
 * **Even the threshold oracle is contaminated.** Masking only the suspect
   rows leaves the climb in: the top state keeps an sd of 6–8 °C, against
   1.7–2.7 °C once the climb is masked too (HMC-IN).
 * **A contamination component is needed for estimation, not for detection.**
   The failure is persistent: the fitted stay probability of the broad
   failure states is ≥ 0.97, and ≥ 0.9998 for the HMC-IN. It is also broad:
-  sd 26–37 °C in 5 of the 6 raw fits. The indicator must therefore be
+  sd 25–37 °C in 5 of the 6 raw fits. The indicator must therefore be
   Markov, not Bernoulli, and its law must be fixed, not a regular state
   that ICE can reshape. Conclusion below.
 * **Four library problems found** (below, each with a reproduction or a
@@ -167,19 +185,21 @@ exception: one-off diagnostics, quoted in the text.
      for the Gaussian and Gumbel–Hougaard copulas, although its log
      predictive density is about −1 200. With the current local grids it
      also reaches most rows after a gap inside the failure: the
-     non-sequential recall of the PMC is 0.26 and 0.02 on motes 48 and 47.
+     non-sequential recall of the PMC is 0.15 and 0.02 on motes 48 and 47.
      The sequential (default) flags are not affected.
-  2. **Gap quadrature** (fixed at 39f249f, refined up to d14e91d). With
+  2. **Gap quadrature** (fixed at 39f249f, refined up to 5351de0). With
      strongly dependent copulas (τ ≈ 0.99–0.997 at 30 s), the quadrature
      had not converged at the default `gap_nodes = 64`, nor at 512. On the
-     clean days of this study G = 64 is now within 0.04 nats of G = 256.
+     clean days of this study G = 64 is now within 0.042 nats of G = 256.
   3. **Leading gap** (fixed, P5). When a series started with missing rows,
      the first reading after them was misintegrated under strong
      dependence, with no WARNING (−4.3 nats at τ = 0.997 and −22 nats at
      τ = 0.999 on a 400-row simulated series, G = 64).
-  4. **`quad_error` on long runs of missing rows** (open). It reports about
-     1 per missing row, whatever the error: 4 533 for a trailing gap of
-     4 656 rows, which contributes exactly 0 to the log-likelihood.
+  4. **`quad_error` on long runs of missing rows** (fixed at 5351de0). It
+     reported about 1 per missing row, whatever the error: 4 533 for a
+     trailing gap of 4 656 rows, which contributes exactly 0 to the
+     log-likelihood. Now under 0.01 for that gap, and long runs converge in
+     G.
 
 ## Data and labels
 
@@ -312,12 +332,13 @@ From the repository root (the scripts put the repository first on
 ```bash
 OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/fit_clean.py --jobs 4
 OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/detect.py --jobs 4
-OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/robust.py --jobs 4   # --resume after an interruption
-OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/detect.py --check --jobs 4
+OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/robust.py --jobs 3 --resume &   # --resume: reuse saved tasks
+OMP_NUM_THREADS=1 .venv/bin/python report/erroneous_data/intel_lab/detect.py --check --jobs 2 &     # side by side
+wait
 .venv/bin/python report/erroneous_data/intel_lab/summarise.py
 .venv/bin/python report/erroneous_data/intel_lab/repro_clipped_corner.py   # library problem 1
-.venv/bin/python report/erroneous_data/intel_lab/repro_gap_nodes.py        # library problem 2 (≈ 20 s)
-.venv/bin/python report/erroneous_data/intel_lab/repro_leading_gap.py      # library problem 3 (≈ 20 s)
+.venv/bin/python report/erroneous_data/intel_lab/repro_gap_nodes.py        # library problem 2 (≈ 5 s)
+.venv/bin/python report/erroneous_data/intel_lab/repro_leading_gap.py      # library problem 3 (≈ 10 s)
 ```
 
 `robust.py` saves each task to `results/cache/robust_tasks/` as it
@@ -327,7 +348,10 @@ every flag-and-mask loop.
 
 The scripts keep the WARNINGs of pmcprg instead of hiding them. Every task
 counts the quadrature WARNINGs of its passes and records `quad_error`
-against its threshold (0.05):
+against its threshold (0.05). Since pmcprg 5351de0 `quad_error` estimates
+the error of the log-likelihood in nats, summed over the runs of missing
+rows; before, it summed capped relative errors (library problem 4). It is
+recorded in:
 
 * `fits.csv`: per ICE start;
 * `pit_checks.csv`: days 1–10;
@@ -346,26 +370,45 @@ The non-sequential settings of `detect.py` share one `predictive_pit` pass
 per model, thresholded as `flag_outliers(sequential=False)` does; the flags
 are identical.
 
-The wall times on an Apple arm64 laptop (32 GB; Python 3.14.7, numpy
-2.5.3, scipy 1.18.1), from the `*_info.json` files and the run logs:
+**A second process pool for `robust.py`.** A task saved to the cache is
+loaded, not rerun, when `--resume` reaches it. So a helper that runs the
+same task specifications in reverse order into the same cache, while the
+main run goes forward, meets it in the middle; each of its workers can at
+most duplicate the task the main run is on. The helper is not versioned
+(`report/out/reruns/robust_helper.py`). Once both have stopped, a last
+`robust.py --resume` loads every task and writes the tables.
 
-* `fit_clean.py`: 6.2 min with 4 processes (217 s of fits, 152 s of PIT
-  checks);
-* `detect.py`: 26 min with 4 processes (97 min of task time);
-* `robust.py`: 3 h 05 min with 4 processes (13.2 h of task time). It was
-  resumed with `--resume` after a first 1 h 14 min with 2 processes, which
-  had finished 2 of the 48 tasks. The 12 PMC flag-and-mask tasks take
-  11–105 min each; the 24 HMC-IN tasks take 0.6–17 s.
-* `detect.py --check`: 56 min with 4 processes. Its G = 256 passes take
-  2.6–38 min each, against 7–199 s at G = 64.
+The wall times of the last rerun on an Apple arm64 laptop (32 GB; Python
+3.14.7, numpy 2.5.3, scipy 1.18.1), from the run logs and the
+`*_info.json` files:
+
+* `fit_clean.py`: 6.4 min with 4 processes (256 s of fits, 126 s of PIT
+  checks), on pmcprg 5351de0. 35e897d only changes what happens on an
+  exactly singular system, which stops 5351de0; step 1 did not stop, so
+  its results are those of 35e897d too.
+* `detect.py`: 27 min with 4 processes (99 min of task time), on
+  35e897d. The first attempt on 5351de0 stopped on a singular 5×5 system
+  of the quadrature diagnostic (`LinAlgError`), which 35e897d fixes.
+* `detect.py --check`: 94 min with 2 processes, alongside `robust.py`. Its
+  G = 256 passes take 2.6–29 min each, against 17–245 s at G = 64.
+* `robust.py`: 5 h 53 min of wall time, 25.8 h of task time (13.2 h in the
+  previous rerun). The main run used 3 processes from 13:16 to 19:07. A
+  reverse-order helper on 4 processes ran from 14:50 to 18:55 into the
+  same cache; one task (mote 22, PMC, `fm_hampel`, 2.3 h) ran in both. The
+  last `--resume` took 103 s. Its `results/robust_info.json` records only
+  that last run's pool: `wall_seconds` is 1.4 s, and `jobs` 3.
+  `fit_seconds_sum` (92 892 s) is the sum over the 48 saved tasks. The 12
+  PMC flag-and-mask tasks take 16–202 min each; the 24 HMC-IN tasks
+  0.6–17 s.
 
 **Memory.** Run `--check` on pmcprg 5f23fc9 or later. Before 5f23fc9 the
 G = 256 passes on these windows reached 21–23 GB per process (CHANGELOG,
 "memory of the gap quadrature"). With 5f23fc9 a G = 256 sequential pass on
 the mote-48 check window takes about 2.7 GB of footprint and 11 min on its
-own. With 4 processes the check peaked at about 14.5 GB of footprint in all
-(3.9 GB for the largest process), and `robust.py` at about 7.6 GB (a memory
-guard sampling every 60 s).
+own. In the last rerun the processes of the study peaked at 16.8 GB of
+footprint in all (4.1 GB for the largest), with the check and `robust.py`
+side by side; `detect.py` alone at 11.6 GB (a memory guard sampling every
+60 s).
 
 The per-row flags and labels go to `results/cache/`, which is not
 versioned. `detect.py --figures-only` redraws the figures from that cache.
@@ -381,21 +424,27 @@ every observed epoch.
 | 48 | HMC-IN | 59224 | 43874 | 3 | 17.34 / 20.02 / 22.53 | 0.89 / 0.47 / 1.36 | – | 3 |
 | 48 | PMC | −90106 | −92827 | 3 | 19.13 / 21.89 / 22.05 | 2.03 / 1.76 / 2.01 | Gauss(0.996) / Frank(0.946) / Gauss(0.989) | 2329 |
 | 22 | HMC-IN | 82622 | 67679 | 3 | 18.20 / 23.49 / 31.79 | 1.36 / 2.15 / 1.22 | – | 1 |
-| 22 | PMC | −79769 | −81512 | 3 | 22.45 / 22.75 / 23.36 | 1.79 / 5.17 / 3.40 | Gauss(0.975) / Clayton(0.997) / Clayton(0.920) | 939 |
+| 22 | PMC | −79768 | −81512 | 3 | 22.45 / 22.75 / 23.36 | 1.79 / 5.17 / 3.40 | Gauss(0.975) / Clayton(0.997) / Clayton(0.920) | 940 |
 | 47 | HMC-IN | 64679 | 47486 | 3 | 17.26 / 20.25 / 23.73 | 0.94 / 0.59 / 1.86 | – | 0 |
-| 47 | PMC | −74363 | −79747 | 3 | 18.71 / 21.61 / 25.49 | 1.95 / 1.89 / 2.40 | Gauss(0.996) / GH(0.983) / GH(0.969) | 2823 |
+| 47 | PMC | −74363 | −79747 | 3 | 18.71 / 21.61 / 25.49 | 1.95 / 1.89 / 2.40 | Gauss(0.996) / GH(0.983) / GH(0.969) | 2838 |
 
 * **K.** BIC chooses K = 3 for every mote and model. With about 17 600
   strongly dependent rows, BIC would keep adding states. K = 3 is the upper
   end of the range the study allows, and it is interpretable (next point).
 * **Starts.** The PMC likelihood has many basins: the 3 starts end
-  939–2 823 nats apart, as in `report/real_series`.
+  940–2 838 nats apart, as in `report/real_series`.
 * **The PMC gains 63 700–74 600 nats of likelihood over the HMC-IN.** Its
   diagonal copulas have τ = 0.92–0.997, and τ = 0.996–0.997 for the state
   that holds the night: consecutive 30 s readings are almost deterministic
   given the previous one.
 * **The HMC-IN fits are those of the first run**, bit for bit: they use the
   exact K-state message, which no library change touched.
+* **The PMC fits barely moved with the long-run fix** (5351de0, against the
+  previous rerun on d14e91d). The same starts are kept; their parameters
+  change by at most 7.7e-4 in relative terms (mote 22) and their
+  log-likelihoods by at most 0.19 nats. Only a start that no cell keeps
+  moves by more (−15 nats, mote 47, K = 3). The tables above and below are
+  the previous rerun's to their last digit, except where stated.
 
 **Regimes.** The day/night split is real for the HMC-IN on all motes and for
 the PMC on mote 47. It is weaker for the PMC on motes 48 and 22, whose
@@ -429,7 +478,7 @@ The two models split the day differently:
 | 48 | HMC-IN K=3 | 7551 | 0.247 (< 1e-300) | 74631 (< 1e-300) | 75353 (< 1e-300) | 0.76 | 1.61 | 1.00 | 911 / 678 / 393 (76 / 8 / 0.8) | 694 |
 | 48 | PMC K=3 | 7551 | 0.045 (9.9e-14) | 4071 (< 1e-300) | 1006 (1.2e-209) | 0.02 | 0.90 | 0.05 | 80 / 3 / 1 (76 / 8 / 0.8) | 10 |
 | 22 | HMC-IN K=3 | 7736 | 0.235 (< 1e-300) | 74996 (< 1e-300) | 74146 (< 1e-300) | 0.55 | 1.04 | 1.00 | 34 / 0 / 0 (77 / 8 / 0.8) | 0 |
-| 22 | PMC K=3 | 7736 | 0.118 (1e-94) | 2151 (< 1e-300) | 3103 (< 1e-300) | −0.08 | 0.75 | 0.01 | 23 / 2 / 0 (77 / 8 / 0.8) | 3 |
+| 22 | PMC K=3 | 7736 | 0.118 (1e-94) | 2152 (< 1e-300) | 3103 (< 1e-300) | −0.08 | 0.75 | 0.01 | 23 / 2 / 0 (77 / 8 / 0.8) | 3 |
 | 47 | HMC-IN K=3 | 7605 | 0.148 (5.9e-146) | 74346 (< 1e-300) | 75703 (< 1e-300) | 0.53 | 1.36 | 1.00 | 730 / 384 / 266 (76 / 8 / 0.8) | 394 |
 | 47 | PMC K=3 | 7605 | 0.032 (3.7e-07) | 4888 (< 1e-300) | 2011 (< 1e-300) | 0.04 | 0.97 | 0.09 | 97 / 2 / 0 (76 / 8 / 0.8) | 30 |
 
@@ -463,18 +512,19 @@ days 1–10 at 64 and 256 nodes; `results/tables.md`):
 
 | mote | `quad_error` G = 64 (limit 0.05) | `quad_error` G = 256 | log-lik days 1–10, G = 64 | log-lik, G = 256 | held-out flags α = 1e-3, non-sequential / sequential (both G) | same sequential rows |
 |---|---|---|---|---|---|---|
-| 48 | 0.19 | 0.0067 | 67 114.06 | 67 114.07 | 3 / 10 | yes |
-| 22 | 1.72 | 0.034 | 59 688.92 | 59 688.88 | 2 / 3 | yes |
-| 47 | 0.23 | 0.0004 | 58 729.45 | 58 729.43 | 2 / 30 | yes |
+| 48 | 0.057 | 0.0048 | 67 114.06 | 67 114.07 | 3 / 10 | yes |
+| 22 | 0.64 | 0.0068 | 59 689.09 | 59 689.05 | 2 / 3 | yes |
+| 47 | 0.42 | 0.0003 | 58 729.45 | 58 729.42 | 2 / 30 | yes |
 
 * **Converged in practice at G = 64.** The log-likelihood of days 1–10
-  moves by 0.006–0.036 nats from G = 64 to 256. The sd of the scores after
+  moves by 0.006–0.042 nats from G = 64 to 256. The sd of the scores after
   a gap (to 3 decimals), the flag counts and the sequentially flagged rows
   are the same.
-* **The WARNING fires anyway.** `quad_error` is 0.19–1.72 at G = 64, 10–50
-  times the change it estimates, and falls below its threshold at
-  G = 256. The ICE E-steps of the PMC fits warn too (29–42 passes of the 3
-  starts per cell; `quad_error` 0.08–2.5 for the kept fits).
+* **The WARNING fires anyway.** `quad_error`, now an estimate in nats, is
+  0.057–0.64 at G = 64 (0.19–1.72 before the long-run fix), 10–17 times the
+  change to G = 256, and falls below its threshold at G = 256. The ICE
+  E-steps of the PMC fits warn too (28–41 passes of the 3 starts per cell;
+  `quad_error` 0.04–0.92 for the kept fits).
 * **The two passes agree.** The PIT filter and the batch pass give the same
   log-likelihood (67 114.06 against 67 114.06 on mote 48), as the
   leading-gap fix (P5) makes them: the clean windows start with a 17-, 2-
@@ -489,11 +539,11 @@ at 256 nodes follows the discussion.
 
 | method | recall (suspect) | precision (suspect) | precision (suspect + climb) | share of climb rows flagged | normal-operation flags (episodes) |
 |---|---|---|---|---|---|
-| PMC seq α=1e-3 | 1.00 / 1.00 / 1.00 | 0.77 / 0.94 / 0.84 | 0.80 / 0.98 / 0.97 | 0.57 / 0.31 / 0.89 | 605 (8) / 106 (9) / 49 (7) |
-| PMC seq α=1e-4 | 1.00 / 1.00 / 1.00 | 0.96 / 0.97 / 0.87 | 1.00 / 1.00 / 0.99 | 0.54 / 0.24 / 0.79 | 0 (0) / 0 (0) / 3 (1) |
-| PMC seq BH α=1e-3 | 1.00 / 1.00 / 1.00 | 0.96 / 0.97 / 0.87 | 1.00 / 1.00 / 0.99 | 0.54 / 0.24 / 0.78 | 0 (0) / 0 (0) / 2 (1) |
-| PMC nonseq α=1e-3 | 0.26 / 1.00 / 0.02 | 0.93 / 0.96 / 0.27 | 0.98 / 1.00 / 0.87 | 0.20 / 0.30 / 0.28 | 12 (8) / 9 (9) / 8 (7) |
-| PMC nonseq BH α=1e-3 | 0.26 / 1.00 / 0.02 | 0.96 / 0.97 / 0.35 | 1.00 / 1.00 / 0.97 | 0.15 / 0.24 / 0.21 | 0 (0) / 0 (0) / 0 (0) |
+| PMC seq α=1e-3 | 1.00 / 1.00 / 1.00 | 0.78 / 0.94 / 0.84 | 0.81 / 0.97 / 0.97 | 0.58 / 0.31 / 0.88 | 559 (8) / 122 (9) / 49 (7) |
+| PMC seq α=1e-4 | 1.00 / 1.00 / 1.00 | 0.96 / 0.97 / 0.87 | 1.00 / 1.00 / 0.99 | 0.55 / 0.24 / 0.80 | 0 (0) / 0 (0) / 3 (1) |
+| PMC seq BH α=1e-3 | 1.00 / 1.00 / 1.00 | 0.96 / 0.97 / 0.87 | 1.00 / 1.00 / 0.99 | 0.54 / 0.24 / 0.80 | 0 (0) / 0 (0) / 2 (1) |
+| PMC nonseq α=1e-3 | 0.15 / 1.00 / 0.02 | 0.87 / 0.96 / 0.26 | 0.97 / 1.00 / 0.86 | 0.21 / 0.30 / 0.28 | 12 (8) / 9 (9) / 8 (7) |
+| PMC nonseq BH α=1e-3 | 0.15 / 1.00 / 0.02 | 0.93 / 0.97 / 0.34 | 1.00 / 1.00 / 0.98 | 0.15 / 0.24 / 0.21 | 0 (0) / 0 (0) / 0 (0) |
 | HMC-IN seq α=1e-3 | 1.00 / 1.00 / 1.00 | 0.61 / 0.87 / 0.63 | 0.66 / 0.97 / 0.74 | 1.00 / 0.84 / 1.00 | 1290 (3) / 0 (0) / 924 (3) |
 | HMC-IN nonseq α=1e-3 | 1.00 / 1.00 / 1.00 | 0.62 / 0.87 / 0.63 | 0.66 / 0.97 / 0.74 | 1.00 / 0.84 / 1.00 | 1271 (3) / 0 (0) / 905 (3) |
 | HMC-IN seq BH α=1e-3 | 1.00 / 1.00 / 1.00 | 0.67 / 0.89 / 0.69 | 0.72 / 0.98 / 0.81 | 1.00 / 0.80 / 0.95 | 967 (3) / 0 (0) / 636 (3) |
@@ -521,9 +571,13 @@ after it):
 | Hampel t=4 | −0.0 / −1.2 / −4.0 | 23.4 / 23.8 / 23.9 | 370.8 / 325.8 / 372.5 |
 | robust z 24 h t=4 | 14.2 / 2.1 / 16.2 | 14.2 / 17.2 / 16.2 | 378.0 / 351.8 / 374.0 |
 
-The HMC-IN and baseline rows are those of the first run, which the rerun
-reproduced. The figures are `figures/detect_overview.png` (the whole
-window), `figures/detect_zoom.png` (36 h before to 6 h after the failure),
+The HMC-IN and baseline rows are those of the first run, which the reruns
+reproduced. Against the previous rerun (d14e91d), the long-run fix leaves
+every lead time and every sequential recall unchanged; it moves the
+sequential PMC's false alarms at α = 1e-3 (605 → 559 on mote 48, 106 →
+122 on mote 22) and the non-sequential recall of mote 48 (0.26 → 0.15).
+The figures are `figures/detect_overview.png` (the whole window),
+`figures/detect_zoom.png` (36 h before to 6 h after the failure),
 `figures/detect_pvalues.png` and `figures/detect_false_alarms.png`.
 
 * **The model flags come early.** The sequential PMC and the HMC-IN flag
@@ -554,14 +608,14 @@ window), `figures/detect_zoom.png` (36 h before to 6 h after the failure),
 * **Examined false alarms of the PMC** (sequential, α = 1e-3;
   `results/alarm_episodes.csv`, every episode listed in
   `results/tables.md`; `figures/detect_false_alarms.png`):
-  - **Mote 48.** 8 episodes, 605 flags. Two of them hold 599 flags: 03-13
-    from 12:56 (4.6 h, 331 flags) and 03-20 from 13:58 (2.5 h, 268 flags),
+  - **Mote 48.** 8 episodes, 559 flags. Two of them hold 553 flags: 03-13
+    from 12:56 (4.5 h, 320 flags) and 03-20 from 13:58 (2.2 h, 233 flags),
     smooth afternoon peaks of 26.2–29.9 and 27.1–29.3 °C, up to 2 °C above
     the fit week's maximum of 27.9 °C. Without gating the same peaks give 4
     and 2 flags: this is lock-out, and it holds at G = 256 (below). The 6
     other episodes are single flags.
-  - **Mote 22.** 9 episodes, 106 flags. The two largest start at 07:01 on
-    03-09 and 03-10 (47 and 38 flags): the reading jumps from about 22 °C
+  - **Mote 22.** 9 episodes, 122 flags. The two largest start at 07:01 on
+    03-09 and 03-10 (61 and 40 flags): the reading jumps from about 22 °C
     to 28 °C within minutes and to 30 °C within half an hour. A third
     starts at 07:01 on 03-22 (4 flags). The others hold 1–4 flags.
   - **Mote 47.** 7 episodes, 49 flags. Four start between 07:01 and 07:12
@@ -576,10 +630,10 @@ window), `figures/detect_zoom.png` (36 h before to 6 h after the failure),
     one episode on mote 47.
 * **Flags before the threshold are mostly true early drift.**
   - Between the climb onset and the first suspect reading, the sequential
-    PMC (α = 1e-3) flags 57 % (mote 48) and 89 % (mote 47) of the rows.
+    PMC (α = 1e-3) flags 58 % (mote 48) and 88 % (mote 47) of the rows.
     The rows it leaves are the lower part of the climb: 28.0–34.7 °C on
-    mote 48, and on mote 47 the first 1.4 h of the climb (30.0–33.4 °C).
-    The HMC-IN flags 100 % on both motes.
+    mote 48, 30.0–38.9 °C on mote 47 (8.5–14.8 h before the threshold
+    hit). The HMC-IN flags 100 % on both motes.
   - In the ambiguous zone, the sequential PMC flags 0, 9 and 29 rows.
     - **Mote 47.** The 29 flags run from 05:15 on 03-24 to the climb onset
       at 06:37 (28.0–31.3 °C), continuous with the climb: probably early
@@ -601,30 +655,30 @@ window), `figures/detect_zoom.png` (36 h before to 6 h after the failure),
     with failing readings and it stops flagging, which gives a recall of
     0.05–0.13 on the suspect rows. It also flags every warm afternoon
     (4–5 episodes, 587–1 412 flags).
-* **Non-sequential PMC: recall 0.26 and 0.02 on motes 48 and 47.**
+* **Non-sequential PMC: recall 0.15 and 0.02 on motes 48 and 47.**
   - Every suspect row that directly follows another observed suspect row
     is missed (1 146 and 1 064 rows, median p 0.94 and 0.96). This is the
     clipped-corner problem below.
   - Of the 1 207 suspect rows that follow a missing epoch on each mote,
-    621 and 51 are flagged (median p 8.6e-16 and 0.82). The first run
-    flagged all of them. These flags depend on the quadrature: at G = 256
-    even fewer are flagged (below).
+    350 and 48 are flagged (median p 0.87 and 0.83). The first run flagged
+    all of them, the previous rerun 621 and 51. These flags depend on the
+    quadrature: at G = 256 even fewer are flagged (below).
   - On mote 22, whose top-state copula is a Clayton, every suspect row gets
     p ~ 1e-13 and is flagged: recall 1.00.
   - The sequential run is not affected: recall 1.00 on every mote.
 * **Sequential vs non-sequential.**
   - **During a persistent failure.** Gating is what keeps a stuck sensor
-    flagged: recall 1.00 against 0.02–0.26.
+    flagged: recall 1.00 against 0.02–0.15.
   - **During legitimate transients.** Gating turns a single flag into a
-    run: 605 against 12 normal-operation flags on mote 48, 106 against 9
+    run: 559 against 12 normal-operation flags on mote 48, 122 against 9
     on mote 22, 49 against 8 on mote 47. The simulation study measured a
     gating cost of 0.3 extra flags per 1 000 rows on its fixtures. On this
-    near-unit-root series it reaches 20 per 1 000 normal rows (mote 48).
+    near-unit-root series it reaches 19 per 1 000 normal rows (mote 48).
   - **For the HMC-IN it barely matters.** No y-dependence: 3 846 against
     3 826 flags on mote 48.
   - **Corrections.** BH (or a smaller per-row α) is the practical fix for
-    the lock-out on this data. Per-row α = 1e-2 makes it worse: 2 351,
-    1 173 and 943 normal-operation flags.
+    the lock-out on this data. Per-row α = 1e-2 makes it worse: 2 336,
+    1 172 and 957 normal-operation flags.
 
 #### The check at 256 nodes
 
@@ -645,71 +699,87 @@ Values for motes 48 / 22 / 47, on the check window
 
 | PMC setting | G | rows differing from G = 64 | recall (suspect) | climb rows flagged | normal-operation flags (episodes) | lead, episode (h) | lead, first flag of the last 24 h (h) |
 |---|---|---|---|---|---|---|---|
-| seq α=1e-3 | 64 | – | 1.00 / 1.00 / 1.00 | 104 / 193 / 358 | 605 (8) / 106 (9) / 49 (7) | 8.8 / 2.1 / 16.2 | 11.1 / 17.8 / 16.2 |
-| seq α=1e-3 | 256 | 26 / 1 / 0 | 1.00 / 1.00 / 1.00 | 114 / 193 / 358 | 621 (8) / 105 (9) / 49 (7) | 11.1 / 2.1 / 16.2 | 11.1 / 17.8 / 16.2 |
-| seq BH α=1e-3 | 64 | – | 1.00 / 1.00 / 1.00 | 86 / 127 / 273 | 0 / 0 / 0 | 6.1 / 1.2 / 15.2 | 10.6 / 1.2 / 15.2 |
-| seq BH α=1e-3 | 256 | 1 / 0 / 81 | 1.00 / 1.00 / 1.00 | 87 / 127 / 211 | 0 / 0 / 0 | 6.1 / 1.2 / 3.2 | 10.6 / 1.2 / 15.2 |
-| nonseq α=1e-3 | 64 | – | 0.30 / 1.00 / 0.36 | 37 / 188 / 114 | 12 (8) / 9 (9) / 8 (7) | 8.8 / 2.1 / 3.5 | 11.1 / 17.8 / 16.2 |
-| nonseq α=1e-3 | 256 | 35 / 0 / 97 | 0.07 / 1.00 / 0.00 | 31 / 188 / 67 | 12 (8) / 9 (9) / 8 (7) | 1.0 / 2.1 / none | 11.1 / 17.8 / 16.2 |
-| nonseq BH α=1e-3 | 64 | – | 0.30 / 1.00 / 0.36 | 24 / 117 / 87 | 0 / 0 / 0 | 6.1 / 1.2 / 3.5 | 8.8 / 1.2 / 15.2 |
-| nonseq BH α=1e-3 | 256 | 34 / 0 / 94 | 0.07 / 1.00 / 0.00 | 17 / 117 / 42 | 0 / 0 / 0 | 1.0 / 1.2 / none | 8.8 / 1.2 / 15.2 |
+| seq α=1e-3 | 64 | – | 1.00 / 1.00 / 1.00 | 105 / 193 / 351 | 559 (8) / 122 (9) / 49 (7) | 8.8 / 2.1 / 16.2 | 11.1 / 17.8 / 16.2 |
+| seq α=1e-3 | 256 | 74 / 17 / 7 | 1.00 / 1.00 / 1.00 | 114 / 193 / 358 | 624 (8) / 105 (9) / 49 (7) | 11.1 / 2.1 / 16.2 | 11.1 / 17.8 / 16.2 |
+| seq BH α=1e-3 | 64 | – | 1.00 / 1.00 / 1.00 | 86 / 127 / 279 | 0 / 0 / 0 | 6.1 / 1.2 / 15.2 | 10.6 / 1.2 / 15.2 |
+| seq BH α=1e-3 | 256 | 1 / 0 / 73 | 1.00 / 1.00 / 1.00 | 87 / 127 / 211 | 0 / 0 / 0 | 6.1 / 1.2 / 3.2 | 10.6 / 1.2 / 15.2 |
+| nonseq α=1e-3 | 64 | – | 0.21 / 1.00 / 0.34 | 39 / 188 / 111 | 12 (8) / 9 (9) / 8 (7) | 8.8 / 2.1 / 3.5 | 11.1 / 17.8 / 16.2 |
+| nonseq α=1e-3 | 256 | 25 / 0 / 91 | 0.07 / 1.00 / 0.00 | 31 / 188 / 67 | 12 (8) / 9 (9) / 8 (7) | 1.0 / 2.1 / none | 11.1 / 17.8 / 16.2 |
+| nonseq BH α=1e-3 | 64 | – | 0.21 / 1.00 / 0.34 | 25 / 117 / 83 | 0 / 0 / 0 | 6.1 / 1.2 / 3.5 | 8.8 / 1.2 / 15.2 |
+| nonseq BH α=1e-3 | 256 | 25 / 0 / 88 | 0.07 / 1.00 / 0.00 | 17 / 117 / 41 | 0 / 0 / 0 | 1.0 / 1.2 / none | 8.8 / 1.2 / 15.2 |
 
 The other non-sequential settings (α = 1e-2, 1e-4, BH 1e-2) differ in
-34–36 rows on mote 48, 94–102 on mote 47 and 0–3 on mote 22. The
-quadrature diagnostic of the non-sequential pass over the window's gaps
-is in the thousands at both G, against a threshold of 0.05: `quad_error`
-6.2e3 / 3.8e3 / 6.3e3 at G = 64 and 3.2e3 / 1.8e3 / 3.4e3 at G = 256.
+25–27 rows on mote 48, 89–92 on mote 47 and 0–3 on mote 22.
+
+**Against the previous rerun (d14e91d).** The G = 256 results hardly
+moved: 847 / 703 / 564 flags at α = 1e-3 against 844 / 703 / 564, the same
+BH counts, non-sequential counts within 1 flag, and log-likelihoods within
+0.7 nats where the flags agree (37 nats for the non-sequential pass of
+mote 47). The G = 64 results moved:
+
+* **Non-sequential: closer to G = 256.** 25–27 rows differ on mote 48
+  (34–36 before) and 88–92 on mote 47 (94–102). The log-likelihood of the
+  pass moves by 944 and 3 669 nats between G = 64 and 256 (1 312 and 3 956
+  before), and by 4.6 nats on mote 22 (2.4).
+* **Sequential: further from G = 256.** At α = 1e-3, 74, 17 and 7 rows
+  differ (26, 1 and 0 before); under BH 1, 0 and 73 (1, 0 and 81). Where
+  the flags agree, the log-likelihoods of G = 64 and 256 are 4.5 nats apart
+  on mote 22 under BH (2.4 before) and 5.6 nats on mote 48 (1 row differs;
+  0.9 before). Probably the new rule for kernel test pieces: the CHANGELOG
+  warns that it can move G = 64 results on runs too short for the moment
+  tilt (under 32 rows), and the gated filter turns every flagged reading
+  into such a run.
+
+`quad_error` of the non-sequential pass over the window's gaps, now an
+estimate in nats: 400 / 22 / 142 at G = 64 and 16 / 0.092 / 71 at G = 256,
+against a threshold of 0.05 (6.2e3 / 3.8e3 / 6.3e3 and 3.2e3 / 1.8e3 /
+3.4e3 before). Over the whole detection window at G = 64 it is 2 957 /
+33 / 170 (28 528 / 15 072 / 31 593 before; `detect_scores.csv`).
 
 * **What does not change.**
   - The sequential recall: 1.00 at both G on every mote and setting.
-  - The normal-operation false alarms: none under BH at either G, and at
-    α = 1e-3 the same episodes (8, 9 and 7) with 605 → 621, 106 → 105 and
-    49 → 49 flags. The mote-48 lock-out is genuine.
+  - The false-alarm episodes in normal operation: none under BH at either
+    G, and at α = 1e-3 the same 8, 9 and 7 episodes, with 559 → 624,
+    122 → 105 and 49 → 49 flags. The mote-48 lock-out is genuine.
   - The first flag of the last 24 h, for every setting and mote.
-  - Mote 22, every setting: 0–3 rows differ.
+  - Mote 22, non-sequential and BH: 0–3 rows differ.
 * **What changes.**
-  - **Mote 47, sequential BH:** 81 rows, mostly in the climb (273 → 211 of
+  - **Mote 47, sequential BH:** 73 rows, mostly in the climb (279 → 211 of
     401 climb rows flagged). The alarm then breaks up, and the episode that
     reaches the failure starts 3.2 h before it instead of 15.2 h. Its first
     flag of the last 24 h is still 15.2 h ahead.
-  - **Mote 48, sequential α = 1e-3:** 26 rows: 10 more climb rows and 16
-    more normal-operation flags. The episode that reaches the failure starts
-    11.1 h ahead instead of 8.8 h.
-  - **Non-sequential, motes 48 and 47:** 34–102 rows, on the failure. The
-    share of the window's suspect rows flagged falls from 0.30 to 0.07 and
-    from 0.36 to 0.00. No non-sequential alarm reaches the failure more than
+  - **Mote 48, sequential α = 1e-3:** 74 rows: 9 more climb rows, 65 more
+    normal-operation flags in the same 8 episodes. The episode that reaches
+    the failure starts 11.1 h ahead instead of 8.8 h.
+  - **Non-sequential, motes 48 and 47:** 25–92 rows, on the failure. The
+    share of the window's suspect rows flagged falls from 0.21 to 0.07 and
+    from 0.34 to 0.00. No non-sequential alarm reaches the failure more than
     1.0 h ahead at G = 256 on mote 48, and none reaches it on mote 47.
 * **Why: the passes that condition on failing readings.** Above 38.4, 64.7
   and 45.0 °C (motes 48, 22, 47) a reading lies beyond F⁻¹(1 − EPS) of
   every clean state, where the copula arguments are clipped (library
-  problem 1).
-  - The non-sequential pass conditions on them. Its log-likelihood over
-    the window moves by 1 312 and 3 956 nats between G = 64 and 256 on
-    motes 48 and 47, and by 2.4 nats on mote 22.
-  - The gated passes integrate the flagged readings out. Where they flag
-    the same rows (or all but one), their log-likelihoods at G = 64 and 256
-    agree within 0.1–2.4 nats, although they cross the same network
-    outages.
-* **Why `quad_error` is in the thousands.** A one-off breakdown by run of
-  missing rows of the mote-48 non-sequential pass at G = 64
-  (`gaps._quadrature_report(..., per_run=True)`, 6 247 in all):
-  - 5 015 on two network outages of normal operation, 2 944 and 2 341
-    missing rows between ordinary readings (from epochs 32 657 and
-    47 871): about 1 per missing row, the per-block cap. The gated passes
-    cross the same outages and agree within 0.1–2.4 nats, so there the
-    report is not an estimate of nats (library problem 4).
-  - 980 on the 123 runs next to a reading above 40 °C, again about 1 per
-    missing row. There the log-likelihood does move by thousands of nats.
-  - 252 on the other 3 723 runs.
+  problem 1). The non-sequential pass conditions on them, and its
+  log-likelihood moves by hundreds to thousands of nats between G = 64 and
+  256. A one-off breakdown by run of missing rows of the mote-48
+  non-sequential pass at G = 64 (`gaps._quadrature_report(..., per_run=True)`,
+  400 in all):
+  - 368 on the 123 runs next to a reading above 40 °C (980 before). Many of
+    them sit at the report's floor of 4.6 nats per run (|log 0.01|): the
+    pass is not converged there;
+  - 2.8 on the four runs of more than 100 rows (5 042 before), the two
+    network outages of 2 944 and 2 341 rows among them (5 015 before,
+    library problem 4);
+  - 29 on the other 3 721 runs (226 before).
 * **Caveat.** At the default G = 64, the PMC detection results on the
   failure depend on the quadrature wherever a pass conditions on failing
   readings: the non-sequential recall, climb coverage and lead on motes 48
   and 47, and through gating the BH lead on mote 47 and the α = 1e-3 lead
-  on mote 48. The sequential recall, the false alarms in normal operation
-  and the first-flag leads do not. G = 256 has not converged either, so
-  neither node count gives the reference numbers on the failure. The model
-  is also far outside its validity there: the plateau and most of the rise
-  above 60 °C lie more than 8 sd above every clean margin.
+  on mote 48. The sequential recall, the false-alarm episodes in normal
+  operation and the first-flag leads do not. G = 256 has not converged
+  either (`quad_error` 16 and 71 nats on motes 48 and 47), so neither node
+  count gives the reference numbers on the failure. The model is also far
+  outside its validity there: the plateau and most of the rise above
+  60 °C lie more than 8 sd above every clean margin.
 
 ### 3. Robust re-estimation on a window that mixes clean and failing readings
 
@@ -759,27 +829,27 @@ have two failure states; both are shown.
 
 | mote | fit | fits | masked (suspect / climb) | means (°C) | sd (°C) | failure state: mean, sd, stay | agreement with oracle_ext |
 |---|---|---|---|---|---|---|---|
-| 48 | raw | 1 | 0 | 20.56 / 21.60 / 41.04 | 2.09 / 1.07 / 33.09 | 41, 33, 0.998 | 0.81 |
-| 48 | oracle | 1 | 211 (1.00 / 0.00) | 19.89 / 22.09 / 22.53 | 1.38 / 5.84 / 1.47 | – | 0.80 |
-| 48 | oracle_ext | 1 | 393 (1.00 / 1.00) | empty / 20.81 / 21.65 | – / 2.37 / 1.33 | – | 1.00 |
-| 48 | fm | 7, converged | 22 (0.01 / 0.01) | 19.55 / 21.33 / 43.32 | 0.83 / 1.99 / 33.98 | 43, 34, 0.9995 | 0.79 |
-| 48 | fm_hampel | 11, not converged | 26 (0.01 / 0.01) | 19.11 / 21.69 / 38.42 | 0.92 / 1.75 / 31.48 | 38, 31, 0.999 | 0.56 |
-| 48 | fm_thr60 | 11, not converged | 350 (1.00 / 0.66) | 19.93 / 20.14 / 21.66 | 2.01 / 1.31 / 2.01 | – | 0.76 |
-| 48 | fm_cs | 11, not converged | 2 (0.01 / 0.00) | 20.77 / 20.86 / 43.08 | 2.01 / 0.59 / 33.91 | 43, 34, 0.999 | 0.95 |
+| 48 | raw | 1 | 0 | 20.61 / 21.53 / 40.62 | 2.07 / 1.11 / 32.80 | 41, 33, 0.998 | 0.80 |
+| 48 | oracle | 1 | 211 (1.00 / 0.00) | 19.45 / 20.12 / 24.14 | 1.67 / 0.97 / 5.48 | – | 0.77 |
+| 48 | oracle_ext | 1 | 393 (1.00 / 1.00) | empty / 20.24 / 21.31 | – / 2.08 / 2.21 | – | 1.00 |
+| 48 | fm | 11, not converged | 16 (0.01 / 0.02) | 19.39 / 21.34 / 42.25 | 0.87 / 1.93 / 33.50 | 42, 34, 0.999 | 0.81 |
+| 48 | fm_hampel | 11, not converged | 19 (0.01 / 0.02) | 20.74 / 21.98 / 36.48 | 1.99 / 0.76 / 30.24 | 36, 30, 0.999 | 0.97 |
+| 48 | fm_thr60 | 11, not converged | 15 (0.01 / 0.02) | 19.38 / 21.34 / 42.16 | 0.87 / 1.93 / 33.46 | 42, 33, 0.999 | 0.81 |
+| 48 | fm_cs | 11, not converged | 10 (0.00 / 0.00) | 20.74 / 20.77 / 42.01 | 0.67 / 2.00 / 33.39 | 42, 33, 0.999 | 0.96 |
 | 22 | raw | 1 | 0 | 24.33 / 51.83 / 122.15 | 5.74 / 34.67 / < 0.01 | 52, 35, 0.978; 122, < 0.01, 0.999 | 0.97 |
-| 22 | oracle | 1 | 1079 (1.00 / 0.00) | 24.44 / 25.19 / 48.08 | 5.81 / 5.21 / 6.04 | 48, 6, 0.999 | 1.00 |
+| 22 | oracle | 1 | 1079 (1.00 / 0.00) | 24.47 / 24.80 / 46.73 | 5.84 / 4.95 / 7.10 | 47, 7, 0.995 | 1.00 |
 | 22 | oracle_ext | 1 | 1702 (1.00 / 1.00) | empty / 24.09 / 24.85 | – / 5.53 / 5.31 | – | 1.00 |
 | 22 | fm | 11, cycling | 0 | = raw | | = raw | 0.97 |
-| 22 | fm_hampel | 11, cycling | 13 (0.00 / 0.02) | 24.27 / 51.76 / 122.15 | 5.64 / 34.60 / < 0.01 | 52, 35, 0.981; 122, < 0.01, 0.998 | 0.97 |
-| 22 | fm_thr60 | 11, cycling | 13 (0.00 / 0.02) | = fm_hampel | | = fm_hampel | 0.97 |
+| 22 | fm_hampel | 11, cycling | 0 | = raw | | = raw | 0.97 |
+| 22 | fm_thr60 | 11, cycling | 0 | = raw | | = raw | 0.97 |
 | 22 | fm_cs | 5, converged | 36 (0.02 / 0.01) | 24.41 / 24.99 / 89.85 | 5.76 / 5.09 / 32.20 | 90, 32, 0.9998 | 1.00 |
-| 47 | raw | 1 | 0 | 21.51 / 38.56 / 122.15 | 2.64 / 26.38 / < 0.01 | 39, 26, 0.970; 122, < 0.01, 0.174 | 0.55 |
-| 47 | oracle | 1 | 267 (1.00 / 0.00) | 21.43 / 21.56 / 33.08 | 2.68 / 1.04 / 7.31 | 33, 7, 0.989 | 0.74 |
-| 47 | oracle_ext | 1 | 668 (1.00 / 1.00) | 21.18 / 21.25 / 27.19 | 2.18 / 0.23 / 1.17 | – | 1.00 |
-| 47 | fm | 11, not converged | 11 (0.04 / 0.00) | 21.59 / 57.28 / empty | 2.60 / 37.24 / – | 57, 37, 0.996 | 0.56 |
-| 47 | fm_hampel | 11, not converged | 4 (0.00 / 0.00) | 21.49 / 37.70 / 122.15 | 2.62 / 25.19 / < 0.01 | 38, 25, 0.966; 122, < 0.01, 0.191 | 0.55 |
-| 47 | fm_thr60 | 11, not converged | 286 (1.00 / 0.02) | 21.43 / 21.53 / 32.76 | 2.65 / 1.01 / 6.87 | 33, 7, 0.993 | 0.71 |
-| 47 | fm_cs | 3, converged | 31 (0.00 / 0.02) | 20.09 / 23.24 / 47.57 | 1.71 / 1.82 / 34.47 | 48, 34, 0.9995 | 0.46 |
+| 47 | raw | 1 | 0 | 21.49 / 37.76 / 122.15 | 2.62 / 25.33 / < 0.01 | 38, 25, 0.967; 122, < 0.01, 0.451 | 0.60 |
+| 47 | oracle | 1 | 267 (1.00 / 0.00) | 21.42 / 21.56 / 33.08 | 2.67 / 1.04 / 7.31 | 33, 7, 0.989 | 0.48 |
+| 47 | oracle_ext | 1 | 668 (1.00 / 1.00) | 20.74 / 23.64 / empty | 1.73 / 3.17 / – | – | 1.00 |
+| 47 | fm | 11, not converged | 5 (0.02 / 0.00) | 21.52 / 37.77 / 122.15 | 2.64 / 24.87 / < 0.01 | 38, 25, 0.968; 122, < 0.01, 0.469 | 0.60 |
+| 47 | fm_hampel | 11, not converged | 8 (0.02 / 0.00) | 21.48 / 37.76 / 122.15 | 2.61 / 24.88 / < 0.01 | 38, 25, 0.967; 122, < 0.01, 0.000 | 0.61 |
+| 47 | fm_thr60 | 11, not converged | 305 (1.00 / 0.04) | 19.84 / 23.15 / 27.35 | 1.61 / 1.97 / 6.45 | – | 0.64 |
+| 47 | fm_cs | 3, converged | 31 (0.00 / 0.02) | 20.09 / 23.24 / 47.50 | 1.71 / 1.82 / 34.44 | 48, 34, 0.9995 | 0.74 |
 
 The `raw_cs` rows (the raw fit from the clean model) and the quadrature
 columns are in `results/tables.md`. The mask count of every refit and the
@@ -788,70 +858,86 @@ ICE iterations of every fit are in `results/robust_fits.csv`
 `fm` and `fm_thr60` fits are drawn in `figures/robust_hmc_in.png` and
 `figures/robust_pmc_state.png`.
 
+**Against the previous rerun (d14e91d).** The HMC-IN fits and loops are the
+same. The PMC fits of mote 22 are the same to the table's digits but for
+its `oracle` fit, and the raw fits of motes 48 and 47 move by less than
+1 °C in their failure state. Three loops end differently: mote 48's `fm`
+no longer converges, its `fm_thr60` no longer recovers, and mote 47's
+`fm_thr60` no longer has a failure state. The masks of most other loops
+changed too.
+
 * **The failing readings form their own state, as the simulation predicts.**
   Every raw fit has one:
   - HMC-IN: mean 59–120 °C, sd 3–37 °C, stay 0.9998–1.0000, an absorbing
     state;
-  - PMC: a broad state of mean 39–52 °C, sd 26–35 °C, stay 0.970–0.998.
+  - PMC: a broad state of mean 38–52 °C, sd 25–35 °C, stay 0.967–0.998.
     On motes 22 and 47 the PMC spends a second state on the stuck
-    122.15 °C plateau (π 0.085 and 0.014), so two of its three states
+    122.15 °C plateau (π 0.085 and 0.023), so two of its three states
     describe the failure.
 
   Starting ICE from the clean-window model changes nothing (`raw_cs`,
-  `fm_cs`: a failure state in 6 of 6, PMC means 43–90 °C). The breakdown is
+  `fm_cs`: a failure state in 6 of 6, PMC means 42–90 °C). The breakdown is
   a property of the likelihood, not of the k-means start.
 * **Under that state almost nothing is flagged**, and the default loop
-  ends at or near the raw fit: 0 masked rows for the HMC-IN, 22, 0 and 11
+  ends at or near the raw fit: 0 masked rows for the HMC-IN, 16, 0 and 5
   for the PMC, every fit with a failure state.
-* **Flag-and-mask finds no fixed point in 9 of the 12 PMC loops** (3 of
-  the 12 HMC-IN loops, all on mote 22). `robust_estimate` stops at
-  `max_rounds` = 10 refits, and its result is the 11th fit, not a fixed
-  point.
-  - **Mote 22, `fm`, `fm_hampel` and `fm_thr60`: one deterministic cycle.**
-    The raw fit flags 13 climb rows; with them masked the fit flags none,
-    so the next fit is the raw fit again: 0 | 13 | 0 | 13 … `fm_hampel`
-    joins the cycle at its 6th fit, and `fm_thr60` at its 10th, after
-    releasing the pre-mask round by round (1 079, 951, 989, 1 027, 835,
-    137, 154, 80, 46, 0). Every fit of the cycle runs to the ICE cap of 50
-    iterations, and so does the raw fit: ICE itself does not converge on
-    this window. The HMC-IN cycles the same way on this mote (0 | 33).
-  - **Mote 47, `fm` and `fm_hampel`: a longer cycle.** After the first fit
-    the mask moves between 3 and 15 rows (`fm`: 0, 4, 7, 11, 15, 6, 6, 12,
-    4, 7, 11) while every ICE fit converges in 6–17 iterations. The counts repeat with
-    period 7, and `fm_hampel` runs through the same counts from its 4th
-    fit: probably one cycle.
-  - **Motes 48 and 47, `fm_thr60`: a drifting mask.** It grows from the
-    threshold's 211 and 267 rows and then wanders: 267–350 rows on mote 48
-    (211, 267, 284, 294, 332, 292, 293, 283, 286, 324, 350), 281–333 on
-    mote 47. One fit of each runs to the ICE cap.
-  - **Mote 48, `fm_hampel` and `fm_cs`:** 12–31 and 0–46 rows; `fm_hampel`
-    ends alternating between 26 and 17.
-  - **Converged:** the PMC `fm` on mote 48 (7 fits, 22 rows masked) and
-    `fm_cs` on motes 22 and 47 (5 and 3 fits, 36 and 31 rows). All three
-    keep a failure state (43, 90 and 48 °C, sd 32–34 °C): they converge
-    to the breakdown.
+* **Flag-and-mask finds no fixed point in 10 of the 12 PMC loops** (9 in
+  the previous rerun; 3 of the 12 HMC-IN loops, all on mote 22).
+  `robust_estimate` stops at `max_rounds` = 10 refits, and its result is
+  the 11th fit, not a fixed point.
+  - **Mote 22, `fm`, `fm_hampel` and `fm_thr60`: one deterministic cycle,
+    as before.** The raw fit flags 13 rows (climb rows in the previous
+    rerun); with them masked the fit flags none, so the next fit is the raw
+    fit again: 0 | 13 | 0 | 13 …
+    `fm_hampel` joins the cycle at its 5th fit, and `fm_thr60` at its 11th,
+    after releasing the pre-mask round by round (1 079, 947, 989, 1 023,
+    839, 123, 144, 70, 15, 13, 0). Every fit of the cycle runs to the ICE
+    cap of 50 iterations, and so does the raw fit: ICE itself does not
+    converge on this window. All three now end on the raw fit. The HMC-IN
+    cycles the same way on this mote (0 | 33).
+  - **Mote 48, `fm`: no longer converges.** The mask moves between 12 and
+    25 rows and ends with two different 16-row masks (0, 12, 23, 25, 21,
+    19, 23, 20, 23, 16, 16). The previous rerun reached a fixed point of 22
+    rows after 7 fits. Either way it keeps a 42–43 °C failure state.
+  - **Mote 47, `fm` and `fm_hampel`: a drifting mask.** After the first fit
+    it moves between 5 and 15 rows (`fm`: 0, 7, 11, 15, 7, 5, 8, 8, 11, 7,
+    5) while every ICE fit converges in 6–13 iterations; `fm_hampel` runs
+    through `fm`'s counts from its 6th fit.
+  - **Motes 48 and 47, `fm_thr60`.** On mote 47 the mask wanders between
+    281 and 333 rows after the threshold's 267, as before. On mote 48 it
+    grows from 211 to 265–298 rows, then collapses to 6, 13 and 15 in the
+    last three rounds, and the loop falls into the failure basin of `fm`
+    (the same 42 °C state, sd 33 °C). The previous rerun ended at 350 rows
+    with no failure state. One fit of mote 48's loop and two of mote 47's
+    run to the ICE cap.
+  - **Mote 48, `fm_hampel` and `fm_cs`:** 9–31 and 0–56 rows.
+  - **Converged:** `fm_cs` on motes 22 and 47 (5 and 3 fits, 36 and 31
+    rows), as before. Both keep a failure state (90 and 48 °C, sd 32–34
+    °C): they converge to the breakdown.
 
   The HMC-IN, which uses no quadrature, cycles too: non-convergence comes
   from flag-and-mask on a window where the failure is a state. The
-  particular masks of the PMC may depend on the quadrature (below).
+  particular masks of the PMC depend on the quadrature: the long-run fix
+  changed the ending of 3 of the 12 loops.
 * **Hampel `initial_mask`.** It masks 31–130 rows, spikes in the 30 s noise
   and not the drift or the plateau, so the loop falls back into the failure
-  basin (6 of 6). The first run's exception, the PMC on mote 48, is gone:
-  it now ends with 26 rows masked and a 38 °C failure state. The
-  simulation's remedy for frequent spikes does not transfer to a smooth
-  persistent failure.
+  basin (6 of 6). The simulation's remedy for frequent spikes does not
+  transfer to a smooth persistent failure.
 * **Threshold `initial_mask`.** The sensor-level flag is re-tested by the
-  model. 4 of the 6 fits end with every suspect row masked:
+  model. 3 of the 6 fits end with every suspect row masked (4 in the
+  previous rerun):
   - **HMC-IN on mote 47.** 299 rows masked, converged, means 18.90 /
     22.26 / 29.45 against the oracle's 18.89 / 22.26 / 30.15.
   - **HMC-IN on mote 48.** 416 rows masked, every suspect and climb row,
     converged. The model extends the mask into the drift.
-  - **PMC on mote 48.** 350 rows masked, every suspect row and 66 % of the
-    climb, no failure state; not converged.
-  - **PMC on mote 47.** Every suspect row masked, but the climb left in
-    forms a 33 °C state (sd 6.9 °C), as in the `oracle` fit; not converged.
+  - **PMC on mote 47.** 305 rows masked, every suspect row and 4 % of the
+    climb; not converged. The climb left in widens the top state (27 °C, sd
+    6.5 °C, against 3.2 °C at most in the `oracle_ext` fit), whose mean
+    stays below the failure-state threshold (31.0 °C). The previous rerun
+    kept it as a 33 °C failure state.
 
-  On mote 22 (19 % failing) both models release the pre-mask round by
+  The PMC on mote 48 releases the pre-mask and ends in the failure basin
+  (above). On mote 22 (19 % failing) both models release it round by
   round and end in the raw fit's cycle. The HMC-IN goes from 1 079 to 978,
   887, 796, 755, 567 and 0 masked rows: the climb, left in, forms a state
   at about 47 °C (the `oracle` fit's) that makes the lower suspect
@@ -859,58 +945,60 @@ ICE iterations of every fit are in `results/robust_fits.csv`
 * **The threshold oracle is not clean either.** Masking only the suspect
   rows leaves the climb in the fit. The HMC-IN's top state keeps an sd of
   7.7, 6.4 and 6.1 °C, against 2.7, 2.5 and 1.7 °C when the climb is masked
-  too. The PMC's `oracle` fits keep a 5.8 °C-sd state on mote 48 and a
-  48 °C and a 33 °C state on motes 22 and 47. The partial ground truth
-  biases the estimate as much as a mild contamination would.
+  too. The PMC's `oracle` fits keep a 24 °C state of sd 5.5 °C on mote 48,
+  and a 47 °C and a 33 °C state on motes 22 and 47. The partial ground
+  truth biases the estimate as much as a mild contamination would.
 * **Classification of the clean rows.**
   - **HMC-IN.** The level regimes are identifiable. Against `oracle_ext`,
     the raw fits agree on 71–88 % of the normal rows and the threshold
     oracle on 73–99 %. The raw fit spends a state on the failure and merges
     two day/night levels into the remaining two.
   - **PMC.** The agreement cannot rank the fits. The `oracle_ext` fits of
-    motes 48 and 22 empty a state, and on mote 22 one state has π = 0.83,
-    so almost any fit agrees with it (0.94–1.00). On mote 47 the
-    two oracles agree on 74 % of the normal rows. The parameters (the
-    failure states, the top-state sd) rank the fits.
+    all three motes empty a state, and on mote 22 one state has π = 0.83,
+    so almost any fit agrees with it (0.94–1.00). On motes 48 and 47 the
+    two oracles agree on 77 % and 48 % of the normal rows. The parameters
+    (the failure states, the top-state sd) rank the fits.
+* **Cost.** Every PMC task took 0.9–3.3 times (median 1.8) its time in the
+  previous rerun, 1.3–2.7 times (median 1.9) per ICE iteration: 26 h of
+  task time against 13 h. The moment tilt of the long runs costs time
+  (CHANGELOG), and this run shared the machine with up to 6 other
+  processes (Run).
 
 **Quadrature of the PMC fits.** Every ICE E-step of a PMC fit on these
-windows logs the quadrature WARNING (11–562 WARNINGs per task), and
-`quad_error` of the returned fits on their masked windows is 9.5–3 970
-(`results/tables.md`). The values in the thousands go with long runs of
-missing rows: the failure block that a mask removes, and the day after the
-failure, where a failing mote reports on 7–38 % of the epochs. There the
-report is about 1 per missing row whatever the error (library problem 4),
-but the gaps among failing readings are also where the detection check
-found the quadrature unconverged. The PMC fits were not rerun at 256
-nodes: a flag-and-mask task already takes 11–105 min at G = 64. The
-failure states of the raw fits are unlikely to depend on G (the failing
-rows are 6–19 % of the window, tens of degrees above the clean margins);
-the masks, cycles and non-convergence may.
+windows still logs the quadrature WARNING (8–562 WARNINGs per task). Now
+that `quad_error` estimates nats, the returned fits report 2.2–67 nats on
+their masked windows, and 211 for the raw fit of mote 47 and its `fm` loop
+(9.5–3 970 before, in the old units). The PMC fits were not rerun at 256
+nodes: a flag-and-mask task takes 16–202 min at G = 64. The failure states
+of the raw fits are unlikely to depend on G (the failing rows are 6–19 %
+of the window, tens of degrees above the clean margins, and the long-run
+fix moved them by less than 1 °C); the masks, cycles and non-convergence
+do (above).
 
 **The 3 WARNINGs logged after the fits.** Once the tasks are done,
 `robust.py` classifies the normal rows with the clean-window model on each
 window with the suspect and climb rows set to NaN, for the
-`agree_clean_model` column of `results/robust_fits.csv`. For the PMC that
-pass runs outside the tasks, so its WARNINGs reach the run log:
-`quad_error` 4.2e3, 2.3e3 and 4.5e3 on 8 668, 7 157 and 8 705 missing rows
-(motes 48, 22 and 47; the counts identify the windows). A one-off
-recomputation at G = 64, broken down by run, gives 4 170 and 4 548 for
-motes 48 and 47:
+`agree_clean_model` column of `results/robust_fits.csv` (every PMC row of
+the mote). For the PMC that pass runs outside the tasks, so its WARNINGs
+reach the run log: `quad_error` 7.3, 9.6 and 1.1 nats on 8 668, 7 157 and
+8 705 missing rows (motes 48, 22 and 47; 4.2e3, 2.3e3 and 4.5e3 before, in
+the old units). One-off recomputations of that pass:
 
-* **Mote 47.** 4 533 on one trailing gap of 4 656 rows, the masked climb
-  and failure to the end of the window. A trailing gap contributes exactly
-  0 to the log-likelihood, and for state margins the state law across a
-  gap is exact (`gaps` module docstring): nothing observed depends on it.
-  The other 993 runs report 15.
-* **Mote 48.** 4 140 on two runs: 1 464 rows from the climb onset to a
-  59.55 °C reading, and a 2 875-row trailing gap after a 59.70 °C reading.
-  These are failing readings just below 60 °C that the suspect flag misses
-  (4 on mote 48, 7 on mote 22), left observed by the `oracle_ext` mask. The
-  other 917 runs report 29.
-* **Consequence.** The normal rows end 9–12 h before these gaps, with the
-  850–925 readings of the ambiguous zone in between, so the
-  `agree_clean_model` column of the PMC is hardly affected on motes 48 and
-  47. Mote 22 was not recomputed; its window keeps 7 such readings.
+* **The trailing gaps now count 0**: 1.2e-11 and 3.9e-12 for the 2 875
+  and 2 872 rows of motes 48 and 22, under 0.01 for the 4 656 rows of
+  mote 47 (4 533 before).
+* **Where the rest sits.** On mote 48, 5.8 of 7.3 on three network gaps of
+  34–58 rows among the normal rows, 61–63 h before the first suspect
+  reading, and 0.45 on the 1 464-row gap that ends at a 59.55 °C reading
+  (1 363 before). On mote
+  22, 4.6 (the per-run floor) on a 14-row gap 29 h before it, 2.5 on the
+  704-row masked block that ends at a 59.87 °C reading, 1.7 on a 9-row gap.
+  On mote 47, 1.1 spread over 993 short runs.
+* **How much it matters.** Rerun at G = 128, the same pass changes the
+  MPM state of 0 of the 4 879 normal rows of mote 48 and 3 of the 5 451 of
+  mote 22, with log-likelihoods 1.0 and 0.7 nats from G = 64 (the reports
+  say 7.3 and 9.6). The `agree_clean_model` column is therefore right to
+  about 1e-3; no conclusion uses it.
 
 ### 4. Conclusion
 
@@ -919,8 +1007,9 @@ motes 48 and 47:
 * **Detection with a model fitted on clean data, held fixed, and gated
   (sequential).** It flags every failing reading, at 64 and 256 nodes. On
   motes 48 and 47 its alarm starts 6.1–8.8 and 16.2 h before the 60 °C
-  rule, depending on the setting. Under BH the mote-47 start depends on
-  the quadrature (3.2 h at G = 256); its first flag does not.
+  rule, depending on the setting, before and after the long-run fix.
+  Under BH the mote-47 start depends on the quadrature (3.2 h at
+  G = 256); its first flag does not.
 * **Its false alarms are real events outside the training week**, not
   sensor noise. With BH at α = 1e-3, they are 0, 0 and 2 flags (one
   episode) in 14–15 days, at G = 64 and 256.
@@ -935,26 +1024,29 @@ motes 48 and 47:
 * **Calibration.** The tests reject on 30 s data. The PIT is usable as a
   score, not as an exact p-value.
 * **Lock-out of the gated filter** after a legitimate transient. It is
-  genuine on mote 48's warm afternoons (605 against 12 flags at G = 64,
-  621 at G = 256). It needs a correction (BH or α = 1e-4); a
+  genuine on mote 48's warm afternoons (559 against 12 flags at G = 64,
+  624 at G = 256). It needs a correction (BH or α = 1e-4); a
   re-acquisition rule would be the principled fix.
 * **The gap quadrature on the failure.** Where a pass conditions on
   readings far outside the clean margins, the PMC results move between
   G = 64 and 256 (the non-sequential flags of motes 48 and 47, the BH lead
-  of mote 47), and neither is converged. `quad_error` cannot say by how
-  much on these windows (library problem 4).
+  of mote 47), and neither is converged. `quad_error` now estimates nats
+  and flags these windows, but it is capped at 4.6 nats per run and
+  understates the change there (142 against 3 669 nats on mote 47).
 * **The PMC's lead depends on the width of its clean margins.** It is
   1.5–2.1 h on mote 22.
 * **The non-gated copula PIT at the clipped corner** (library problem 1):
-  non-sequential recall 0.26 and 0.02 on motes 48 and 47.
+  non-sequential recall 0.15 and 0.02 on motes 48 and 47.
 * **Rolling filters** (Hampel, trailing robust z) do not see a smooth
   drift or a stuck sensor.
 * **Flag-and-mask estimation on a failing window.** It breaks down in
   every case without a sensor-level pre-mask (Hampel pre-screen
-  included), and 9 of its 12 PMC loops find no fixed point. It only
-  recovers with the 60 °C pre-mask, and only where at most about 10 % of
-  the window is failing (motes 48 and 47). Even then the PMC does not
-  converge, and on mote 47 it keeps the climb as a state.
+  included), and 10 of its 12 PMC loops find no fixed point. It only
+  recovers with the 60 °C pre-mask, only where at most about 10 % of the
+  window is failing (motes 48 and 47), and fully only for the HMC-IN. The
+  PMC does not converge there: on mote 48 it drops the pre-mask and breaks
+  down (it recovered in the previous rerun), and on mote 47 it keeps the
+  climb in a broad state.
 
 **Is the contamination model needed?**
 
@@ -972,7 +1064,7 @@ motes 48 and 47:
     would put isolated contaminated rows everywhere and would not
     explain a block.
   - **The broad law g must be fixed** (e.g. uniform over the sensor
-    range), not re-estimated. A re-estimated g becomes the 39–120 °C
+    range), not re-estimated. A re-estimated g becomes the 38–120 °C
     states seen here, with an sd that ICE fits to the plateau: 3–37 °C, and
     under 0.01 °C for the PMC states that hold the stuck value alone.
   - **The climb is the hard part.** The rows are continuous, smooth, and
@@ -1027,14 +1119,15 @@ Frank    non-gated p-value : [6.587e-01 1.245e-01 1.589e-03 2.842e-14 1.137e-13 
   and the next reading put the missing value, so inside the failure they
   probably reach beyond F⁻¹(1 − EPS) as well.
 * **Here.** It caps the non-sequential PMC's recall on motes 48 and 47 at
-  0.26 and 0.02 (0.51 and 0.53 in the first run).
+  0.15 and 0.02 (0.51 and 0.53 in the first run, 0.26 and 0.02 in the
+  previous rerun).
   - Every suspect row that follows an observed suspect row is missed:
     1 146 and 1 064 rows, median p 0.94 and 0.96.
   - Of the 1 207 suspect rows that follow a missing epoch on each mote,
-    586 and 1 156 are missed now (none in the first run); the median p of
-    those 1 207 rows is 8.6e-16 on mote 48 and 0.82 on mote 47. At G = 256
-    fewer still are flagged (section 2, the check at 256 nodes), which
-    fits the local grids reaching the clipped corner.
+    857 and 1 159 are missed now (none in the first run, 586 and 1 156 in
+    the previous rerun); the median p of those 1 207 rows is 0.87 and
+    0.83. At G = 256 fewer still are flagged (section 2, the check at 256
+    nodes), which fits the local grids reaching the clipped corner.
   - No sequential number depends on it.
 * **Fix (not attempted, library code untouched).** Evaluate the
   conditional CDF with v unclipped, since h(1 | u) = 1 for every u, or
@@ -1132,11 +1225,13 @@ A one-off check with more digits, at G = 32, 64, 128, 256, 512 and 1024:
   - Before the fix, 17 rows after a gap had p < 1e-3 at G = 64.
 * **τ = 0.6.** Nothing moves: 1e-6 nats between G = 64 and 1024.
 
-The outputs above are those of 39f249f; `repro_gap_nodes.py` was not rerun
-on d14e91d. On this study's data, d14e91d gives at G = 64 a log-likelihood
-of mote 48's clean days 1–10 within 0.006 nats of G = 256 (the refitted
-model; section 1), and every PMC fit, PIT and flag of the study was rerun
-on it.
+The outputs above are those of 39f249f. On the current code (the
+worktree at 3df8f55, with 5351de0's long-run fix) the script prints the
+same lines, except G = 256 at τ = 0.99: 7023.5 instead of 7023.3, so the
+non-monotone residual is gone. On this study's data, G = 64 gives a
+log-likelihood of mote 48's clean days 1–10 within 0.006 nats of G = 256
+(the refitted model; section 1), and every PMC fit, PIT and flag of the
+study was rerun on the current quadrature.
 
 ### 3. A leading gap under strong dependence is misintegrated, with no WARNING
 
@@ -1146,7 +1241,10 @@ gap-free pass at G = 64 and 4.8e-8 at G = 256, the state filter equal to π
 to 4e-15, and the batch pass and the PIT filter within 2.3e-13 nats of
 each other. In the rerun of step 1 the two passes give the same
 log-likelihood on days 1–10 (section 1). The outputs below are those of
-39f249f; `repro_leading_gap.py` was not rerun on d14e91d.
+39f249f. On the current code (3df8f55) `repro_leading_gap.py` prints an
+error of 0.000 nats and max |α̂ − π| of 0.000 (batch pass) and 7e-15 or
+less (PIT filter) at every G and both τ, with `quad_error` 1e-2 at G = 64
+and 3e-9 at G = 256, under the threshold.
 
 Found while rerunning step 1 on 39f249f.
 
@@ -1238,45 +1336,68 @@ tau = 0.999: rows 0-16 missing, exact log p(y_obs) = 1889.843, WARNING above qua
 
 ### 4. `quad_error` saturates on long runs of missing rows
 
-**Status: open.** Found in the rerun, from the WARNINGs of the robust
-tables step and of the detection check.
+**Status: fixed at pmcprg 5351de0** (CHANGELOG `[Unreleased]`, "long runs
+of missing rows converge in G"). Runs of 32 missing rows or more take
+moment-matched transitions and converge in G, and `quad_error` became a
+per-run estimate of the log-likelihood error in nats, in which a trailing
+gap counts 0. Found in the previous rerun (d14e91d), from the WARNINGs of
+the robust tables step and of the detection check.
 
-`quad_error` sums, over the missing positions of each run, a weighted mean
-of relative errors capped at 1 per block (`gaps._quadrature_report`). On a
-long run where the checks of every position fail, the report grows with
-the length of the run, by about 1 per missing row, and no longer estimates
+**The problem.** `quad_error` summed, over the missing positions of each
+run, a weighted mean of relative errors capped at 1 per block. On a long
+run where the checks of every position failed, the report grew with the
+length of the run, by about 1 per missing row, and no longer estimated
 nats.
 
 * **A trailing gap.** On mote 47's robust window, with the suspect and
-  climb rows set to NaN, the clean PMC reports 4 548 at G = 64, of which
+  climb rows set to NaN, the clean PMC reported 4 548 at G = 64, of which
   4 533 on one trailing gap of 4 656 rows (0.97 per row). A trailing gap
   contributes exactly 0 to the log-likelihood, and for state margins the
   state law across a gap is exact (`gaps` module docstring): no result that
   involves an observed row depends on it.
 * **Network outages.** On mote 48's detection-check window, 5 015 of the
-  6 247 of the non-sequential pass come from two outages of 2 944 and 2 341
-  rows between ordinary readings (0.95 and 0.94 per row). The gated passes
-  cross the same outages, and where they flag the same rows their
-  log-likelihoods at G = 64 and 256 agree within 0.1–2.4 nats.
-* **Shorter runs.** On the two robust windows, runs of 11–100 rows report
-  0.006–0.011 per missing row, runs of 2–10 rows under 5e-4, single rows
-  under 5e-5.
-* **Why it matters.** The WARNING then fires on any window with long
-  outages, at every G (it only halves from G = 64 to 256 on the check
-  windows), and it cannot tell the outages from the failure, where the
+  6 247 of the non-sequential pass came from two outages of 2 944 and
+  2 341 rows between ordinary readings (0.95 and 0.94 per row). The gated
+  passes crossed the same outages, and where they flagged the same rows
+  their log-likelihoods at G = 64 and 256 agreed within 0.1–2.4 nats.
+* **Why it mattered.** The WARNING fired on any window with long outages,
+  at every G, and could not tell the outages from the failure, where the
   log-likelihood of the non-sequential pass does move by thousands of
-  nats. On the clean days, with runs of 1–17 rows, it overstates the error
-  10–50 times but falls below its threshold at G = 256.
-* **How it was measured.** One-off passes at G = 64 (`gaps._posterior`,
-  then `gaps._quadrature_report(..., per_run=True)`), not scripted here:
-  the clean PMC on the robust windows of motes 48 and 47 with the suspect
-  and climb rows set to NaN (25 and 41 s; 1.3 and 2.4 GB of footprint),
-  and on mote 48's detection-check window (61 s, 2.1 GB).
-* **Fix (not attempted, library code untouched).** Leave trailing gaps out
-  of the report (their parts are exact by construction). On long interior
-  runs, weight the positions by what reaches an observed row (the exit
-  integral), rather than summing capped errors over every position, or
-  report the largest per-run part next to the sum.
+  nats.
+
+**After the fix.** The same one-off passes at G = 64 (`gaps._posterior`,
+then `gaps._quadrature_report(..., per_run=True)`; not scripted here),
+before (d14e91d) and after (35e897d):
+
+| pass at G = 64 | before | after |
+|---|---|---|
+| mote 47, robust window, clean PMC, suspect and climb rows as NaN | 4 548 | 1.15 |
+| — its 4 656-row trailing gap | 4 533 | < 0.01 |
+| mote 48, the same | 4 170 | 7.25 |
+| — its 2 875-row trailing gap | 2 777 | 1.2e-11 |
+| — the 1 464-row gap that ends at a 59.55 °C reading | 1 363 | 0.45 |
+| — the other 917 runs | 29 | 6.8 |
+| mote 48, check window, non-sequential pass | 6 247 | 400 |
+| — the four runs of more than 100 rows (the two outages among them) | 5 042 | 2.8 |
+| — the 123 runs next to a reading above 40 °C | 980 | 368 |
+| — the other 3 721 runs | 226 | 29 |
+| clean days 1–10, the selected PMC, motes 48 / 22 / 47 (`pit_checks.csv`) | 0.19 / 1.72 / 0.23 | 0.057 / 0.64 / 0.42 |
+
+* **Trailing gaps and outages no longer count.** What remains sits on
+  short gaps among the readings, and on the failure.
+* **Against the change it estimates.** On the clean days the report is
+  10–17 times the change of the log-likelihood from G = 64 to 256. On the
+  robust windows of motes 48 and 22, 7.3 and 9.6 against a change of 1.0
+  and 0.7 nats from G = 64 to 128. On the failure, where many runs sit at
+  the per-run cap of 4.6 nats (|log 0.01|), it understates the change on
+  motes 48 and 47 (400 and 142 against 944 and 3 669 nats to G = 256) and
+  overstates it on mote 22 (22 against 4.6).
+* **The price at G = 64.** The gated detection passes moved away from
+  their G = 256 results (section 2); the CHANGELOG notes that the new rule
+  for kernel test pieces can move G = 64 results on short runs.
+* **Cost.** The robust windows' passes took 23–40 s at G = 64 (25–41 s
+  before), the check window's 97 s (61 s before), with 1.1–2.2 GB of
+  footprint.
 
 ## Limits
 
@@ -1306,12 +1427,13 @@ nats.
   `gap_nodes = 64`. On the clean days it is converged in practice. On the
   failure windows it is not, at 64 or 256 nodes, wherever a pass
   conditions on failing readings; the detection check measures what moves
-  there. The robust PMC fits were not checked at 256 nodes, and
-  `quad_error` does not measure the error on long runs of missing rows
-  (library problem 4).
+  there. At G = 64 the gated passes are also some rows off G = 256 in
+  normal operation. The robust PMC fits were not checked at 256 nodes, and
+  their masks moved with the long-run fix. `quad_error` is an estimate in
+  nats since 5351de0, but capped per run on the failure.
 * **Robust estimation.** One window per mote, K fixed at the clean
   selection (3). With K = 4 a failure state would not have to take a
-  day/night level, which was not tried. 9 of the 12 PMC `robust_estimate`
+  day/night level, which was not tried. 10 of the 12 PMC `robust_estimate`
   loops and 3 of the 12 HMC-IN loops stopped at `max_rounds` without a
   fixed point, so their masks are the 11th fit's. Several PMC ICE fits
   stopped at the cap of 50 iterations: the raw fit of mote 22 and every fit

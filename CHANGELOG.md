@@ -181,15 +181,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2 000-row gap at G = 256: 1.7 nats off with the tilt alone). The results
   converge monotonically in G there, and `quad_error` reports them (0.8,
   1.4e-3).
-- **Studies, not rerun.** Intel Lab: `quad_error` and the WARNING counts
-  of the passes over long runs and trailing gaps fall by orders of
-  magnitude (the robust window's 4 533 → 0 for its trailing gap); the
-  log-likelihoods and the flags that involve runs of 32 rows or more
-  (outages, masked failure blocks, gated runs of the PIT filter) move, and
-  G = 64 results can move through the kernel-piece rule on shorter runs.
-  Forecasting: `quad_ratio` no longer counts the forecast horizon (a
-  trailing gap); horizons beyond ~16 steps at G = 64 can move through the
-  kernel-piece rule (runs under 32 rows are not tilted).
+- **Studies, rerun.** Intel Lab, the whole study (step 1 on 5351de0, the
+  rest on 35e897d): `quad_error` no longer counts trailing gaps and
+  outages (4 533 → < 0.01 for a 4 656-row trailing gap, 5 015 → < 2.8
+  for two outages); at G = 64 it stays at 22–400 nats on the windows that
+  hold the failure (2 957 over mote 48's whole detection window), whose
+  non-gated pass is not converged at G = 64 or 256. Clean-day fits (within
+  0.2 nats) and every lead time unchanged. At G = 64 the non-gated passes
+  moved closer to G = 256 and the gated ones further (7–74 rows differ at
+  α = 1e-3, 0–26 before), probably the kernel-piece rule. Flag-and-mask
+  finds no fixed point in 10 of 12 copula loops (9 before), at about twice
+  the cost. Forecasting: the pending cells, rerun on 5351de0, leave mote 20
+  without a copula model and every † cell marked; `quad_error`, which
+  counts the forecast horizon as 0, no longer flags them, hence
+  `forecast(check_nodes=...)` (above).
 - **Tests.** `test_gaps_diagnostic.py` (12 tests, 21 cases): a trailing gap
   → 0 (with state missingness too); the diagnostic within a factor of 4
   of the error of the run on Gaussian AR(1) references (G = 32–128, gaps of
@@ -598,14 +603,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Detection works.** A model fitted on the clean window, held fixed and
     gated, flags every reading above 60 °C, often hours before that
     threshold. With the PMC and BH at α = 1e-3 the lead is 6.1, 1.5 and
-    16.2 h, for 0–2 false flags in two weeks (rerun on d14e91d; on mote 47
-    3.2 h at 256 nodes). The Hampel filter and a rolling robust z-score
-    miss the failure.
+    16.2 h, for 0–2 false flags in two weeks (rerun on 5351de0 / 35e897d;
+    on mote 47 3.2 h at 256 nodes). The Hampel filter and a rolling robust
+    z-score miss the failure.
   - **Estimation breaks down.** Flag-and-mask fails because the failure
-    forms its own persistent, broad state (no fixed point in 9 of 12
+    forms its own persistent, broad state (no fixed point in 10 of 12
     copula-model loops). This argues for a Markov contamination indicator
-    with a fixed broad law. The rerun also found `quad_error` saturating at
-    about 1 per missing row on long runs (open, the study's README).
+    with a fixed broad law. `quad_error`'s saturation on long runs, found
+    by the study, is fixed (5351de0).
 - **`report/forecasting/`.** Compares pmcprg with pmmforecast, the Gaussian
   pairwise Markov model with a continuous hidden state, used read-only from
   commit 58ac3b6.

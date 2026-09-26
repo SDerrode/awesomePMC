@@ -1,11 +1,11 @@
 {
   "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-ad8f31accb1810d2e/pmcprg/__init__.py",
-  "pmcprg_commit": "d637a06",
-  "wall_seconds": 11000.700640834002,
-  "jobs": 4,
+  "pmcprg_commit": "f92da76",
+  "wall_seconds": 1.3628245839936426,
+  "jobs": 3,
   "max_rounds": 10,
   "resumed": true,
-  "fit_seconds_sum": 47432.62678679202,
+  "fit_seconds_sum": 92891.80984125001,
   "windows": {
     "48": [
       63420,

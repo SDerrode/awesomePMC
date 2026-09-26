@@ -1,8 +1,8 @@
 {
   "pmcprg": "/Users/MacBook_Derrode/Documents/ProjetsRecherche/Markov/awesomePMC/.claude/worktrees/agent-ad8f31accb1810d2e/pmcprg/__init__.py",
-  "pmcprg_commit": "d14e91d",
-  "fit_seconds": 217.25956362498982,
-  "pit_seconds": 151.7702621250064,
+  "pmcprg_commit": "5351de0",
+  "fit_seconds": 256.00363091699546,
+  "pit_seconds": 125.50443624999025,
   "jobs": 4,
   "selected": {
     "48|hmc_in": 3,
