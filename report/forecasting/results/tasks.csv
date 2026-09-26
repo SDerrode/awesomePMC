@@ -83,9 +83,9 @@ fixture,fix_pmc_gauss_k2__r0.05_k6_rep8,,,171.521
 fixture,fix_pmc_gauss_k2__r0.05_k6_rep9,,,180.286
 select,,hmc_in,2.000,3.633
 select,,hmc_in,3.000,3.794
-select_ext,,pmc_state,2.000,1470.813
-select_ext,,pmc_state,3.000,1328.633
-select_ext,,pmc_pair,2.000,1749.461
-select_ext,,pmc_pair,3.000,3191.098
-pmc,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair,3.000,3793.407
-pmc,aotizhongxin__spikes_r0.05_k6_s0,pmc_pair,3.000,3844.808
+select_ext,,pmc_state,2.000,817.653
+select_ext,,pmc_state,3.000,2303.824
+select_ext,,pmc_pair,2.000,1046.483
+select_ext,,pmc_pair,3.000,2687.726
+pmc,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair,3.000,4994.359
+pmc,aotizhongxin__spikes_r0.05_k6_s0,pmc_pair,3.000,4975.315

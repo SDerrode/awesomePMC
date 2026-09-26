@@ -129,6 +129,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test_diagnostic_warns_on_a_gap_too_long_for_the_grid` moves from G = 64
   to G = 48 (a property test: G = 64 is now 0.015 nats off, below the
   threshold; G = 48, 0.075 and warns). No frozen reference value changed.
+- **Singular local systems (35e897d).** The diagnostic's local quartic
+  solved its 5×5 systems in one batch. Distinct nodes far closer to the
+  law's mean than the farthest of the five (a narrow local grid) make the
+  scaled powers underflow and a system exactly singular, and the whole
+  batch raised `LinAlgError` (the Intel Lab detection run). Such a row now
+  goes to least squares; the others keep their numbers bit for bit
+  (`test_local_derivs_survive_an_exactly_singular_system`).
+- **What `quad_error` does not cover.** It estimates the error of
+  log p(y_obs); a forecast horizon, like any trailing gap, contributes 0.
+  The accuracy of a predictive law (`forecast`, the laws of `impute`) is
+  not in it: in the forecasting study, forecasts that move by 3.8 % of the
+  predictive sd between G = 128 and 256 have `quad_error` / limit
+  0.18–0.44. Check a forecast by doubling `gap_nodes`.
 
 ### Fixed — memory of the gap quadrature: bounded, with bit-for-bit the same results
 
@@ -226,9 +239,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Kalman filter would apply it, pays only with a refit loop. It costs 13 % on
   clean Beijing and fails on 30-s sensor data. It is not worth making it a
   default there.
-- **Pending cells rerun** on this release's gap-quadrature fixes (d14e91d,
-  5f23fc9): mote 20 has no eligible copula model (degenerate or unconverged
-  at 512 nodes); five fits stay marked (1.4–3.8 %). Conclusions unchanged.
+- **Pending cells rerun** on this release's gap-quadrature fixes (5351de0):
+  mote 20 has no eligible copula model (degenerate or unconverged at 512
+  nodes); five fits stay marked (1.4–3.8 %), which `quad_error`, blind to
+  the forecast horizon, no longer flags. Conclusions unchanged.
 - **pmmforecast issues found**, listed for its author: identifiability of
   the Y-only fit, default starts, NaN handling, `TheoreticalMSE`, and the
   18–29 min Y-only MLE on 21 599 rows.

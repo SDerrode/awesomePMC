@@ -118,7 +118,7 @@ aotizhongxin,0.01,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair_K3|raw+gate,2157,1.0
 aotizhongxin,0.01,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair_K3|raw,2157,1.0027,1.0054,0.77895,0.55586,0.55475,0.34724,0.67779,0.9286,3.3925
 aotizhongxin,0.01,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair_K3|robust+gate,2157,1.0059,1.0119,0.7821,0.55828,0.55594,0.34214,0.67177,0.91933,3.3239
 aotizhongxin,0.01,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair_K3|robust,2157,1.0057,1.0115,0.78143,0.5579,0.55566,0.34261,0.67177,0.91933,3.3167
-aotizhongxin,0.01,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair_K3|hampel+gate,2157,1.0175,1.0353,0.79934,0.56418,0.56719,0.33519,0.65461,0.87112,3.0745
+aotizhongxin,0.01,aotizhongxin__spikes_r0.01_k6_s0,pmc_pair_K3|hampel+gate,2157,1.0175,1.0353,0.79931,0.56416,0.56718,0.33519,0.65461,0.87112,3.0745
 aotizhongxin,0.05,aotizhongxin__spikes_r0.05_k6_s0,pmc_pair_K3|raw+gate,2157,1.0353,1.0719,0.76431,0.56124,0.61066,0.37181,0.73064,0.95549,8.373
 aotizhongxin,0.05,aotizhongxin__spikes_r0.05_k6_s0,pmc_pair_K3|raw,2157,1.0353,1.0719,0.76431,0.56124,0.61066,0.37181,0.73064,0.95549,8.373
 aotizhongxin,0.05,aotizhongxin__spikes_r0.05_k6_s0,pmc_pair_K3|robust+gate,2157,1.0449,1.0917,0.77061,0.56543,0.61259,0.36439,0.7172,0.95364,8.322

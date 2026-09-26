@@ -133,8 +133,9 @@ def patch(args, sel, aoti, mote, sdf, cop, pmm) -> None:
     runs = sel + aoti + mote
     warn = pd.DataFrame([{"kind_task": sp.get("kind", ""), "K_task": sp.get("K", ""), **w}
                          for sp, res, _ in runs for w in res.get("warnings", [])])
-    rerun_keys = {("pmc", sp["case"], sp["kind"]) for sp, _, _ in aoti} | {("select", "", k) for k, _ in
-                                                                           [(sp["kind"], sp["K"]) for sp, _, _ in sel]}
+    # the selection rows: "select" (run_forecasting) and "select_ext" (an earlier rerun_pending)
+    rerun_keys = {("pmc", sp["case"], sp["kind"]) for sp, _, _ in aoti} | {
+        (t, "", sp["kind"]) for sp, _, _ in sel for t in ("select", "select_ext")}
 
     def old_task(o):
         return [(t, "" if c != c else c, k) in rerun_keys for t, c, k in zip(o.task, o.case, o.kind_task)]
@@ -143,7 +144,7 @@ def patch(args, sel, aoti, mote, sdf, cop, pmm) -> None:
     tt = pd.DataFrame([{"task": sp["task"], "case": sp.get("case", ""), "kind": sp.get("kind", ""),
                         "K": sp.get("K", ""), "seconds": secs} for sp, _, secs in runs])
     _replace(R / "tasks.csv", tt,
-             lambda o: [(("select" if t == "select" else t), "" if c != c else c, k) in rerun_keys
+             lambda o: [(t, "" if c != c else c, k) in rerun_keys
                         for t, c, k in zip(o.task, o.case, o.kind)], "%.3f")
 
     # ---- run_info.json: what was rerun, on which code

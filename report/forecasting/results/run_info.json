@@ -203,42 +203,42 @@
  },
  "n_quantile_levels_crps": 200,
  "rerun_pending": {
-  "date": "2026-09-25 22:42",
-  "code": "cb3c5e9",
+  "date": "2026-09-26 14:21",
+  "code": "6a3e7a6",
   "what": "rerun_pending.py: the mote-20 copula selection rows (ladder G = 64\u2026512), the contaminated Aotizhongxin copula tasks (seed 0) and, if a copula model is chosen, its mote-20 forecasts",
   "mote20_copula_choice": null,
   "mote20_origin_stride": 1,
   "mote20_references_reproduced": null,
-  "sum_task_s": 15378.220274042014,
+  "sum_task_s": 16825.360493291984,
   "errors": [],
   "pmcprg_warnings": {
    "other": {
-    "records": 90,
-    "task_steps": 20,
+    "records": 94,
+    "task_steps": 21,
     "max_value": null
    },
    "quad_error": {
-    "records": 1438,
-    "task_steps": 67,
-    "max_value": 32.0
+    "records": 550,
+    "task_steps": 45,
+    "max_value": 170.0
    },
    "quantile_fallback": {
-    "records": 382,
-    "task_steps": 19,
+    "records": 381,
+    "task_steps": 18,
     "max_value": null
    }
   },
   "quantile_check_stats": {
    "n_grid_rows": 21570,
-   "q_check_max": 0.14457808665114893,
+   "q_check_max": 0.14457823686488025,
    "q_check_rows_above_0.25": 0,
-   "q_check_tail_max": 0.09492633462399473,
+   "q_check_tail_max": 0.09492668737409987,
    "q_check_tail_rows_above_0.05": 3
   },
   "leading_gaps": {
    "mote20_selection_fits": [
     "pmc_state K=3 (\u03c4 max 0.997, leading gap 1)",
-    "pmc_pair K=3 (\u03c4 max 0.997, leading gap 1)",
+    "pmc_pair K=3 (\u03c4 max 0.996, leading gap 1)",
     "pmc_state K=2 (\u03c4 max 0.994, leading gap 1)",
     "pmc_pair K=2 (\u03c4 max 0.995, leading gap 1)"
    ]

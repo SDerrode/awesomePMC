@@ -240,7 +240,7 @@ G: first of 64 / 128 / 256 nodes whose predictive means and sds (first, middle a
 
 | study | family | fits | G64 | G128 | G256 | unconverged | check_64 | check_G | tail_G | ratio_64 | ratio_G | cond_ratio_G |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| aotizhongxin | pmc_pair_K3 | 8 | 1 | 2 | 5 | 5 | 7.4e-02 | 3.8e-02 | 9.8e-02 | 81 | 7 | 36 |
+| aotizhongxin | pmc_pair_K3 | 8 | 1 | 2 | 5 | 5 | 1.2e-01 | 3.8e-02 | 9.8e-02 | 81 | 7 | 36 |
 | fix_pmc_gauss_k2 | pmc_state_K2 | 150 | 150 | 0 | 0 | 0 | 4.4e-04 | 4.4e-04 | 4.5e-02 | 5.6 | 5.6 | 0.00023 |
 | tsnh4 | pmc_state_K2 | 2 | 0 | 2 | 0 | 0 | 2.2e-02 | 1.4e-04 | 4.5e-02 | 4.1e+02 | 2.3 | 0.28 |
 
@@ -254,37 +254,42 @@ G: first of 64 / 128 / 256 nodes whose predictive means and sds (first, middle a
 | other | aotizhongxin | fit | %s: degenerate fitted model — %s. Its likelihood may be unbounded (a collapsing variance o | 4 | – |
 | other | aotizhongxin | fit | robust_estimate: the flagged rows still change after %d refit(s) (%d masked, %d flagged by | 1 | – |
 | other | fix_pmc_gauss_k2 | fit | %s iter %d: log-lik regressed by %.4e (streak=%d/%d). | 7 | – |
-| other | mote20 | fit | %s iter %d: log-lik regressed by %.4e (streak=%d/%d). | 13 | – |
-| other | mote20 | fit | %s: %d consecutive regressions — stopping early at iter %d. | 2 | – |
+| other | mote20 | fit | %s iter %d: log-lik regressed by %.4e (streak=%d/%d). | 16 | – |
+| other | mote20 | fit | %s: %d consecutive regressions — stopping early at iter %d. | 3 | – |
 | other | mote20 | fit | %s: degenerate fitted model — %s. Its likelihood may be unbounded (a collapsing variance o | 2 | – |
 | other | mote20 | forecast | Forward: C=%.3e at step n=%d — the transition weights underflow; recomputing the pass in l | 120 | – |
 | other | tsnh4 | fit | %s iter %d: log-lik regressed by %.4e (streak=%d/%d). | 15 | – |
 | other | tsnh4 | fit | %s: degenerate fitted model — %s. Its likelihood may be unbounded (a collapsing variance o | 9 | – |
 | other | tsnh4 | fit | robust_estimate: the flagged rows still change after %d refit(s) (%d masked, %d flagged by | 1 | – |
-| quad_error | aotizhongxin | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 112 | 1.90e+00 |
-| quad_error | aotizhongxin | fit | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 517 | 1.20e+00 |
-| quad_error | aotizhongxin | forecast | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 1140 | 7.50e-01 |
-| quad_error | aotizhongxin | quad_error gated | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 5 | 2.90e-01 |
-| quad_error | aotizhongxin | quad_error observed | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 4 | 2.70e-01 |
+| quad_error | aotizhongxin | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 24 | 4.00e-01 |
+| quad_error | aotizhongxin | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 26 | 5.10e-01 |
+| quad_error | aotizhongxin | fit | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 105 | 1.00e+00 |
+| quad_error | aotizhongxin | fit | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 303 | 9.30e+00 |
+| quad_error | aotizhongxin | forecast | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 364 | 7.50e-01 |
+| quad_error | aotizhongxin | forecast | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 93 | 7.50e-02 |
+| quad_error | aotizhongxin | quad_error gated | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 2 | 2.10e-01 |
+| quad_error | aotizhongxin | quad_error gated | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 2 | 7.50e-02 |
+| quad_error | aotizhongxin | quad_error observed | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 2 | 1.20e-02 |
+| quad_error | aotizhongxin | quad_error observed | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 1 | 6.90e-02 |
 | quad_error | fix_pmc_gauss_k2 | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 32 | 5.60e-03 |
 | quad_error | fix_pmc_gauss_k2 | forecast | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 1200 | 2.00e-02 |
-| quad_error | mote20 | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 60 | 1.90e+01 |
-| quad_error | mote20 | classify | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 4 | 1.10e+01 |
-| quad_error | mote20 | fit | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 41 | 3.20e+01 |
-| quad_error | mote20 | ladder 256-512 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 12 | 6.30e+00 |
-| quad_error | mote20 | ladder ll 128 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 4 | 7.10e+00 |
-| quad_error | mote20 | ladder ll 256 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 4 | 7.30e+00 |
-| quad_error | mote20 | ladder ll 512 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 4 | 6.30e+00 |
-| quad_error | mote20 | ladder ll 64 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 4 | 1.10e+01 |
-| quad_error | mote20 | ladder ratio 128 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 12 | 7.90e+00 |
-| quad_error | mote20 | ladder ratio 512 | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 12 | 6.30e+00 |
+| quad_error | mote20 | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 45 | 8.50e+01 |
+| quad_error | mote20 | classify | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 4 | 7.90e+01 |
+| quad_error | mote20 | fit | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 44 | 1.70e+02 |
+| quad_error | mote20 | ladder 256-512 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 6 | 5.80e+00 |
+| quad_error | mote20 | ladder ll 128 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 3 | 1.50e+01 |
+| quad_error | mote20 | ladder ll 256 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 2 | 2.10e+00 |
+| quad_error | mote20 | ladder ll 512 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 2 | 5.80e+00 |
+| quad_error | mote20 | ladder ll 64 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 4 | 7.90e+01 |
+| quad_error | mote20 | ladder ratio 128 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 9 | 1.50e+01 |
+| quad_error | mote20 | ladder ratio 512 | Missing-data quadrature not converged: relative error %.1e > %.1e — the estimated error in | 6 | 5.80e+00 |
 | quad_error | tsnh4 | choose_nodes | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 18 | 4.10e-01 |
 | quad_error | tsnh4 | fit | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 43 | 3.40e-01 |
 | quad_error | tsnh4 | forecast | Missing-data quadrature not converged: relative error %.1e > %.1e on the integrals the gri | 71 | 8.40e-03 |
-| quantile_fallback | aotizhongxin | choose_nodes | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 51 | – |
+| quantile_fallback | aotizhongxin | choose_nodes | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 52 | – |
 | quantile_fallback | aotizhongxin | forecast | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 421 | – |
 | quantile_fallback | fix_pmc_gauss_k2 | forecast | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 2 | – |
-| quantile_fallback | mote20 | choose_nodes | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 4 | – |
+| quantile_fallback | mote20 | choose_nodes | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 2 | – |
 | quantile_fallback | tsnh4 | choose_nodes | Quantiles of the missing values: the interpolated CDF of %d law(s) is not monotone or leav | 3 | – |
 
 
@@ -530,10 +535,10 @@ CRPS averaged over h = 1…24 and the origins (and the seeds), and at h = 1:
 | aotizhongxin__spikes_r0.05_k6_s0 | ar1 | robust | 11 | True | 853 | 1.00 | 85.12 | – | – | – | – | 2 |
 | aotizhongxin__spikes_r0.05_k6_s1 | ar1 | robust | 11 | True | 850 | 1.00 | 82.29 | – | – | – | – | 2 |
 | aotizhongxin__spikes_r0.05_k6_s2 | ar1 | robust | 11 | False | 825 | 1.00 | 77.23 | – | – | – | – | 2 |
-| aotizhongxin__spikes_r0.01_k6_s0 | pmc_pair_K3 | robust | 7 | True | 13 | 0.10 | 0.92 | – | False | 256 | 3.7e-02 | 86 |
-| aotizhongxin__spikes_r0.01_k6_s0 | pmc_pair_K3 | hampel | 5 | True | 87 | 1.00 | 2.47 | 0.94 | True | 128 | 5.7e-03 | 127 |
-| aotizhongxin__spikes_r0.05_k6_s0 | pmc_pair_K3 | robust | 4 | True | 21 | 0.01 | 2.89 | – | False | 256 | 2.7e-02 | 75 |
-| aotizhongxin__spikes_r0.05_k6_s0 | pmc_pair_K3 | hampel | 11 | False | 17 | 0.01 | 2.24 | 0.97 | False | 256 | 2.6e-02 | 212 |
+| aotizhongxin__spikes_r0.01_k6_s0 | pmc_pair_K3 | robust | 7 | True | 13 | 0.10 | 0.92 | – | False | 256 | 3.7e-02 | 99 |
+| aotizhongxin__spikes_r0.01_k6_s0 | pmc_pair_K3 | hampel | 5 | True | 87 | 1.00 | 2.47 | 0.94 | True | 128 | 5.2e-03 | 174 |
+| aotizhongxin__spikes_r0.05_k6_s0 | pmc_pair_K3 | robust | 4 | True | 21 | 0.01 | 2.89 | – | False | 256 | 2.7e-02 | 80 |
+| aotizhongxin__spikes_r0.05_k6_s0 | pmc_pair_K3 | hampel | 11 | False | 17 | 0.01 | 2.24 | 0.97 | False | 256 | 2.6e-02 | 271 |
 
 
 ### Robust fits on the fixtures (means over replicates)
