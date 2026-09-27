@@ -31,6 +31,18 @@ def boom(shared, task):
     return task
 
 
+def fail_late_early(shared, task):
+    """Replicate 1 fails late, replicate 5 at once: the parent must still
+    raise replicate 1's error, as the serial loop would."""
+    import time
+    if task == 1:
+        time.sleep(1.0)
+        raise ValueError("replicate 1 fails late")
+    if task == 5:
+        raise ValueError("replicate 5 fails at once")
+    return task
+
+
 def warn_some(shared, task):
     if task in (1, 2):
         warnings.warn(f"replicate {task} warns", UserWarning)

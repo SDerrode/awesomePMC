@@ -376,20 +376,36 @@ def map_replicates(
         except BaseException:
             _stop_workers(pool)
             raise
+    # The serial loop stops at the lowest failing replicate, whatever the
+    # timing: after a failure, only the chunks BEFORE it are awaited (their
+    # warnings re-emitted, a failure among them taking over), those after it
+    # are dropped, then the earliest failure is raised.
+    failed = None                                   # (first index, future)
     try:
         while pending:
             finished, _ = wait(pending, return_when=FIRST_COMPLETED)
-            for fut in finished:
+            for fut in sorted(finished, key=pending.__getitem__):
                 first = pending.pop(fut)
+                if failed is not None and first > failed[0]:
+                    continue
+                if fut.exception() is not None:
+                    failed = (first, fut)
+                    for later in [f for f, i in pending.items() if i > first]:
+                        later.cancel()
+                        del pending[later]
+                    continue
                 chunk_results, records, logs = fut.result()
                 results[first:first + len(chunk_results)] = chunk_results
                 done += len(chunk_results)
                 _reemit(records, logs, module_cache)
                 if on_progress is not None:
                     on_progress(done)
-                chunk = _next_chunk()
-                if chunk:
-                    pending[pool.submit(_run_chunk, chunk)] = chunk[0][0]
+                if failed is None:
+                    chunk = _next_chunk()
+                    if chunk:
+                        pending[pool.submit(_run_chunk, chunk)] = chunk[0][0]
+        if failed is not None:
+            failed[1].result()          # the worker's exception, with its note
     except BaseException:
         _stop_workers(pool)
         raise

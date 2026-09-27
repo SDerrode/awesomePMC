@@ -45,7 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per worker, at most two per worker in flight; results in task order.
   - A worker exception is re-raised in the parent, the original exception
     with the worker traceback chained and a note naming the replicate,
-    after the pending chunks are cancelled and the workers stopped. What the
+    after the pending chunks are cancelled and the workers stopped. It is
+    the one of the lowest failing replicate, as in the serial loop, whatever
+    the timing: the chunks before a failure are awaited, those after it
+    dropped (the first CI run on Linux raised replicate 2's warning-turned-
+    error before replicate 1's). What the
     historical loops caught (a failed refit, a failed replicate of
     `parametric_bootstrap`) is still caught and counted as invalid.
   - Warnings are recorded in the worker under the parent's filters (copied

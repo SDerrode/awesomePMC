@@ -326,6 +326,14 @@ def test_worker_exception_surfaces_with_the_replicate_named():
     assert "Traceback" in str(info.value.__cause__)               # the worker's traceback
 
 
+def test_the_earliest_failing_replicate_is_raised_whatever_the_timing():
+    # replicate 5 (another chunk) fails first in time; the serial loop would
+    # stop at replicate 1, and so must the pool
+    with pytest.raises(ValueError, match="replicate 1 fails late"):
+        _parallel.map_replicates(W.fail_late_early, range(8), n_tasks=8, n_jobs=2,
+                                 chunksize=1)
+
+
 def test_unpicklable_replicate_function_is_refused_before_any_worker():
     with pytest.raises(TypeError, match="top-level function"):
         _parallel.map_replicates(lambda s, t: t, range(4), n_tasks=4, n_jobs=2)
