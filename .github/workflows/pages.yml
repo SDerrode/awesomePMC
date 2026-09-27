@@ -1,0 +1,57 @@
+# --------------------------------------------------------------------
+# API documentation site → GitHub Pages (https://sderrode.github.io/awesomePMC/)
+#
+#   Built by MkDocs from apidoc/ (never docs/, which holds private
+#   manuscripts and is not versioned), in strict mode as in the `docs`
+#   job of ci.yml, and deployed as a Pages artifact: no gh-pages branch.
+#
+#   When: on every PUBLISHED GitHub Release, so that the site documents
+#   the version on PyPI, not unreleased code on main; and on demand
+#   (Actions → Docs (GitHub Pages) → Run workflow) from a tag or main.
+# --------------------------------------------------------------------
+name: Docs (GitHub Pages)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer one waits instead of cancelling.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the package with the docs extra
+        run: |
+          python -V
+          pip install --upgrade pip
+          pip install -e ".[docs]"
+      - name: Build the site (strict — warnings fail the build)
+        run: mkdocs build --strict --site-dir site
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

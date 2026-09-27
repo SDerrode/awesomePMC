@@ -26,7 +26,8 @@
 #   docs         — builds the API documentation site (MkDocs + mkdocstrings,
 #                  the `docs` extra) with `mkdocs build --strict`, so a
 #                  broken docstring reference or dead internal link fails
-#                  CI; one Python version, nothing deployed (audit FR-12).
+#                  CI; one Python version. It deploys nothing: the site is
+#                  published by pages.yml on every release.
 #
 # The "gui" optional extra (PyQt6) is installed so the test_gui_dialogs
 # tests run; PyQt6 ships its own Qt; we just need an X-less display
@@ -272,8 +273,8 @@ jobs:
   # --------------------------------------------------------------------
   # Docs — API documentation site (MkDocs + mkdocstrings), strict mode.
   #   Catches a broken docstring cross-reference or a dead internal link
-  #   before it reaches a release. Builds only — no `mkdocs gh-deploy`,
-  #   no GitHub Pages, nothing published (audit FR-12).
+  #   before it reaches a release. Builds only: the site is published on
+  #   GitHub Pages by pages.yml, on every published release.
   # --------------------------------------------------------------------
   docs:
     name: docs (mkdocs build --strict)

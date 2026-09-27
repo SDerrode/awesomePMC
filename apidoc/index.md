@@ -8,8 +8,9 @@ classification, unsupervised estimation (ICE, SEM, GICE) with automatic
 copula and margin selection, missing-data imputation and forecasting, and a
 PyQt6 GUI.
 
-This site is the **API reference**: generated from the package's docstrings,
-built locally, not deployed (see [Installation](installation.md)). It does
+This site is the **API reference**: generated from the package's docstrings
+and published for every release, so it documents the version on PyPI (see
+[Installation](installation.md) to build it locally). It does
 not repeat the project's narrative documentation — for the feature tour,
 the model TOML format, the CLI, the GUI, worked examples and the scientific
 references, see the

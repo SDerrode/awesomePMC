@@ -5,6 +5,7 @@
 [![CI status](https://github.com/SDerrode/awesomePMC/actions/workflows/ci.yml/badge.svg)](https://github.com/SDerrode/awesomePMC/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/SDerrode/awesomePMC/blob/main/LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
+[![Docs](https://img.shields.io/badge/docs-API%20reference-blue.svg)](https://sderrode.github.io/awesomePMC/)
 
 **Copula-based pairwise and hidden Markov chains for the unsupervised
 classification of non-Gaussian time series and images.**
@@ -1066,8 +1067,9 @@ This README is the main documentation. An **API reference** (the copula
 registry, `PMCModel`, inference, ICE/SEM, missing-data handling, the
 [state-labelling rule](https://github.com/SDerrode/awesomePMC/blob/main/apidoc/state-labelling.md))
 is generated from the docstrings with [MkDocs](https://www.mkdocs.org/) +
-[mkdocstrings](https://mkdocstrings.github.io/); it is built locally and not
-deployed anywhere:
+[mkdocstrings](https://mkdocstrings.github.io/), and published at
+**<https://sderrode.github.io/awesomePMC/>** for every release. To build it
+locally:
 
 ```bash
 pip install -e ".[docs]"
@@ -1105,7 +1107,7 @@ awesomePMC/
 │   └── missing_benchmark/  missing-data benchmark
 ├── scripts/                maintenance scripts
 ├── data/                   local data folders (UCI HAR cache, not versioned)
-├── apidoc/                 API reference site (MkDocs + mkdocstrings, local build only)
+├── apidoc/                 API reference site (MkDocs + mkdocstrings; published on GitHub Pages)
 ├── CHANGELOG.md
 ├── CITATION.cff
 ├── CONTRIBUTING.md

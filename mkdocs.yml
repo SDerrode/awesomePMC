@@ -1,4 +1,5 @@
 site_name: awesomePMC
+site_url: https://sderrode.github.io/awesomePMC/
 site_description: >-
   Pairwise and hidden Markov chains with copula-based non-Gaussian
   dependence — API reference.
@@ -8,8 +9,9 @@ edit_uri: ""
 docs_dir: apidoc   # not docs/: that folder holds private, unversioned manuscripts
 site_dir: site
 
-# Built locally only (`mkdocs build --strict` / `mkdocs serve`); no
-# `gh-deploy` is run anywhere in this repository or its CI (FR-12).
+# Published at site_url by .github/workflows/pages.yml on every published
+# GitHub Release (a Pages artifact; no `gh-deploy`, no gh-pages branch).
+# Locally: `mkdocs build --strict` / `mkdocs serve`.
 
 theme:
   name: material

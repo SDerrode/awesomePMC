@@ -21,9 +21,11 @@ for the full requirements table and the development install.
 
 ## This site
 
-The API reference is built locally with [MkDocs](https://www.mkdocs.org/)
-and [mkdocstrings](https://mkdocstrings.github.io/); it is **not deployed**
-anywhere (no GitHub Pages, no public URL) — build it yourself from a clone:
+The API reference is built with [MkDocs](https://www.mkdocs.org/) and
+[mkdocstrings](https://mkdocstrings.github.io/) and published at
+<https://sderrode.github.io/awesomePMC/> for every release (GitHub Pages,
+workflow `.github/workflows/pages.yml`), so the site documents the version on
+PyPI. To build it yourself from a clone, e.g. for unreleased code:
 
 ```bash
 git clone https://github.com/SDerrode/awesomePMC.git

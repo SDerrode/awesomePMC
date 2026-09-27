@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the API reference is published on GitHub Pages
+
+- <https://sderrode.github.io/awesomePMC/>, built from `apidoc/` by MkDocs
+  in strict mode, as the `docs` CI job does. `.github/workflows/pages.yml`
+  deploys it as a Pages artifact (no `gh-pages` branch) on every published
+  GitHub Release, so the site documents the version on PyPI, and on demand.
+  First deployment: 1.5.0's API.
+
 ---
 
 ## [1.5.0] - 2026-09-26

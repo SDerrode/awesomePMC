@@ -97,7 +97,9 @@ weekly (Monday 03:23 UTC), and on a manual `workflow_dispatch` run, on
 Python 3.11 through 3.14, with coverage collected on 3.14. A separate `docs`
 job builds the API documentation site in strict mode (see below) so a
 broken docstring reference or a dead internal link fails CI instead of
-reaching a release; it does not deploy anything.
+reaching a release; it does not deploy anything. The site is published at
+<https://sderrode.github.io/awesomePMC/> by `.github/workflows/pages.yml`, on
+every published GitHub Release (or on demand from the Actions tab).
 
 ## Reporting an issue
 
