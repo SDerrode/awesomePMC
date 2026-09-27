@@ -43,6 +43,17 @@ def fail_late_early(shared, task):
     return task
 
 
+def fail_with_neighbours(shared, task):
+    """Replicates 0–3 all finish after the same short sleep; replicate 1
+    fails. Their chunks tend to complete in one batch, the failed one with
+    successes after it (dropped) and before it (kept)."""
+    import time
+    time.sleep(0.3)
+    if task == 1:
+        raise ValueError("replicate 1 fails among neighbours")
+    return task
+
+
 def warn_some(shared, task):
     if task in (1, 2):
         warnings.warn(f"replicate {task} warns", UserWarning)

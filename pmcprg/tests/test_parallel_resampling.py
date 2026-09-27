@@ -334,6 +334,15 @@ def test_the_earliest_failing_replicate_is_raised_whatever_the_timing():
                                  chunksize=1)
 
 
+def test_a_failure_among_chunks_that_finish_together():
+    # successes before and after the failed chunk complete in the same batch:
+    # the later ones are dropped, the earlier kept, the failure raised
+    for _ in range(3):
+        with pytest.raises(ValueError, match="replicate 1 fails among neighbours"):
+            _parallel.map_replicates(W.fail_with_neighbours, range(8), n_tasks=8,
+                                     n_jobs=4, chunksize=1)
+
+
 def test_unpicklable_replicate_function_is_refused_before_any_worker():
     with pytest.raises(TypeError, match="top-level function"):
         _parallel.map_replicates(lambda s, t: t, range(4), n_tasks=4, n_jobs=2)

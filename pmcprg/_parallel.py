@@ -385,6 +385,8 @@ def map_replicates(
         while pending:
             finished, _ = wait(pending, return_when=FIRST_COMPLETED)
             for fut in sorted(finished, key=pending.__getitem__):
+                if fut not in pending:          # dropped after an earlier failure
+                    continue
                 first = pending.pop(fut)
                 if failed is not None and first > failed[0]:
                     continue
