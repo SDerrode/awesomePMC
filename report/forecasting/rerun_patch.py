@@ -23,12 +23,16 @@ import run_forecasting as rf
 HERE = Path(__file__).resolve().parent
 
 
-def _replace(path: Path, new: pd.DataFrame, drop: pd.Series | np.ndarray, fmt: str) -> None:
-    """Rewrite ``path`` with the rows ``drop`` removed and ``new`` appended (same float format)."""
+def _replace(path: Path, new: pd.DataFrame, drop: pd.Series | np.ndarray, fmt: str,
+             ints: tuple = ()) -> None:
+    """Rewrite ``path`` with the rows ``drop`` removed and ``new`` appended (same float format;
+    the columns ``ints`` as integers, not through ``fmt``)."""
     old = pd.read_csv(path)
     keep = old[~np.asarray(drop(old) if callable(drop) else drop, bool)]
     out = pd.concat([keep, new], ignore_index=True)
     out = out[list(old.columns) + [c for c in out.columns if c not in old.columns]]
+    for c in ints:
+        out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
     out.to_csv(path, index=False, float_format=fmt)
 
 
@@ -145,7 +149,7 @@ def patch(args, sel, aoti, mote, sdf, cop, pmm) -> None:
                         "K": sp.get("K", ""), "seconds": secs} for sp, _, secs in runs])
     _replace(R / "tasks.csv", tt,
              lambda o: [(t, "" if c != c else c, k) in rerun_keys
-                        for t, c, k in zip(o.task, o.case, o.kind)], "%.3f")
+                        for t, c, k in zip(o.task, o.case, o.kind)], "%.3f", ints=("K",))
 
     # ---- run_info.json: what was rerun, on which code
     info = json.loads((R / "run_info.json").read_text())

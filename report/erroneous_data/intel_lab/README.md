@@ -374,9 +374,11 @@ are identical.
 loaded, not rerun, when `--resume` reaches it. So a helper that runs the
 same task specifications in reverse order into the same cache, while the
 main run goes forward, meets it in the middle; each of its workers can at
-most duplicate the task the main run is on. The helper is not versioned
-(`report/out/reruns/robust_helper.py`). Once both have stopped, a last
-`robust.py --resume` loads every task and writes the tables.
+most duplicate the task the main run is on. `robust_helper.py` is that
+helper (`--jobs`, `--kinds`, the same `--max-rounds` as the main run). To
+stop it, stop its pool workers too: they outlive their parent. Once both
+have stopped, a last `robust.py --resume` loads every task and writes the
+tables.
 
 The wall times of the last rerun on an Apple arm64 laptop (32 GB; Python
 3.14.7, numpy 2.5.3, scipy 1.18.1), from the run logs and the
@@ -393,8 +395,11 @@ The wall times of the last rerun on an Apple arm64 laptop (32 GB; Python
   G = 256 passes take 2.6–29 min each, against 17–245 s at G = 64.
 * `robust.py`: 5 h 53 min of wall time, 25.8 h of task time (13.2 h in the
   previous rerun). The main run used 3 processes from 13:16 to 19:07. A
-  reverse-order helper on 4 processes ran from 14:50 to 18:55 into the
-  same cache; one task (mote 22, PMC, `fm_hampel`, 2.3 h) ran in both. The
+  reverse-order helper on 4 processes ran from 14:50 into the same cache.
+  Two tasks ran in both (mote 22, PMC, `fm` and `fm_hampel`): the helper's
+  copies finished at 18:55 and 19:18 with the same iterations and masks as
+  the main run's, so the same results. The main run's copy of a third
+  (`fm_thr60`, saved by the helper at 17:59) was stopped at 19:07. The
   last `--resume` took 103 s. Its `results/robust_info.json` records only
   that last run's pool: `wall_seconds` is 1.4 s, and `jobs` 3.
   `fit_seconds_sum` (92 892 s) is the sum over the 48 saved tasks. The 12
@@ -1447,6 +1452,7 @@ before (d14e91d) and after (35e897d):
 | `fit_clean.py` | step 1 → `results/fits.csv`, `results/models/*.toml` (the 12 best clean fits), `results/selected_models.json`, `results/pit_checks.csv`, `results/regimes_by_hour.csv`, `figures/clean_pit.png`, `figures/clean_regimes.png` |
 | `detect.py` | step 2 → `results/detect_scores.csv` (one row per mote × method × setting), `results/alarm_episodes.csv`, `results/detect_info.json`, `figures/detect_*.png`; `--check` → `results/detect_check.csv`, `results/detect_check_info.json` |
 | `robust.py` | step 3 → `results/robust_fits.csv`, `results/robust_info.json`, `figures/robust_*.png`; the tasks in `results/cache/robust_tasks/` (for `--resume`, not versioned) |
+| `robust_helper.py` | a second process pool for a running `robust.py --resume`: the same tasks in reverse order, into the same cache |
 | `summarise.py` | `results/tables.md`, `results/tables.tex` |
 | `repro_clipped_corner.py` | library problem 1 (clipped corner) |
 | `repro_gap_nodes.py` | library problem 2 (gap quadrature, fixed at 39f249f) |
