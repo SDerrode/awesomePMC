@@ -81,6 +81,8 @@ from typing import Any
 
 import numpy as np
 
+from pmcprg._parallel import map_replicates, resolve_n_jobs
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["BootstrapResult", "parametric_bootstrap"]
@@ -113,6 +115,24 @@ class BootstrapResult:
     n_series: int
 
 
+def _stream_replicate(shared, task) -> dict | None:
+    """One replicate on its own stream (``n_jobs`` given, audit FR-14).
+
+    ``task = (b, SeedSequence child)``. Returns the statistic's mapping, or
+    ``None`` when the replicate raised — logged at DEBUG and not counted, as
+    in the shared-stream loop. Top-level so a worker process can unpickle it.
+    """
+    model, statistic, simulate_fn, N = shared
+    b, child = task
+    rng = np.random.default_rng(child)
+    try:
+        _, Y_b = simulate_fn(model, N=N, seed=int(rng.integers(0, 2**31 - 1)))
+        return dict(statistic(model, Y_b, rng))
+    except Exception as exc:                               # pragma: no cover
+        logger.debug("bootstrap replicate %d failed: %s", b, exc)
+        return None
+
+
 def parametric_bootstrap(
     model,
     Y,
@@ -124,6 +144,7 @@ def parametric_bootstrap(
     max_len: int | None = None,
     progress_cb: Callable[[int, int, float, str], None] | None = None,
     simulate_fn: Callable[..., tuple] | None = None,
+    n_jobs: int | None = None,
 ) -> dict[Hashable, BootstrapResult]:
     """Calibrate ``statistic`` against series simulated from ``model``.
 
@@ -154,6 +175,36 @@ def parametric_bootstrap(
     simulate_fn : callable, optional
         Defaults to :func:`pmcprg.pmc.simulate.simulate`. Injectable for tests
         and for model classes that simulate differently.
+    n_jobs : int, optional
+        ``None`` (default) keeps the historical loop: **one** generator,
+        ``default_rng(seed)``, feeds the observed pass and then every
+        replicate in turn — its simulation seed, then whatever ``statistic``
+        draws from it. What replicate ``b`` receives depends on how many
+        numbers the replicates before it consumed (a posterior draw consumes
+        a data-dependent amount), so that stream cannot be split across
+        processes and stays the default, unchanged to the bit. An int
+        switches to **per-replicate streams** (audit FR-14): replicate
+        ``b`` gets its own generator, ``default_rng(SeedSequence(seed).spawn(B)[b])``,
+        draws its simulation seed from it and passes it to ``statistic``.
+        Replicates no longer depend on one another nor on the order they run
+        in, so ``n_jobs=1`` (in this process), ``k`` (``k`` worker processes)
+        and ``-1`` (one per CPU) return **identical** results — but not
+        those of ``n_jobs=None``: same law, other numbers. The observed pass
+        still draws from ``default_rng(seed)`` and is unchanged. With
+        ``k > 1``, ``model``, ``statistic`` and ``simulate_fn`` are sent to
+        the workers and must be picklable: top-level functions of an
+        importable module, not lambdas or closures (``TypeError`` otherwise).
+        ``progress_cb`` is then called with the number of replicates
+        finished so far: 0 first, then after each replicate (in-process)
+        or each chunk (with workers). Cost: starting
+        the workers takes about a second, then one simulation and one
+        ``statistic`` per replicate. With the GUI's copula statistic
+        (forward-backward, one ξ-weighted CvM per pair) on a two-state PMC,
+        B = 200: ``N = 800``, 13.3 s → 4.4 s with 4 workers, 3.4 s with 8;
+        ``N = 2000``, 40.7 s → 11.3 s and 7.7 s (Apple M2 Pro, 6
+        performance + 4 efficiency cores; full table in the CHANGELOG entry
+        of FR-14). Warnings and log records raised in the workers are
+        re-emitted here (:mod:`pmcprg._parallel`).
 
     Returns
     -------
@@ -161,6 +212,7 @@ def parametric_bootstrap(
     :class:`BootstrapResult`. Keys seen only in replicates and never in the
     observed pass are dropped: there is nothing to compare them to.
     """
+    n_jobs = resolve_n_jobs(n_jobs)
     if simulate_fn is None:
         from pmcprg.pmc.simulate import simulate as simulate_fn  # noqa: N813
 
@@ -173,20 +225,47 @@ def parametric_bootstrap(
     observed = dict(statistic(model, Y, rng))
     null: dict[Hashable, list[float]] = {k: [] for k in observed}
 
-    for b in range(B):
-        if progress_cb is not None:
+    if n_jobs is None:
+        # The historical shared stream — see ``n_jobs`` in the docstring.
+        for b in range(B):
+            if progress_cb is not None:
+                try:
+                    progress_cb(b, B, 0.0, "bootstrap")
+                except Exception:                          # pragma: no cover
+                    pass
             try:
-                progress_cb(b, B, 0.0, "bootstrap")
-            except Exception:                              # pragma: no cover
-                pass
-        try:
-            _, Y_b = simulate_fn(model, N=N,
-                                 seed=int(rng.integers(0, 2**31 - 1)))
-            for key, value in statistic(model, Y_b, rng).items():
-                if key in null and np.isfinite(value):
-                    null[key].append(float(value))
-        except Exception as exc:                           # pragma: no cover
-            logger.debug("bootstrap replicate %d failed: %s", b, exc)
+                _, Y_b = simulate_fn(model, N=N,
+                                     seed=int(rng.integers(0, 2**31 - 1)))
+                for key, value in statistic(model, Y_b, rng).items():
+                    if key in null and np.isfinite(value):
+                        null[key].append(float(value))
+            except Exception as exc:                       # pragma: no cover
+                logger.debug("bootstrap replicate %d failed: %s", b, exc)
+    else:
+        def _progress(done: int) -> None:
+            if progress_cb is not None:
+                try:
+                    progress_cb(done, B, 0.0, "bootstrap")
+                except Exception:                          # pragma: no cover
+                    pass
+
+        _progress(0)
+        # Per-replicate streams: SeedSequence children, independent of one
+        # another and of the order — and the number of processes — they run in.
+        children = np.random.SeedSequence(seed).spawn(B)
+        replicates = map_replicates(
+            _stream_replicate, enumerate(children), n_tasks=B, n_jobs=n_jobs,
+            shared=(model, statistic, simulate_fn, N), on_progress=_progress,
+        )
+        for b, values in enumerate(replicates):
+            if values is None:
+                continue
+            try:
+                for key, value in values.items():
+                    if key in null and np.isfinite(value):
+                        null[key].append(float(value))
+            except Exception as exc:                       # pragma: no cover
+                logger.debug("bootstrap replicate %d failed: %s", b, exc)
 
     out: dict[Hashable, BootstrapResult] = {}
     for key, value in observed.items():

@@ -198,6 +198,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.stats import kendalltau, rankdata
 
+from pmcprg._parallel import map_replicates, resolve_n_jobs
 from pmcprg.diagnostics.dependent_multiplier import (
     MULTIPLIER_KERNELS,
     MULTIPLIER_LAWS,
@@ -315,6 +316,15 @@ def _fit_gaussian_surrogate(tau_hat: float):
     return CopulaGaussian(tau_k=tau)
 
 
+def _surrogate_replicate(shared, seed: int) -> float:
+    """``T_n^(b)`` of one Gaussian-surrogate replicate — top-level so a worker
+    process can unpickle it (``n_jobs``, audit FR-14)."""
+    surrogate, n = shared
+    xb, yb = surrogate.sample(n, seed=seed).T
+    ub, vb = _pseudo_obs(xb, yb)
+    return radial_symmetry_statistic(ub, vb)
+
+
 # ---------------------------------------------------------------------------
 # Multiplier bootstrap (FR-10 round 2) — see the module docstring for the
 # derivation. Everything below operates on pseudo-observations already in
@@ -405,6 +415,7 @@ def radial_symmetry_test(
     multiplier: str = "normal",
     block_length: int | str = "auto",
     block_kernel: str = "bartlett",
+    n_jobs: int | None = None,
 ) -> RadialSymmetryResult:
     """Test H0: the copula of ``(x, y)`` is radially symmetric (FR-10).
 
@@ -441,6 +452,20 @@ def radial_symmetry_test(
     block_kernel : ``'bartlett'`` (default) or ``'parzen'``, the smoothing
                  kernel of that sequence. Also only used by
                  ``bootstrap='dependent-multiplier'``.
+    n_jobs     : worker processes for the ``bootstrap='parametric'``
+                 replicates (audit FR-14): ``None`` (default) or ``1`` in
+                 this process, ``k > 1`` in ``k`` processes, ``-1`` one per
+                 CPU. The result is **bit-identical for every value** — a
+                 replicate draws nothing but its sampling seed, the ``b``-th
+                 draw of ``default_rng(seed)``, made here in replicate
+                 order. Starting the workers costs about a second and a
+                 replicate ``O(n²)``: at ``n = 500`` the pool is slower
+                 (0.2 s in-process, 1.0 s with 4 workers), at ``n = 2000``
+                 it halves the time (3.6 s → 1.9 s with 4 workers, 1.8 s
+                 with 8; Apple M2 Pro, 6 performance + 4 efficiency cores,
+                 full table in the CHANGELOG entry of FR-14). Ignored by the
+                 multiplier bootstraps, which are one matrix product
+                 already.
 
     Returns
     -------
@@ -453,6 +478,7 @@ def radial_symmetry_test(
             "(see the module docstring, 'Weighting') — pass a single, "
             "fully-observed sample of pairs instead."
         )
+    n_jobs = resolve_n_jobs(n_jobs)
     if not (0.0 < alpha < 1.0):
         raise ValueError(f"alpha must be in (0, 1), got {alpha}.")
     if bootstrap not in BOOTSTRAP_METHODS:
@@ -494,14 +520,11 @@ def radial_symmetry_test(
     else:
         surrogate = _fit_gaussian_surrogate(tau_hat)
         rng = np.random.default_rng(seed)
-        raw_draws = []
-        for _ in range(int(B)):
-            xb, yb = surrogate.sample(n, seed=int(rng.integers(0, 2**31 - 1))).T
-            ub, vb = _pseudo_obs(xb, yb)
-            tb = radial_symmetry_statistic(ub, vb)
-            if np.isfinite(tb):
-                raw_draws.append(tb)
-        draws = np.asarray(raw_draws, dtype=float)
+        # One seed per replicate, drawn lazily and in replicate order.
+        seeds = (int(rng.integers(0, 2**31 - 1)) for _ in range(int(B)))
+        raw_draws = map_replicates(_surrogate_replicate, seeds, n_tasks=int(B),
+                                   n_jobs=n_jobs or 1, shared=(surrogate, n))
+        draws = np.asarray([tb for tb in raw_draws if np.isfinite(tb)], dtype=float)
 
     p_value = (
         float((1 + np.sum(draws >= stat)) / (draws.size + 1))

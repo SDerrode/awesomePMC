@@ -1012,6 +1012,11 @@ statistic by resampling whole series from the fitted model), Neyman smooth-test
 components of a fitted margin (`neyman_components`, `neyman_test`) and the
 Vuong / Clarke family comparisons (`vuong_test`, `clarke_test`,
 `confidence_set`, `ice_pair_comparisons`).
+The resampling loops (`parametric_bootstrap`, `FitResult.gof_test` /
+`bootstrap_ci`, the parametric branch of the radial-symmetry, exchangeability
+and Rosenblatt tests) take `n_jobs` to run their replicates in worker
+processes — worth it for loops of several seconds; the docstrings give the
+reproducibility rules, the CHANGELOG (FR-14) the measured gains.
 
 ```python
 import numpy as np

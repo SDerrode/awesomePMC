@@ -9,6 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `n_jobs`: the resampling loops in worker processes (FR-14)
+
+- **What.** One keyword, `n_jobs: int | None = None`, on the six loops whose
+  replicates are independent: `parametric_bootstrap`, `FitResult.gof_test`
+  (B = 100) and `FitResult.bootstrap_ci` (B = 500), and the
+  `bootstrap="parametric"` branch (Gaussian surrogate, B = 200) of
+  `exchangeability_test`, `radial_symmetry_test` and `rosenblatt_gof_test`.
+  `None` or `1` runs in-process, `k > 1` in `k` processes, `-1` one per CPU;
+  0, other negatives (`ValueError`) and non-integers (`TypeError`) are
+  refused. The multiplier bootstraps ignore it: they are one matrix product.
+- **Reproducibility, per function.**
+  - `gof_test`, `bootstrap_ci` and the three screens: **bit-identical for
+    every `n_jobs`**, `None` included. A replicate draws nothing but its
+    sampling seed (`bootstrap_ci`: its resampling indices), the b-th draw of
+    `default_rng(seed)`; those draws are made in the parent, in replicate
+    order, lazily, and sent with the replicate. The in-process path calls
+    the same replicate function as the pool.
+  - `parametric_bootstrap`: the historical loop shares one generator between
+    the observed pass, the simulation seeds and the statistic, which
+    consumes a data-dependent amount (a posterior draw): replicate b depends
+    on every replicate before it and the stream cannot be split. `None`
+    keeps that loop unchanged. An int switches to **per-replicate streams**,
+    `default_rng(SeedSequence(seed).spawn(B)[b])`: identical for 1, 2, 3, 8
+    processes, but not equal to `None` (same law, other numbers). The
+    observed pass is the same in both.
+  - The default path is unchanged to the bit: the six functions return, at
+    their defaults, byte-identical pickles before and after (Python 3.14 /
+    numpy 2.5 and the minimum-versions venv), and the tests compare each
+    with a verbatim copy of its historical loop.
+- **The pool** (`pmcprg/_parallel.py`, private; the conventions of the
+  multistart pool): spawn; one BLAS/OpenMP thread per worker (the five
+  `*_NUM_THREADS` / `VECLIB_MAXIMUM_THREADS` variables set to 1 while the
+  workers start, then restored in the parent); replicates in chunks, four
+  per worker, at most two per worker in flight; results in task order.
+  - A worker exception is re-raised in the parent, the original exception
+    with the worker traceback chained and a note naming the replicate,
+    after the pending chunks are cancelled and the workers stopped. What the
+    historical loops caught (a failed refit, a failed replicate of
+    `parametric_bootstrap`) is still caught and counted as invalid.
+  - Warnings are recorded in the worker under the parent's filters (copied
+    in: `"error"` still raises inside the replicate) and **re-emitted in the
+    parent** with their category, message, file, line and module, against
+    that module's `__warningregistry__`: `"default"` shows each once, as the
+    in-process loop does. Log records at the parent's level are forwarded.
+  - No nested pools: inside a worker, a nested `n_jobs` runs in-process, and
+    the ICE/SEM multistart ignores `multistart_workers`.
+  - A worker whose parent died exits within a second (it polls
+    `os.getppid()`).
+  - `statistic` and `simulate_fn` of `parametric_bootstrap` must be
+    top-level functions when `n_jobs > 1` (`TypeError` otherwise, before any
+    worker starts): the GUI's closures keep the default.
+- **Measured** (Apple M2 Pro, 6 performance + 4 efficiency cores, 32 GB;
+  Python 3.14.7, numpy 2.5.3 on Accelerate; one run at a time, seconds, the
+  speed-up over `n_jobs=None` in brackets; peak RSS of the parent and its
+  workers at `n_jobs = 8`):
+
+  | loop | `None` | 2 | 4 | 8 | peak RSS |
+  |---|---|---|---|---|---|
+  | `parametric_bootstrap`, PMC K = 2, N = 800, B = 200 ¹ | 13.3 | 7.4 (1.8×) | 4.4 (3.0×) | 3.4 (4.0×) | 1.75 GB |
+  | `parametric_bootstrap`, N = 2000, B = 200 ¹ | 40.7 | 20.3 (2.0×) | 11.3 (3.6×) | 7.7 (5.3×) | 2.76 GB |
+  | `bootstrap_ci`, Student by MLE, n = 500, B = 500 | 22.7 | 12.4 (1.8×) | 6.9 (3.3×) | 4.9 (4.7×) | 1.27 GB |
+  | `bootstrap_ci`, Clayton by τ, n = 500, B = 500 | 0.25 | 1.09 | 0.98 | 1.21 | 1.26 GB |
+  | `gof_test`, BB1 by MLE, n = 500, B = 100 | 4.5 | 3.3 (1.4×) | 2.2 (2.1×) | 2.0 (2.3×) | 1.30 GB |
+  | `gof_test`, Clayton by τ, n = 500, B = 100 | 0.12 | 1.02 | 0.95 | 1.21 | 1.27 GB |
+  | `gof_test`, Gumbel by MLE, n = 500, B = 100 | 0.19 | 1.10 | 1.00 | 1.19 | 1.27 GB |
+  | `exchangeability_test`, n = 2000, B = 200 | 3.7 | 2.8 (1.3×) | 1.9 (1.9×) | 1.8 (2.1×) | 2.05 GB |
+  | `exchangeability_test`, n = 500, B = 200 | 0.21 | 1.06 | 1.01 | 1.22 | 1.27 GB |
+  | `radial_symmetry_test`, n = 2000, B = 200 | 3.6 | 2.8 (1.3×) | 1.9 (1.9×) | 1.8 (2.1×) | 2.02 GB |
+  | `radial_symmetry_test`, n = 500, B = 200 | 0.24 | 1.09 | 1.00 | 1.22 | 1.27 GB |
+  | `rosenblatt_gof_test`, Clayton, n = 2000, B = 200 | 4.2 | 3.0 (1.4×) | 2.0 (2.1×) | 1.9 (2.3×) | 2.06 GB |
+  | `rosenblatt_gof_test`, Clayton, n = 500, B = 200 | 0.77 | 1.35 | 1.15 | 1.33 | 1.29 GB |
+
+  ¹ The statistic of the GUI's copula GoF test: forward-backward, pair
+  posteriors, one ξ-weighted CvM per copula pair (`pmc_gauss_k2`).
+  `parametric_bootstrap` with `n_jobs=1` (per-replicate streams,
+  in-process) costs what `None` does (13.3 s, 40.1 s).
+
+  Starting the workers costs about **1 s per call** (a fresh interpreter
+  importing numpy, scipy, matplotlib and pmcprg in each), paid again on
+  every call; each worker holds 130–300 MB. Hence: below about a second of
+  serial work the pool is slower (every configuration at n = 500 above
+  except BB1); from a few seconds it gives about 2×; the 3–6× that the
+  audit expected on 4–8 cores is reached only by the loops of 10 s and
+  more (3.0–3.6× at 4 workers, 4.0–5.3× at 8). Beyond 6 workers the
+  efficiency cores of this machine add little. `n_jobs` stays opt-in for
+  that reason.
+
 ### Added — the API reference is published on GitHub Pages
 
 - <https://sderrode.github.io/awesomePMC/>, built from `apidoc/` by MkDocs

@@ -289,6 +289,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.stats import rankdata
 
+from pmcprg._parallel import map_replicates, resolve_n_jobs
 from pmcprg.diagnostics.dependent_multiplier import (
     MULTIPLIER_KERNELS,
     MULTIPLIER_LAWS,
@@ -431,6 +432,22 @@ def rosenblatt_statistic(U: np.ndarray, V: np.ndarray) -> float:
     return float(n * np.mean(diff ** 2))
 
 
+def _parametric_replicate(shared, seed: int) -> float:
+    """``S_n^(b)`` of one parametric replicate: sample the fitted copula,
+    refit the family, transform, CvM — NaN when any step raises (the
+    historical loop skipped the replicate). Top-level so a worker process can
+    unpickle it (``n_jobs``, audit FR-14)."""
+    copula, family_cls, method, n = shared
+    try:
+        xb, yb = copula.sample(n, seed=seed).T
+        fit_b = family_cls.fit(np.column_stack([xb, yb]), method=method)
+        ub, vb = _pseudo_obs(xb, yb)
+        Ub, Vb = rosenblatt_transform(ub, vb, fit_b.copula)
+        return rosenblatt_statistic(Ub, Vb)
+    except Exception:
+        return float("nan")
+
+
 # ---------------------------------------------------------------------------
 # Multiplier bootstrap (FR-10, closing round) — see the module docstring for
 # the derivation. Unlike radial symmetry's and exchangeability's own
@@ -479,6 +496,7 @@ def rosenblatt_gof_test(
     multiplier: str = "normal",
     block_length: int | str = "auto",
     block_kernel: str = "bartlett",
+    n_jobs: int | None = None,
 ) -> RosenblattGoFResult:
     """Test H0: ``(x, y)`` is drawn from ``family_cls`` (FR-10, Rosenblatt).
 
@@ -525,6 +543,21 @@ def rosenblatt_gof_test(
                  ``1`` reproduces ``bootstrap='multiplier'`` exactly.
     block_kernel : ``'bartlett'`` (default) or ``'parzen'``; only used by
                  ``bootstrap='dependent-multiplier'``.
+    n_jobs     : worker processes for the ``bootstrap='parametric'``
+                 replicates (audit FR-14): ``None`` (default) or ``1`` in
+                 this process, ``k > 1`` in ``k`` processes, ``-1`` one per
+                 CPU. The result is **bit-identical for every value** — a
+                 replicate draws nothing but its sampling seed, the ``b``-th
+                 draw of ``default_rng(seed)``, made here in replicate
+                 order. Starting the workers costs about a second; a
+                 replicate refits and transforms (``h`` once per point, in
+                 Python) on top of the ``O(n²)`` statistic. Clayton,
+                 ``n = 500``: 0.8 s in-process, 1.2 s with 4 workers (the
+                 pool is slower); ``n = 2000``: 4.2 s → 2.0 s with 4
+                 workers, 1.9 s with 8 (Apple M2 Pro, 6 performance + 4
+                 efficiency cores, full table in the CHANGELOG entry of
+                 FR-14). Ignored by the multiplier bootstraps, which refit
+                 nothing.
 
     Returns
     -------
@@ -537,6 +570,7 @@ def rosenblatt_gof_test(
             "docstring, 'Weighting') — pass a single, fully-observed sample "
             "of pairs instead."
         )
+    n_jobs = resolve_n_jobs(n_jobs)
     if not (0.0 < alpha < 1.0):
         raise ValueError(f"alpha must be in (0, 1), got {alpha}.")
     if method not in ("tau", "mle"):
@@ -578,19 +612,12 @@ def rosenblatt_gof_test(
         draws = draws[np.isfinite(draws)]
     else:
         rng = np.random.default_rng(seed)
-        raw_draws = []
-        for _ in range(int(B)):
-            try:
-                xb, yb = fit.copula.sample(n, seed=int(rng.integers(0, 2**31 - 1))).T
-                fit_b = family_cls.fit(np.column_stack([xb, yb]), method=method)
-                ub, vb = _pseudo_obs(xb, yb)
-                Ub, Vb = rosenblatt_transform(ub, vb, fit_b.copula)
-                tb = rosenblatt_statistic(Ub, Vb)
-            except Exception:
-                continue
-            if np.isfinite(tb):
-                raw_draws.append(tb)
-        draws = np.asarray(raw_draws, dtype=float)
+        # One seed per replicate, drawn lazily and in replicate order.
+        seeds = (int(rng.integers(0, 2**31 - 1)) for _ in range(int(B)))
+        raw_draws = map_replicates(_parametric_replicate, seeds, n_tasks=int(B),
+                                   n_jobs=n_jobs or 1,
+                                   shared=(fit.copula, family_cls, method, n))
+        draws = np.asarray([tb for tb in raw_draws if np.isfinite(tb)], dtype=float)
 
     p_value = (
         float((1 + np.sum(draws >= stat)) / (draws.size + 1))

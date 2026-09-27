@@ -44,6 +44,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pmcprg._parallel import in_worker
 from pmcprg.copulas._base import CopulaEnum
 from pmcprg.pmc.ice import (
     COPULA_MARGIN_MODES,
@@ -375,7 +376,10 @@ def run_multistart(single_run, model, cfg, *, label: str, worker=None):
         as the sequential path, so parallel and sequential runs produce the
         **same** result; only wall-clock and log order differ. ``progress_cb``
         cannot cross process boundaries: parallel mode logs per-run
-        completion instead of per-iteration progress.
+        completion instead of per-iteration progress. Inside a worker of a
+        resampling loop run with ``n_jobs`` (:mod:`pmcprg._parallel`, audit
+        FR-14) the starts run sequentially whatever ``multistart_workers``
+        says: no pool is nested in a pool.
 
     Returns
     -------
@@ -393,6 +397,11 @@ def run_multistart(single_run, model, cfg, *, label: str, worker=None):
 
     jitter  = float(cfg["multistart_jitter"])
     workers = min(max(1, int(cfg["multistart_workers"])), n_starts)
+    if in_worker():
+        # Already inside a resampling worker (FR-14, pmcprg._parallel): no
+        # nested pool. The result is the same — the parallel multistart
+        # reproduces the sequential one exactly.
+        workers = 1
     if families == "none":
         logger.info(
             "%s multistart: n_starts=%d  jitter=%.2f  workers=%d",
