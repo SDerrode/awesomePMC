@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.6.0] - 2026-09-27
+
+### Highlights
+
+- **Resampling loops in parallel (FR-14).** `n_jobs` on `parametric_bootstrap`,
+  `FitResult.gof_test`, `FitResult.bootstrap_ci` and the Gaussian-surrogate
+  branches of `exchangeability_test`, `radial_symmetry_test` and
+  `rosenblatt_gof_test`. Opt-in (`n_jobs=None` keeps every result bit for
+  bit); five of the six give the same numbers for every `n_jobs`,
+  `parametric_bootstrap` switches to per-replicate streams (same law). Measured:
+  3–5× on loops of 10 s and more, about 2× on a few seconds, slower under
+  about 1 s (a worker start costs about 1 s per call).
+- **The API reference is online**, <https://sderrode.github.io/awesomePMC/>,
+  republished on every release.
+
+No numerical result changes by default.
+
 ### Added — `n_jobs`: the resampling loops in worker processes (FR-14)
 
 - **What.** One keyword, `n_jobs: int | None = None`, on the six loops whose
