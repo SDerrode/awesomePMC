@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the software's DOI
+
+- Zenodo archived 1.6.1: concept DOI
+  [10.5281/zenodo.23082922](https://doi.org/10.5281/zenodo.23082922) (all
+  versions), version DOI 10.5281/zenodo.23082923. The concept DOI is in
+  `CITATION.cff` (`doi`, `identifiers`), as a badge in the README and on the
+  API reference's home page, and in the README's citation section.
+
 ---
 
 ## [1.6.1] - 2026-10-01

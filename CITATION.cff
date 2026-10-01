@@ -31,6 +31,13 @@ authors:
 version: 1.6.1
 date-released: "2026-10-01"
 license: MIT
+doi: 10.5281/zenodo.23082922
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23082922
+    description: >-
+      Zenodo concept DOI: every version of awesomePMC (resolves to the
+      latest); each release also has its own version DOI.
 repository-code: https://github.com/SDerrode/awesomePMC
 repository-artifact: https://pypi.org/project/awesomepmc/
 url: https://github.com/SDerrode/awesomePMC

@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/SDerrode/awesomePMC/blob/main/LICENSE)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 [![Docs](https://img.shields.io/badge/docs-API%20reference-blue.svg)](https://sderrode.github.io/awesomePMC/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23082922.svg)](https://doi.org/10.5281/zenodo.23082922)
 
 **Copula-based pairwise and hidden Markov chains for the unsupervised
 classification of non-Gaussian time series and images.**
@@ -1129,7 +1130,9 @@ awesomePMC/
 ## Citation and references
 
 Please cite **both** DerrodePieczynski_CSDA2013 and DerrodePieczynski_SP2016 if you
-use this package in published work. Machine-readable citation metadata is in
+use this package in published work, and the software itself through its Zenodo
+DOI, [10.5281/zenodo.23082922](https://doi.org/10.5281/zenodo.23082922) (all
+versions; each release also has its own DOI on Zenodo). Machine-readable citation metadata is in
 [`CITATION.cff`](https://github.com/SDerrode/awesomePMC/blob/main/CITATION.cff)
 (GitHub's *Cite this repository* button reads it). Every reference the code and the
 reports rely on is listed with its DOI and the module that uses it in

@@ -1,5 +1,7 @@
 # awesomePMC
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23082922.svg)](https://doi.org/10.5281/zenodo.23082922)
+
 `awesomePMC` (distribution `awesomepmc` on PyPI, import package `pmcprg`)
 implements **pairwise Markov chains** (PMC) — and the **hidden Markov
 chains** they contain — with the dependence between consecutive
