@@ -1,0 +1,57 @@
+{
+  "upload_type": "software",
+  "title": "awesomePMC: pairwise and hidden Markov chains with copula-based non-Gaussian dependence",
+  "creators": [
+    {
+      "name": "Derrode, Stéphane",
+      "affiliation": "École Centrale de Lyon, CNRS, INSA Lyon, Université Lyon 1, Université Lumière Lyon 2, LIRIS, UMR5205, Écully, France",
+      "orcid": "0000-0002-2865-2057"
+    }
+  ],
+  "description": "<p>Python library (import package <code>pmcprg</code>, distribution <code>awesomepmc</code> on PyPI) for pairwise and hidden Markov chains with copula-based non-Gaussian dependence: general pairwise Markov chains with pair-indexed margins; simulation, supervised MPM classification and unsupervised ICE/SEM estimation with automatic per-pair copula selection and GICE margin selection; standard errors and non-nested tests for the family choice; exact inference with missing observations, imputation and forecasting; detection of erroneous readings and robust estimation; image segmentation and a PyQt6 GUI.</p><p>API reference: <a href=\"https://sderrode.github.io/awesomePMC/\">https://sderrode.github.io/awesomePMC/</a>. Package: <a href=\"https://pypi.org/project/awesomepmc/\">https://pypi.org/project/awesomepmc/</a>.</p><p>If you use awesomePMC in published work, please cite both papers it implements (Derrode &amp; Pieczynski 2013 for the PMC model family and ICE-based copula selection; Derrode &amp; Pieczynski 2016 for GICE, the automatic margin selection), and this software record.</p>",
+  "access_right": "open",
+  "license": "MIT",
+  "language": "eng",
+  "keywords": [
+    "copula",
+    "pairwise Markov chain",
+    "hidden Markov model",
+    "Markov chain",
+    "unsupervised classification",
+    "time series",
+    "image segmentation",
+    "Bayesian inference",
+    "expectation maximization",
+    "missing data",
+    "imputation",
+    "forecasting",
+    "outlier detection",
+    "statistics",
+    "signal processing",
+    "Python"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.1016/j.csda.2013.01.027",
+      "relation": "isSupplementTo",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "10.1016/j.sigpro.2016.03.008",
+      "relation": "isSupplementTo",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "https://sderrode.github.io/awesomePMC/",
+      "relation": "isDocumentedBy",
+      "resource_type": "publication-softwaredocumentation",
+      "scheme": "url"
+    }
+  ],
+  "references": [
+    "Derrode, S., Pieczynski, W. (2013). Unsupervised data classification using pairwise Markov chains with automatic copulas selection. Computational Statistics & Data Analysis, 63, 81–98. https://doi.org/10.1016/j.csda.2013.01.027",
+    "Derrode, S., Pieczynski, W. (2016). Unsupervised classification using hidden Markov chain with unknown noise copulas and margins. Signal Processing, 128, 8–17. https://doi.org/10.1016/j.sigpro.2016.03.008"
+  ]
+}

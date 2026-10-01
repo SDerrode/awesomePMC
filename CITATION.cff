@@ -1,5 +1,6 @@
 # Citation metadata (Citation File Format 1.2.0 — https://citation-file-format.github.io).
-# GitHub renders this as "Cite this repository"; Zenodo reads it on archive.
+# GitHub renders this as "Cite this repository". Zenodo reads .zenodo.json
+# instead (it takes precedence), so keep the two in step.
 # The package implements two papers: cite BOTH when you use it — the CSDA 2013
 # paper is `preferred-citation`, the Signal Processing 2016 paper is under
 # `references`. Version and release date track the git tag (v1.6.0, 2026-09-27).
@@ -23,7 +24,10 @@ authors:
   - family-names: Derrode
     given-names: Stéphane
     email: stephane.derrode@ec-lyon.fr
-    affiliation: École Centrale de Lyon
+    affiliation: >-
+      École Centrale de Lyon, CNRS, INSA Lyon, Université Lyon 1, Université
+      Lumière Lyon 2, LIRIS, UMR5205, Écully, France
+    orcid: "https://orcid.org/0000-0002-2865-2057"
 version: 1.6.0
 date-released: "2026-09-27"
 license: MIT

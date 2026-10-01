@@ -35,6 +35,16 @@ Before any upload, the workflow checks that the tag is exactly `v` +
    (each PyPI upload then waits for an approval) and a deployment tag rule `v*`.
 4. The workflow must be on the default branch (`main`) of the GitHub repository
    for *Actions → Publish to PyPI → Run workflow* to appear.
+5. **Zenodo** (a DOI for every release) — log in to <https://zenodo.org> with
+   GitHub, then *account menu → GitHub → Sync now* and switch
+   `SDerrode/awesomePMC` on. Zenodo then archives every GitHub Release
+   **published after** that switch (not the earlier ones), with the metadata of
+   `.zenodo.json` (it takes precedence over `CITATION.cff`; keep the two in
+   step). The archive is the tag's source, i.e. the public export: no private
+   file. Each release gets a version DOI; the *concept* DOI names them all.
+6. **GitHub Pages** — the API reference is deployed by `pages.yml` on every
+   published Release (environment `github-pages`, which allows `main` and tags
+   `v*`).
 
 ## Release checklist (version `X.Y.Z`)
 
@@ -125,3 +135,6 @@ Post-release checks:
 
 14. Check the project page <https://pypi.org/project/awesomepmc/> (README
     rendering, links, classifiers) and the GitHub *Cite this repository* box.
+15. Check the Zenodo record of the release (its DOI, title, creator, ORCID,
+    license) and the redeployed API reference
+    (<https://sderrode.github.io/awesomePMC/>).

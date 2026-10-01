@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Zenodo metadata, and the author's ORCID
+
+- `.zenodo.json`: the metadata Zenodo uses (it takes precedence over
+  `CITATION.cff`) when it archives a GitHub Release. It sets the software
+  record's title, creator (with ORCID and affiliation), MIT license and
+  keywords. It links the two papers the package implements (CSDA 2013,
+  Signal Processing 2016; `isSupplementTo`) and the API reference
+  (`isDocumentedBy`). `CITATION.cff` gets the same ORCID and full
+  affiliation. `RELEASING.md` describes the Zenodo switch and the Pages
+  deployment.
+
 ---
 
 ## [1.6.0] - 2026-09-27
