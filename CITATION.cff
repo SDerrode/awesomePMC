@@ -3,7 +3,7 @@
 # instead (it takes precedence), so keep the two in step.
 # The package implements two papers: cite BOTH when you use it — the CSDA 2013
 # paper is `preferred-citation`, the Signal Processing 2016 paper is under
-# `references`. Version and release date track the git tag (v1.6.0, 2026-09-27).
+# `references`. Version and release date track the git tag (v1.6.1, 2026-10-01).
 cff-version: 1.2.0
 message: >-
   If you use awesomePMC in published work, please cite both papers below
@@ -28,8 +28,8 @@ authors:
       École Centrale de Lyon, CNRS, INSA Lyon, Université Lyon 1, Université
       Lumière Lyon 2, LIRIS, UMR5205, Écully, France
     orcid: "https://orcid.org/0000-0002-2865-2057"
-version: 1.6.0
-date-released: "2026-09-27"
+version: 1.6.1
+date-released: "2026-10-01"
 license: MIT
 repository-code: https://github.com/SDerrode/awesomePMC
 repository-artifact: https://pypi.org/project/awesomepmc/

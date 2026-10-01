@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.6.1] - 2026-10-01
+
+Metadata only: no code change, no result change. This release triggers
+the first Zenodo archive (a DOI for the software).
+
+### Added — the PyPI project links to the API reference
+
+- `pyproject.toml`, `[project.urls]`: `Documentation =
+  https://sderrode.github.io/awesomePMC/`, shown on the PyPI page.
+
 ### Added — Zenodo metadata, and the author's ORCID
 
 - `.zenodo.json`: the metadata Zenodo uses (it takes precedence over
