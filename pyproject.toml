@@ -100,7 +100,8 @@ ml = [
 ]
 docs = [
     # The API documentation site (FR-12): MkDocs + Material + mkdocstrings,
-    # built locally only (`mkdocs build --strict`); never deployed. Not read
+    # built with `mkdocs build --strict` and deployed to GitHub Pages at each
+    # release (.github/workflows/pages.yml). Not read
     # by the `min-versions` CI job (it parses `dependencies` and `ml` only).
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
@@ -115,6 +116,7 @@ pmc = "pmcprg.pmc.cli:main"
 # The public GitHub repository (exported tree) is the reference for PyPI users;
 # the GitLab repository is the private working repository.
 Homepage          = "https://github.com/SDerrode/awesomePMC"
+Documentation     = "https://sderrode.github.io/awesomePMC/"
 Repository        = "https://github.com/SDerrode/awesomePMC"
 Issues            = "https://github.com/SDerrode/awesomePMC/issues"
 Changelog         = "https://github.com/SDerrode/awesomePMC/blob/main/CHANGELOG.md"

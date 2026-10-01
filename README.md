@@ -120,7 +120,7 @@ package packages for reuse.*
   results and a LaTeX report;
   [`report/missing_benchmark/`](https://github.com/SDerrode/awesomePMC/tree/main/report/missing_benchmark)
   compares exact marginalisation with naive fill-ins on 2500 simulated
-  sequences. The test suite runs in CI on Python 3.11–3.13.
+  sequences. The test suite runs in CI on Python 3.11–3.14.
 
 | Sub-package | What it does |
 |---|---|
