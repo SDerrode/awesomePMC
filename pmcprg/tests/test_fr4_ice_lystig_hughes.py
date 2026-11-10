@@ -453,33 +453,40 @@ def test_hessian_matches_finite_differences(case):
 #: ``df4e662`` — *before* the two-parameter / ``fit_margins`` extension. Both
 #: code paths (one-parameter ψ stencil, scalar delta method) were kept
 #: verbatim precisely so that these compare equal to the last bit.
+#:
+#: First written under macOS 14.5. Regenerated on 2026-11-10 under macOS 27.2,
+#: whose Accelerate (NumPy's BLAS/LAPACK there) rounds differently: the old
+#: values moved by up to 3.4·10⁻¹⁵ (relative) on the log-likelihood,
+#: 2·10⁻⁸ on the score, 1.1·10⁻⁶ on the Newton step and 6·10⁻⁷ on the SEs.
+#: ``df4e662``'s own code, run under macOS 27.2, gives these new values to the
+#: last bit, so the test still pins the pre-extension path.
 _PILOT_GOLDEN = {
     "Gauss": dict(
-        log_lik=-804.4405599384902,
-        grad=[0.910334315160524, -0.8665567135133961, -0.4045615982344939,
-              -0.23634175899118215, 0.013437557697517305, 0.5565760577224136],
-        newton_step=[0.002551379148912642, -0.06283834719072595, -0.0025246199700809276,
-                     -0.01724087761125474, 0.004214501616900599, 0.011932453261647167],
-        se_tau={(0, 0): 0.021085512828429735, (0, 1): 0.109044305610301,
-                (1, 0): 0.09621967161404389, (1, 1): 0.042682916794981526},
-        se_tau_partial={(0, 0): 0.02039055608431679, (0, 1): 0.1064296303595652,
-                        (1, 0): 0.09540720797364931, (1, 1): 0.04124170994065751},
+        log_lik=-804.4405599384893,
+        grad=[0.9103343151523804, -0.8665567135117422, -0.40456159825209026,
+              -0.23634175901234036, 0.01343755763903815, 0.556576057577291],
+        newton_step=[0.002551379066392249, -0.06283834721048256, -0.002524620048059081,
+                     -0.01724087774288744, 0.004214501586949701, 0.011932453057038607],
+        se_tau={(0, 0): 0.021085513185136757, (0, 1): 0.10904430590561752,
+                (1, 0): 0.09621967168787203, (1, 1): 0.0426829164191555},
+        se_tau_partial={(0, 0): 0.0203905564077353, (0, 1): 0.10642963062795723,
+                        (1, 0): 0.09540720804993863, (1, 1): 0.04124170959709048},
     ),
     "Clayton": dict(
-        log_lik=-841.6659842023837,
-        grad=[0.635587634158395, -0.42246551291941076, 0.09845254713625626,
-              -0.06359539681682813, -0.006893378685249089, 0.048698313717369726],
-        newton_step=[0.012782460365284529, -0.011307544128622473, 0.0020481006020818104,
-                     -0.021751280881567494, -0.009357311621071118, 0.008345712394804273],
-        se_tau={(0, 0): 0.022299184698433644, (0, 1): 0.08507218681912901,
-                (1, 0): 0.06458889123628396, (1, 1): 0.05622126731947303},
-        se_tau_partial={(0, 0): 0.021656948289112077, (0, 1): 0.08409821268839802,
-                        (1, 0): 0.0642678937320133, (1, 1): 0.054507101253361244},
+        log_lik=-841.6659842023865,
+        grad=[0.6355876341909369, -0.42246551294057855, 0.09845254915262233,
+              -0.06359539708167036, -0.006893378568188172, 0.048698314254063665],
+        newton_step=[0.012782461768084313, -0.011307545256655626, 0.0020481014010895826,
+                     -0.021751300729853637, -0.009357310303810354, 0.00834572193646956],
+        se_tau={(0, 0): 0.022299191833625085, (0, 1): 0.08507222932546192,
+                (1, 0): 0.0645888866773103, (1, 1): 0.05622130068030468},
+        se_tau_partial={(0, 0): 0.021656954681587383, (0, 1): 0.08409825336507785,
+                        (1, 0): 0.06426788907628497, (1, 1): 0.05450713161485999},
     ),
 }
 
 #: The golden values were written on macOS/arm64 and hold there to the last
-#: bit. Elsewhere libm and NumPy's SIMD kernels round differently: on Linux
+#: bit (for the macOS release they were written under: see above). Elsewhere libm and NumPy's SIMD kernels round differently: on Linux
 #: (aarch64, x86-64) the log-likelihood still agrees to 3·10⁻¹⁵ and the score
 #: to 2·10⁻⁸, but the conditioning of the information matrix carries that to
 #: 6·10⁻⁶ on the Newton step and 3·10⁻⁶ on the SEs. Off macOS/arm64 the test
